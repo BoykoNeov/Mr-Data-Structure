@@ -71,6 +71,24 @@ breadth (dual-impl conformance, insert/delete churn).
 > is **not** marked complete until 4–5 land; the status-block update happens
 > then, not after Batch 3.
 
+> **PROGRESS — Batches 1–3 ✅ done, committed + pushed to `main`** (640653f,
+> b30c071, d6e03de). Success criterion met in headless Chromium: array search →
+> O(n) (slope 0.92, R² 1.000, 2080× rise), hash-set search → O(1) (slope 0.01,
+> R² 0.999, flat). Gates green: cargo 16, Vitest 58, typecheck, build, browser.
+>
+> **Carry-over into Batch 4 (next session):**
+> - **String-key Rust structures were deferred from Batch 1** (numeric f64 path
+>   only). Add `ArrayStr`/`HashSetStr` built from the offsets+UTF-8 marshal
+>   layout here, alongside the TS teaching impls + conformance — user to ratify.
+> - Non-blockers to revisit: `verify-browser.mjs` asserts `best === 'O(n)'`
+>   strictly (inside the §7.2 ambiguous band — most likely to flake on noisier
+>   CI; consider relaxing to a slope/class band); dev-only StrictMode double-
+>   mounts the App effect and disposes the first engine mid-sweep (cosmetic;
+>   prod `preview` is clean).
+> - Status blocks in `README.md` / `docs/PLAN.md` were updated to **"Phase 2 in
+>   progress"** (not complete) at the session-end teardown — flip to complete
+>   only when 4–5 land.
+
 ### Batch 1 — Rust array + hashset + search sweep (kills R2, zero UI)
 - `bench-engine/src/structures/`: `dyn_array.rs` (unsorted) + `hash_set.rs`
   (separate chaining, load-factor rehash), each **built from the marshalled

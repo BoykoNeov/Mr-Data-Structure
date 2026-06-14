@@ -4,14 +4,17 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 1 complete** (data layer). On top of the Phase 0 scaffold
-(WASM round-trip + `BenchEngine` interface, all gates green in CI), the
-normalized `Dataset` now loads from CSV/JSON imports and seeded synthetic
-generators, with conservative type detection, a KV key-field picker, and
-typed-array marshalling for transfer into WASM. The §10 exit criterion (load a
-real CSV and a generated `sorted` dataset) is met — proven by 39 data-layer
-tests and the in-browser demo. Next: Phase 2 (thin slice — array + hash set
-through both impls + the measurement methodology). See §10.
+Status: **Phase 2 in progress** — the thin slice's *headline* has landed. An
+unsorted dynamic array and a separate-chaining hash set now run through the
+Rust/WASM engine, the §6.3 search-measurement methodology (pure, testable
+orchestration + batched WASM primitives), the §7.2 complexity-class fitter, and
+a log-log comparison chart. The §10 success criterion is proven in headless
+Chromium on the real browser clock: **array search → O(n) (slope ≈ 1), hash-set
+search → O(1) (slope ≈ 0)**. Remaining Phase 2 exit work (§10/§12): TS teaching
+impls + cross-language conformance (R1), the churn-vs-finite-difference
+self-test, insert/delete, and the string-key bench structures. (Phase 1 — data
+layer — is complete: CSV/JSON + generators → normalized `Dataset` + marshalling.)
+See §10.
 
 ---
 
@@ -343,13 +346,24 @@ insert/search/delete group on a shared key type.
   KV key-field picker, synthetic generators, normalized dataset + typed-array
   marshalling into WASM. *Exit:* load a real CSV and a generated `sorted` dataset.
 
-- **Phase 2 — THIN SLICE (the de-risker).** Two contrasting structures —
-  **dynamic array + hash set** — fully through *both* impls (TS teaching + Rust
-  bench), the **measurement methodology of §6.3**, and one comparison chart.
-  - **Concrete success criterion:** on a sweep, the chart shows **array-search
-    rising linearly and hashset-search staying flat**, and the fitter labels them
-    **O(n) / O(1)** with good R². This proves measurement + isolation + charting +
-    the headline feature in one slice.
+- **Phase 2 — THIN SLICE (the de-risker). 🚧 in progress.** Two contrasting
+  structures — **dynamic array + hash set** — fully through *both* impls (TS
+  teaching + Rust bench), the **measurement methodology of §6.3**, and one
+  comparison chart.
+  - **Concrete success criterion — ✅ met:** on a sweep, the chart shows
+    **array-search rising linearly and hashset-search staying flat**, and the
+    fitter labels them **O(n) / O(1)** with good R². Proven in headless Chromium
+    (`verify:browser`): array slope ≈ 0.92 (R² 1.000), hashset slope ≈ 0.01
+    (R² 0.999). This proves measurement + isolation + charting + the headline
+    feature in one slice.
+  - **Done:** Rust array + hash-set (numeric keys) with zero-overhead op-counters
+    + proptest; pure/testable measurement orchestration (`src/bench/measure.ts`);
+    `runSweep` across the `BenchEngine` boundary; the §7.2 fitter; the uPlot chart.
+  - **Remaining for Phase 2 exit:** TS teaching impls + cross-language conformance
+    corpus (R1, §12); the churn-vs-finite-difference methodology self-test (§12);
+    insert/delete measurement; and the **string-key** bench structures (deferred
+    from the numeric slice to land with the TS impls, so both languages exercise
+    the offsets+UTF-8 marshal layout together).
 
 - **Phase 3 — Visualization breadth.** Mature animation (step controls,
   rotations, rehash, probing); add teaching impls for remaining Linear + Tree

@@ -14,10 +14,21 @@ methodology, and the phased roadmap.
 
 ## Status
 
+**Phase 2 — thin slice (in progress).** The first vertical slice is in: two
+contrasting structures — an unsorted dynamic array and a separate-chaining hash
+set — run through the Rust/WASM bench engine, the §6.3 search-measurement
+methodology (batch auto-grow past the clock clamp, warm-up, reps, variance), a
+complexity-class fitter (§7.2), and one log-log comparison chart. The headline
+result is proven in headless Chromium against the real browser clock: **array
+search measures O(n) (slope ≈ 1) while hash-set search stays flat O(1) (slope
+≈ 0)**. Still pending for the full Phase 2 exit (§10/§12): TS teaching impls +
+cross-language conformance, the churn-vs-finite-difference methodology
+self-test, insert/delete, and the string-key bench structures.
+
 **Phase 1 — data layer.** On top of the Phase 0 scaffold (Vite + React +
 TypeScript frontend, a Rust → WASM benchmark engine in a Web Worker via Comlink,
 the `BenchEngine` interface, and CI — proving the main-thread → Worker → WASM
-round-trip, `ping(41)` → `42`), the app now loads a normalized dataset from
+round-trip, `ping(41)` → `42`), the app loads a normalized dataset from
 CSV/JSON imports and seeded synthetic generators, with conservative type
 detection, a key-field picker, and typed-array marshalling for WASM transfer.
 
@@ -39,7 +50,8 @@ npm install
 npm run dev      # builds the WASM engine (dev profile), then starts Vite
 ```
 
-Open the printed local URL — you should see `status: ready` and `ping(41) → 42 ✓`.
+Open the printed local URL — you should see `status: ready` and the
+array-vs-hash-set search comparison chart (array labelled O(n), hash set O(1)).
 
 ## Build / test / verify
 
