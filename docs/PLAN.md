@@ -7,8 +7,9 @@
 Status: **Phase 0 complete** (scaffold + WASM round-trip + `BenchEngine`
 interface). Native Rust tests, the compiled-WASM round-trip (`ping(41)→42`),
 typecheck, Vitest, the full production build, **and the in-browser
-worker→WASM→Comlink round-trip (headless Chromium)** all pass. CI workflow is
-written but unrun (no git remote yet). Next: Phase 1 (data layer). See §10.
+worker→WASM→Comlink round-trip (headless Chromium)** all pass. CI is green
+on GitHub Actions (remote wired up — the first push built clean end-to-end).
+Next: Phase 1 (data layer). See §10.
 
 ---
 
