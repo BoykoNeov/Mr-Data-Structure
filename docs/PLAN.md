@@ -10,11 +10,13 @@ Rust/WASM engine, the §6.3 search-measurement methodology (pure, testable
 orchestration + batched WASM primitives), the §7.2 complexity-class fitter, and
 a log-log comparison chart. The §10 success criterion is proven in headless
 Chromium on the real browser clock: **array search → O(n) (slope ≈ 1), hash-set
-search → O(1) (slope ≈ 0)**. Remaining Phase 2 exit work (§10/§12): TS teaching
-impls + cross-language conformance (R1), the churn-vs-finite-difference
-self-test, insert/delete, and the string-key bench structures. (Phase 1 — data
-layer — is complete: CSV/JSON + generators → normalized `Dataset` + marshalling.)
-See §10.
+search → O(1) (slope ≈ 0)**. The dual-impl spine (§2.1) is now closed for both
+structures: TypeScript teaching twins run the same algorithm, and a
+cross-language conformance corpus (§12, R1) holds the two languages to identical
+iteration order and per-search op-count. Remaining Phase 2 exit work (§10/§12):
+the churn-vs-finite-difference self-test, insert/delete, and the string-key bench
+structures. (Phase 1 — data layer — is complete: CSV/JSON + generators →
+normalized `Dataset` + marshalling.) See §10.
 
 ---
 
@@ -359,11 +361,18 @@ insert/search/delete group on a shared key type.
   - **Done:** Rust array + hash-set (numeric keys) with zero-overhead op-counters
     + proptest; pure/testable measurement orchestration (`src/bench/measure.ts`);
     `runSweep` across the `BenchEngine` boundary; the §7.2 fitter; the uPlot chart.
-  - **Remaining for Phase 2 exit:** TS teaching impls + cross-language conformance
-    corpus (R1, §12); the churn-vs-finite-difference methodology self-test (§12);
-    insert/delete measurement; and the **string-key** bench structures (deferred
-    from the numeric slice to land with the TS impls, so both languages exercise
-    the offsets+UTF-8 marshal layout together).
+    **TS teaching impls** of both structures (`src/structures/`) — same algorithm
+    as the Rust bench impls, with a bit-exact BigInt port of `mix_f64` — and the
+    **cross-language conformance corpus** (R1, §12): a committed corpus generated
+    from the Rust source of truth (`conformance/corpus.txt`) that both languages
+    assert against (Rust re-checks it; TS reproduces it), pinning identical
+    iteration order and per-search op-count across the empty/duplicate/multi-rehash
+    cases.
+  - **Remaining for Phase 2 exit:** the churn-vs-finite-difference methodology
+    self-test (§12); insert/delete measurement; and the **string-key** bench
+    structures — now the next pairing, landing the Rust + TS string variants
+    together so both languages exercise the offsets+UTF-8 marshal layout (and the
+    string conformance corpus) at once.
 
 - **Phase 3 — Visualization breadth.** Mature animation (step controls,
   rotations, rehash, probing); add teaching impls for remaining Linear + Tree

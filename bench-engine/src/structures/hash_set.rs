@@ -143,6 +143,17 @@ impl HashSetF64 {
     pub fn max_chain(&self) -> usize {
         self.buckets.iter().map(|b| b.len()).max().unwrap_or(0)
     }
+
+    /// Keys in bucket-walk order (buckets by index, each chain front-to-back) —
+    /// the hash set's iteration order. A conformance hook (docs/PLAN.md §12);
+    /// not on the wasm surface.
+    pub fn keys_in_order(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(self.len);
+        for bucket in &self.buckets {
+            out.extend_from_slice(bucket);
+        }
+        out
+    }
 }
 
 #[cfg(test)]

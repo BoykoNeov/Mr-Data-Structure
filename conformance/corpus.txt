@@ -1,0 +1,51 @@
+# Mr Data Structure — cross-language conformance corpus (docs/PLAN.md §12).
+# Generated from the Rust bench impls; the TS teaching impls must match.
+# Regenerate: cargo test -- --ignored regen_corpus
+
+case empty
+keys 
+probes 1 2
+array_order 
+array_search 0:0 0:0
+hashset_order 
+hashset_search 0:1 0:1
+
+case singleton
+keys 42
+probes 42 7
+array_order 42
+array_search 1:1 0:1
+hashset_order 42
+hashset_search 1:2 0:1
+
+case ordered
+keys 10 20 30
+probes 10 20 30 99
+array_order 10 20 30
+array_search 1:1 1:2 1:3 0:3
+hashset_order 30 10 20
+hashset_search 1:2 1:2 1:2 0:2
+
+case duplicates
+keys 5 5 5 7 5 9
+probes 5 7 9 99
+array_order 5 5 5 7 5 9
+array_search 1:1 1:4 1:6 0:6
+hashset_order 5 9 7
+hashset_search 1:2 1:2 1:3 0:1
+
+case rehash
+keys 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30
+probes 0 15 30 31 -1 1000
+array_order 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30
+array_search 1:1 1:16 1:31 0:31 0:31 0:31
+hashset_order 0 13 6 10 2 22 16 24 30 18 5 11 28 23 25 19 1 12 20 9 14 8 7 17 27 4 15 26 29 3 21
+hashset_search 1:2 1:3 1:2 0:1 0:2 0:1
+
+case fractional
+keys 0 0.5 2.5 -1
+probes 0.5 2.5 -1 3
+array_order 0 0.5 2.5 -1
+array_search 1:2 1:3 1:4 0:4
+hashset_order 0 2.5 0.5 -1
+hashset_search 1:2 1:2 1:2 0:2

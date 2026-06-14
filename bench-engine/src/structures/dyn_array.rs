@@ -88,6 +88,12 @@ impl ArrayF64 {
         let found = self.contains::<true>(target, &mut ops);
         (found, ops)
     }
+
+    /// Stored keys in insertion order — the array's iteration order. A
+    /// conformance hook (docs/PLAN.md §12); not on the wasm surface.
+    pub fn keys_in_order(&self) -> Vec<f64> {
+        self.data.clone()
+    }
 }
 
 #[cfg(test)]

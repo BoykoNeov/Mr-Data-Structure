@@ -21,9 +21,13 @@ methodology (batch auto-grow past the clock clamp, warm-up, reps, variance), a
 complexity-class fitter (§7.2), and one log-log comparison chart. The headline
 result is proven in headless Chromium against the real browser clock: **array
 search measures O(n) (slope ≈ 1) while hash-set search stays flat O(1) (slope
-≈ 0)**. Still pending for the full Phase 2 exit (§10/§12): TS teaching impls +
-cross-language conformance, the churn-vs-finite-difference methodology
-self-test, insert/delete, and the string-key bench structures.
+≈ 0)**. The dual-impl spine (§2.1) is now closed for both: TypeScript teaching
+twins of the array and hash set run the *same* algorithm, and a cross-language
+conformance corpus (§12) holds the two languages to identical observable results
+— iteration order and per-search op-count (the hash is a bit-exact port of the
+Rust `mix_f64`). Still pending for the full Phase 2 exit (§10/§12): the
+churn-vs-finite-difference methodology self-test, insert/delete, and the
+string-key bench structures.
 
 **Phase 1 — data layer.** On top of the Phase 0 scaffold (Vite + React +
 TypeScript frontend, a Rust → WASM benchmark engine in a Web Worker via Comlink,
