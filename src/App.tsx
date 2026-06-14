@@ -1,17 +1,39 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createBenchEngine } from './bench/wasmBenchEngine';
 import type { BenchEngine } from './bench/BenchEngine';
-import { generateSorted, importCsv, marshalKeys } from './data';
-import type { Dataset } from './data';
+import { geometricSweep } from './bench/sweep';
+import { fitComplexity } from './bench/fit';
+import { SweepChart, type SeriesView, type Signal } from './ui/SweepChart';
+import { generateSorted, marshalKeys } from './data';
 
 /**
- * Phase 0 smoke screen: prove the main-thread -> Web Worker -> WASM round-trip
- * works in the browser. `ping(41)` must come back as 42.
+ * Phase 2 thin slice (docs/PLAN.md §10): generate a dataset, run the search
+ * measurement sweep on the unsorted array and the hash set through the real
+ * WASM engine, and show the two cost curves side by side. The headline result —
+ * **array search rises (O(n)) while hash-set search stays flat (O(1))** — is the
+ * empirical proof that the whole pipeline (measurement → isolation → fitting →
+ * charting) works on real wall-clock timings.
  */
+
+const SWEEP_MAX = 100_000;
+const SWEEP_MIN = 10;
+const COLORS = ['#d62728', '#1f77b4']; // array (red, rising), hashset (blue, flat)
+
+/** Shape mirrored onto `window` for the headless runtime check (scripts/verify-browser.mjs). */
+export interface SweepProof {
+  structure: string;
+  best: string;
+  slope: number;
+  r2: number;
+  firstNanos: number;
+  lastNanos: number;
+}
+
 export function App() {
   const [status, setStatus] = useState('initializing…');
   const [version, setVersion] = useState('');
-  const [pong, setPong] = useState<number | null>(null);
+  const [views, setViews] = useState<SeriesView[]>([]);
+  const [signal, setSignal] = useState<Signal>('nanos');
 
   useEffect(() => {
     let engine: BenchEngine | undefined;
@@ -20,7 +42,36 @@ export function App() {
         engine = createBenchEngine();
         await engine.ready();
         setVersion(await engine.version());
-        setPong(await engine.ping(41));
+
+        setStatus('running sweep…');
+        const dataset = generateSorted(SWEEP_MAX);
+        const marshalled = marshalKeys(dataset);
+        if (marshalled.keyType !== 'number') throw new Error('expected numeric keys');
+        const sizes = geometricSweep(SWEEP_MIN, SWEEP_MAX);
+
+        // runSweep transfers (consumes) the key buffer — fine, we use it once.
+        const series = await engine.runSweep(marshalled.values, sizes);
+
+        const built: SeriesView[] = series.map((s, i) => ({
+          series: s,
+          fit: fitComplexity(
+            s.points.map((p) => p.n),
+            s.points.map((p) => p.nanosPerOp),
+          ),
+          color: COLORS[i % COLORS.length],
+        }));
+        setViews(built);
+
+        const proof: SweepProof[] = built.map((v) => ({
+          structure: v.series.structure,
+          best: v.fit.best,
+          slope: v.fit.logLogSlope,
+          r2: v.fit.r2,
+          firstNanos: v.series.points[0].nanosPerOp,
+          lastNanos: v.series.points[v.series.points.length - 1].nanosPerOp,
+        }));
+        (window as unknown as { __sweepProof?: SweepProof[] }).__sweepProof = proof;
+
         setStatus('ready');
       } catch (err) {
         setStatus('error: ' + (err as Error).message);
@@ -29,12 +80,13 @@ export function App() {
     return () => engine?.dispose();
   }, []);
 
-  const ok = pong === 42;
-
   return (
     <main style={{ fontFamily: 'system-ui, sans-serif', padding: 24, lineHeight: 1.6 }}>
       <h1>Mr Data Structure</h1>
-      <p style={{ color: '#666' }}>Phase 0 — WASM bench engine round-trip</p>
+      <p style={{ color: '#666' }}>
+        Phase 2 — empirical complexity: array vs hash set, <code>search</code>
+      </p>
+
       <ul>
         <li>
           status: <strong>{status}</strong>
@@ -42,52 +94,31 @@ export function App() {
         <li>
           engine: <code>{version || '—'}</code>
         </li>
-        <li>
-          ping(41) → <strong>{pong ?? '—'}</strong> {ok ? '✓' : ''}
-        </li>
       </ul>
 
-      <DataLayerDemo />
+      {views.length > 0 && (
+        <section style={{ marginTop: 16 }}>
+          <label style={{ color: '#666', fontSize: 14 }}>
+            signal:{' '}
+            <select value={signal} onChange={(e) => setSignal(e.target.value as Signal)}>
+              <option value="nanos">wall-clock (ns/op)</option>
+              <option value="opcount">op-count (shape)</option>
+            </select>
+          </label>
+
+          <ul style={{ marginTop: 8 }}>
+            {views.map((v) => (
+              <li key={v.series.structure}>
+                <strong style={{ color: v.color }}>{v.series.structure}</strong> search:{' '}
+                <strong>{v.fit.best}</strong> (slope {v.fit.logLogSlope.toFixed(2)}, R²{' '}
+                {v.fit.r2.toFixed(3)}) — <span style={{ color: '#666' }}>{v.fit.note}</span>
+              </li>
+            ))}
+          </ul>
+
+          <SweepChart views={views} signal={signal} />
+        </section>
+      )}
     </main>
-  );
-}
-
-const SAMPLE_CSV = `id,name,city
-3,Alice,NYC
-1,Bob,LA
-2,Cara,SF`;
-
-/**
- * Phase 1 exit criterion (docs/PLAN.md §10): load a real CSV and a generated
- * `sorted` dataset, end to end in the browser. Both converge on the normalized
- * Dataset and marshal into the typed arrays the bench engine will consume.
- */
-function DataLayerDemo() {
-  const csv = useMemo(() => importCsv(SAMPLE_CSV, { keyField: 'id' }), []);
-  const sorted = useMemo(() => generateSorted(16), []);
-
-  return (
-    <section style={{ marginTop: 24 }}>
-      <p style={{ color: '#666' }}>Phase 1 — data layer</p>
-      <ul>
-        <DatasetLine label="CSV (key=id)" ds={csv} />
-        <DatasetLine label="generated sorted(16)" ds={sorted} />
-      </ul>
-    </section>
-  );
-}
-
-function DatasetLine({ label, ds }: { label: string; ds: Dataset }) {
-  const marshalled = marshalKeys(ds);
-  const bytes =
-    marshalled.keyType === 'number'
-      ? marshalled.values.byteLength
-      : marshalled.bytes.byteLength + marshalled.offsets.byteLength;
-  return (
-    <li>
-      {label}: <strong>{ds.size}</strong> {ds.keyType} keys —{' '}
-      <code>[{ds.keys.slice(0, 6).join(', ')}{ds.keys.length > 6 ? ', …' : ''}]</code>{' '}
-      <span style={{ color: '#666' }}>({bytes} B marshalled)</span>
-    </li>
   );
 }
