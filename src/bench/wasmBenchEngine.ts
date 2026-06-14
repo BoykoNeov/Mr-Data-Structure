@@ -1,6 +1,7 @@
 import * as Comlink from 'comlink';
 import type { BenchEngine } from './BenchEngine';
 import type { BenchWorkerApi } from './engine.worker';
+import type { MeasureOptions, SweepSeries } from './measure';
 
 /**
  * Default {@link BenchEngine} implementation: a Web Worker that hosts the
@@ -33,6 +34,16 @@ class WasmBenchEngine implements BenchEngine {
 
   ping(x: number): Promise<number> {
     return this.api.ping(x);
+  }
+
+  runSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    // Transfer the key buffer rather than clone it (docs/PLAN.md risk R7); this
+    // detaches `keys` on this thread, so the caller must not reuse it.
+    return this.api.runSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts);
   }
 
   dispose(): void {

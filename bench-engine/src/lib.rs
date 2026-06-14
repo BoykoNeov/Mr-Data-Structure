@@ -1,11 +1,15 @@
 //! Mr Data Structure — WASM benchmark engine.
 //!
-//! Phase 0 contains only the round-trip proof (`ping`) and a build identifier
-//! (`engine_version`). The production data-structure implementations, the
-//! per-operation timing harness (see docs/PLAN.md §6) and the op-counters
-//! (§6.4) land in Phase 2+.
+//! `ping` / `engine_version` are the Phase 0 round-trip proof. Phase 2 adds the
+//! production data structures (`structures`): an unsorted dynamic array and a
+//! separate-chaining hash set, each built from a marshalled key buffer and
+//! search-timed in batch (docs/PLAN.md §6, §8). The per-op timing *orchestration*
+//! (auto-grow / reps / variance) lives in TS (`src/bench/measure.ts`); WASM
+//! provides the batched primitive it times.
 
 use wasm_bindgen::prelude::*;
+
+pub mod structures;
 
 /// Phase 0 round-trip proof: TS -> Worker -> WASM -> back.
 ///
