@@ -14,10 +14,12 @@ methodology, and the phased roadmap.
 
 ## Status
 
-**Phase 0 — scaffold.** Vite + React + TypeScript frontend, a Rust → WASM
-benchmark engine running in a Web Worker (via Comlink), the `BenchEngine`
-interface, and CI. The app proves the main-thread → Worker → WASM round-trip
-(`ping(41)` → `42`).
+**Phase 1 — data layer.** On top of the Phase 0 scaffold (Vite + React +
+TypeScript frontend, a Rust → WASM benchmark engine in a Web Worker via Comlink,
+the `BenchEngine` interface, and CI — proving the main-thread → Worker → WASM
+round-trip, `ping(41)` → `42`), the app now loads a normalized dataset from
+CSV/JSON imports and seeded synthetic generators, with conservative type
+detection, a key-field picker, and typed-array marshalling for WASM transfer.
 
 ## Toolchain
 
@@ -65,7 +67,8 @@ bench-engine/        Rust crate -> WASM benchmark engine (the "production" impls
   src/lib.rs
 src/
   bench/             BenchEngine interface, Comlink worker, WASM-backed engine
-  App.tsx            Phase 0 smoke screen
+  data/              data layer: import, type detection, generators, marshalling
+  App.tsx            phase demo / smoke screen
 docs/PLAN.md         design + roadmap
 .github/workflows/   CI
 ```

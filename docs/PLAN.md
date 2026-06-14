@@ -4,12 +4,14 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 0 complete** (scaffold + WASM round-trip + `BenchEngine`
-interface). Native Rust tests, the compiled-WASM round-trip (`ping(41)→42`),
-typecheck, Vitest, the full production build, **and the in-browser
-worker→WASM→Comlink round-trip (headless Chromium)** all pass. CI is green
-on GitHub Actions (remote wired up — the first push built clean end-to-end).
-Next: Phase 1 (data layer). See §10.
+Status: **Phase 1 complete** (data layer). On top of the Phase 0 scaffold
+(WASM round-trip + `BenchEngine` interface, all gates green in CI), the
+normalized `Dataset` now loads from CSV/JSON imports and seeded synthetic
+generators, with conservative type detection, a KV key-field picker, and
+typed-array marshalling for transfer into WASM. The §10 exit criterion (load a
+real CSV and a generated `sorted` dataset) is met — proven by 39 data-layer
+tests and the in-browser demo. Next: Phase 2 (thin slice — array + hash set
+through both impls + the measurement methodology). See §10.
 
 ---
 
@@ -331,14 +333,14 @@ insert/search/delete group on a shared key type.
 > Strategy: a **thin vertical slice early** to de-risk the whole pipeline before
 > breadth. Specialized structures last.
 
-- **Phase 0 — Scaffold.** Vite + React + TS; `wasm-pack` pipeline; Web Worker +
-  Comlink round-trip ("hello WASM"); `BenchEngine` interface defined; CI green.
-  *Exit:* a number goes TS → Worker → WASM → back, in CI. (If the toolchain is
-  painful here, the interface lets us start with a TS bench fallback — decision
+- **Phase 0 — Scaffold. ✅ done.** Vite + React + TS; `wasm-pack` pipeline; Web
+  Worker + Comlink round-trip ("hello WASM"); `BenchEngine` interface defined; CI
+  green. *Exit:* a number goes TS → Worker → WASM → back, in CI. (If the toolchain
+  is painful here, the interface lets us start with a TS bench fallback — decision
   point recorded.)
 
-- **Phase 1 — Data layer.** Import (CSV/JSON/paste/file), type detection, KV
-  key-field picker, synthetic generators, normalized dataset + typed-array
+- **Phase 1 — Data layer. ✅ done.** Import (CSV/JSON/paste/file), type detection,
+  KV key-field picker, synthetic generators, normalized dataset + typed-array
   marshalling into WASM. *Exit:* load a real CSV and a generated `sorted` dataset.
 
 - **Phase 2 — THIN SLICE (the de-risker).** Two contrasting structures —
