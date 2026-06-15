@@ -14,7 +14,7 @@ methodology, and the phased roadmap.
 
 ## Status
 
-**Phase 2 — thin slice (in progress).** The first vertical slice is in: two
+**Phase 2 — thin slice (complete).** The first vertical slice is in: two
 contrasting structures — an unsorted dynamic array and a separate-chaining hash
 set — run through the Rust/WASM bench engine, the §6.3 search-measurement
 methodology (batch auto-grow past the clock clamp, warm-up, reps, variance), a
@@ -31,8 +31,14 @@ cross-check (per-insert from cumulative build, per-delete from cumulative
 teardown), with the §12 self-test proving the two methods agree. Headless
 Chromium confirms it on the real clock: **array churn O(n) (slope ≈ 1), hash-set
 churn O(1)**, with the finite-difference split reading array delete O(n) and
-insert flat. The only Phase 2 exit work left (§10/§12) is the **string-key**
-bench structures.
+insert flat. The final exit slice — the **string-key bench structures** — has
+now landed: Rust `ArrayStr`/`HashSetStr` built from the offsets+UTF-8 marshal
+layout (§4.2, risk R7), a portable `mix_str` string hash (FNV-1a → SplitMix64)
+with a bit-exact TypeScript twin, the matching string teaching twins, and a
+second cross-language conformance corpus (`conformance/corpus-str.txt`,
+multi-byte UTF-8 included) pinning both languages to identical iteration order
+and per-search op-count. Wiring the string structures into the sweep/chart UI is
+left to the Phase 3/4 breadth work.
 
 **Phase 1 — data layer.** On top of the Phase 0 scaffold (Vite + React +
 TypeScript frontend, a Rust → WASM benchmark engine in a Web Worker via Comlink,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mixF64, toBits } from './mix';
+import { mixF64, mixStr, toBits } from './mix';
 
 /**
  * Anchors captured directly from the Rust `mix_f64` (printed via a `cargo test`
@@ -33,5 +33,38 @@ describe('mixF64 — bit-exact port of Rust mix_f64', () => {
   it('reinterprets the f64 bit pattern (1.0 → 0x3FF0000000000000)', () => {
     expect(toBits(1.0)).toBe(0x3ff0000000000000n);
     expect(toBits(0.0)).toBe(0n);
+  });
+});
+
+/**
+ * Anchors for the string hash, captured from the Rust `mix_str` (the source of
+ * truth). They cover the empty string, ASCII, and multi-byte UTF-8 (an accent,
+ * CJK, an emoji) so byte-length ≠ char-length is exercised — the first line of
+ * defense against a `mixStr` drift before the string conformance corpus.
+ */
+const RUST_MIX_STR: Array<[string, bigint]> = [
+  ['', 17665956581633026203n],
+  ['a', 198367012849983736n],
+  ['abc', 996580060897260808n],
+  ['café', 16195296087438488975n],
+  ['日本語', 8638792154450581254n],
+  ['🍎', 8145269713608364353n],
+];
+
+describe('mixStr — bit-exact port of Rust mix_str', () => {
+  it.each(RUST_MIX_STR)('mixStr(%j) matches Rust', (s, expected) => {
+    expect(mixStr(s)).toBe(expected);
+  });
+
+  it('returns a full 64-bit value (never negative, never f64-lossy)', () => {
+    for (const [s] of RUST_MIX_STR) {
+      const h = mixStr(s);
+      expect(h).toBeGreaterThanOrEqual(0n);
+      expect(h).toBeLessThan(1n << 64n);
+    }
+  });
+
+  it('hashes UTF-8 bytes, so a byte-different key hashes differently', () => {
+    expect(mixStr('café')).not.toBe(mixStr('cafe'));
   });
 });

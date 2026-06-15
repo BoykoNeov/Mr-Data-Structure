@@ -6,12 +6,42 @@
 //! and miss in roughly equal measure.
 
 use bench_engine::structures::dyn_array::ArrayF64;
+use bench_engine::structures::dyn_array_str::ArrayStr;
 use bench_engine::structures::hash_set::HashSetF64;
+use bench_engine::structures::hash_set_str::HashSetStr;
 use proptest::prelude::*;
 
 /// Reference: membership over the raw inserted keys (multiplicity irrelevant).
 fn reference_contains(keys: &[f64], target: f64) -> bool {
     keys.iter().any(|&k| k == target)
+}
+
+/// Reference membership for string keys.
+fn reference_contains_str(keys: &[String], target: &str) -> bool {
+    keys.iter().any(|k| k == target)
+}
+
+/// Marshal string keys into the offsets+UTF-8 layout the string constructors
+/// consume (mirror of `src/data/marshal.ts`).
+fn marshal_strs(keys: &[String]) -> (Vec<u32>, Vec<u8>) {
+    let mut offsets = vec![0u32];
+    let mut bytes = Vec::new();
+    for k in keys {
+        bytes.extend_from_slice(k.as_bytes());
+        offsets.push(bytes.len() as u32);
+    }
+    (offsets, bytes)
+}
+
+/// Distinct keys in first-seen order — the reference for the string set's `len`.
+fn distinct_in_order(keys: &[String]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for k in keys {
+        if !seen.iter().any(|s| s == k) {
+            seen.push(k.clone());
+        }
+    }
+    seen
 }
 
 proptest! {
@@ -115,6 +145,105 @@ proptest! {
             let t = t as f64;
             let removed = s.delete_one_counted(t).0;
             let ref_removed = match model.iter().position(|&k| k == t) {
+                Some(i) => { model.remove(i); true }
+                None => false,
+            };
+            prop_assert_eq!(removed, ref_removed);
+            prop_assert_eq!(s.len(), model.len());
+            prop_assert_eq!(s.search_one_counted(t).0, false); // gone after delete
+        }
+    }
+}
+
+// ── String-key structures (docs/PLAN.md §10) ────────────────────────────────
+//
+// Same properties as the numeric structures, over a small alphabet so keys
+// collide and queries hit/miss in roughly equal measure. Keys are built through
+// the offsets+UTF-8 marshal layout the WASM constructors consume (risk R7).
+
+proptest! {
+    #[test]
+    fn array_str_membership_matches_reference(
+        keys in prop::collection::vec("[a-c]{0,3}", 0..200),
+        queries in prop::collection::vec("[a-c]{0,3}", 1..50),
+    ) {
+        let (offsets, bytes) = marshal_strs(&keys);
+        let a = ArrayStr::new(&offsets, &bytes, keys.len());
+        prop_assert_eq!(a.len(), keys.len()); // array keeps duplicates
+        for q in &queries {
+            prop_assert_eq!(a.search_one_counted(q).0, reference_contains_str(&keys, q));
+        }
+    }
+
+    #[test]
+    fn hashset_str_membership_matches_reference(
+        keys in prop::collection::vec("[a-c]{0,3}", 0..200),
+        queries in prop::collection::vec("[a-c]{0,3}", 1..50),
+    ) {
+        let (offsets, bytes) = marshal_strs(&keys);
+        let s = HashSetStr::new(&offsets, &bytes, keys.len());
+
+        // Set semantics: stored count equals the number of distinct keys.
+        prop_assert_eq!(s.len(), distinct_in_order(&keys).len());
+        // Load-factor policy must keep chains short regardless of input.
+        prop_assert!(s.max_chain() <= 8, "max chain {}", s.max_chain());
+
+        for q in &queries {
+            prop_assert_eq!(s.search_one_counted(q).0, reference_contains_str(&keys, q));
+        }
+    }
+
+    /// The two string structures must agree with each other on every query — the
+    /// result-equality precursor to the cross-language conformance corpus.
+    #[test]
+    fn array_and_hashset_str_agree(
+        keys in prop::collection::vec("[a-c]{0,3}", 0..200),
+        queries in prop::collection::vec("[a-c]{0,3}", 1..50),
+    ) {
+        let (offsets, bytes) = marshal_strs(&keys);
+        let a = ArrayStr::new(&offsets, &bytes, keys.len());
+        let s = HashSetStr::new(&offsets, &bytes, keys.len());
+        for q in &queries {
+            prop_assert_eq!(a.search_one_counted(q).0, s.search_one_counted(q).0);
+        }
+    }
+
+    /// String array delete (ordered shift-compact) must track a `Vec` reference
+    /// through an interleaved delete sequence, preserving iteration order.
+    #[test]
+    fn array_str_delete_matches_reference(
+        keys in prop::collection::vec("[a-c]{0,2}", 0..120),
+        targets in prop::collection::vec("[a-c]{0,2}", 0..60),
+    ) {
+        let (offsets, bytes) = marshal_strs(&keys);
+        let mut a = ArrayStr::new(&offsets, &bytes, keys.len());
+        let mut model = keys.clone();
+        for t in &targets {
+            let removed = a.delete_one_counted(t).0;
+            let ref_removed = match model.iter().position(|k| k == t) {
+                Some(i) => { model.remove(i); true }
+                None => false,
+            };
+            prop_assert_eq!(removed, ref_removed);
+            prop_assert_eq!(a.len(), model.len());
+            prop_assert_eq!(a.keys_in_order(), model.clone());
+        }
+    }
+
+    /// String hash-set delete (hash + chain-remove preserving chain order) must
+    /// track a distinct-key set reference, with membership and `len` agreeing
+    /// after every operation.
+    #[test]
+    fn hashset_str_delete_matches_reference(
+        keys in prop::collection::vec("[a-c]{0,2}", 0..120),
+        targets in prop::collection::vec("[a-c]{0,2}", 0..60),
+    ) {
+        let (offsets, bytes) = marshal_strs(&keys);
+        let mut s = HashSetStr::new(&offsets, &bytes, keys.len());
+        let mut model = distinct_in_order(&keys);
+        for t in &targets {
+            let removed = s.delete_one_counted(t).0;
+            let ref_removed = match model.iter().position(|k| k == t) {
                 Some(i) => { model.remove(i); true }
                 None => false,
             };

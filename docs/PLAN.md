@@ -4,7 +4,7 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 2 in progress** — the thin slice's *headline* has landed. An
+Status: **Phase 2 complete** — the thin slice's *headline* has landed. An
 unsorted dynamic array and a separate-chaining hash set now run through the
 Rust/WASM engine, the §6.3 search-measurement methodology (pure, testable
 orchestration + batched WASM primitives), the §7.2 complexity-class fitter, and
@@ -14,14 +14,18 @@ search → O(1) (slope ≈ 0)**. The dual-impl spine (§2.1) is now closed for b
 structures: TypeScript teaching twins run the same algorithm, and a
 cross-language conformance corpus (§12, R1) holds the two languages to identical
 iteration order and per-search op-count. The **size-mutating methodology (§6.3)
-has now landed**: insert/delete via churn (the combined-cost primary) plus the
+has landed**: insert/delete via churn (the combined-cost primary) plus the
 finite-difference cross-check (per-insert from cumulative build, per-delete from
 cumulative teardown), with the §12 self-test proving the two methods agree. On
 the real browser clock the headline holds — **array churn → O(n) (slope ≈ 1),
 hash-set churn → O(1)**; the finite-difference split reads array delete O(n) /
-insert flat. The only Phase 2 exit work left (§10/§12) is the **string-key bench
-structures**. (Phase 1 — data layer — is complete: CSV/JSON + generators →
-normalized `Dataset` + marshalling.) See §10.
+insert flat. The final exit slice — the **string-key bench structures** — has
+landed too: Rust `ArrayStr`/`HashSetStr` built from the offsets+UTF-8 marshal
+layout (§4.2, R7), the portable `mix_str` string hash with a bit-exact TS twin,
+the string teaching twins, and a second conformance corpus (`corpus-str.txt`,
+multi-byte UTF-8 included). Wiring the string structures into the sweep/chart is
+deferred to Phase 3/4 breadth. (Phase 1 — data layer — is complete: CSV/JSON +
+generators → normalized `Dataset` + marshalling.) See §10.
 
 ---
 
@@ -358,7 +362,7 @@ insert/search/delete group on a shared key type.
   KV key-field picker, synthetic generators, normalized dataset + typed-array
   marshalling into WASM. *Exit:* load a real CSV and a generated `sorted` dataset.
 
-- **Phase 2 — THIN SLICE (the de-risker). 🚧 in progress.** Two contrasting
+- **Phase 2 — THIN SLICE (the de-risker). ✅ done.** Two contrasting
   structures — **dynamic array + hash set** — fully through *both* impls (TS
   teaching + Rust bench), the **measurement methodology of §6.3**, and one
   comparison chart.
@@ -389,10 +393,20 @@ insert/search/delete group on a shared key type.
     and that both methods infer the same class. Proven on the real browser clock
     (`verify:browser`): array churn slope ≈ 1.04 (R² 1.000), hash-set churn slope
     ≈ 0.01; array delete slope ≈ 0.96 (R² 0.999).
-  - **Remaining for Phase 2 exit:** the **string-key** bench structures — the next
-    pairing, landing the Rust + TS string variants together so both languages
-    exercise the offsets+UTF-8 marshal layout (and the string conformance corpus)
-    at once.
+  - **Done (string-key structures — Phase 2 exit):** Rust `ArrayStr` +
+    `HashSetStr` built from the offsets+UTF-8 marshal layout (§4.2, R7) with the
+    same op-counters + proptest as the numeric pair; a portable `mix_str` string
+    hash (64-bit FNV-1a over the UTF-8 bytes → SplitMix64, factored to share the
+    `splitmix64` finalizer with `mix_f64`) with a bit-exact TS twin and pinned
+    anchors on both sides; the **TS string teaching twins** (`DynArrayStr`,
+    `HashSetStr`); and a **second cross-language conformance corpus**
+    (`conformance/corpus-str.txt`) whose cases include **multi-byte UTF-8** keys
+    (accents, CJK, an emoji — byte-length ≠ char-length), pinning identical
+    iteration order and per-search op-count across the two languages. The
+    empty-string / `offsets[i]==offsets[i+1]` edge is covered by the structures'
+    constructor tests (where the marshal decode lives). Wiring these into the
+    sweep/chart UI — the only thing not done — is left to Phase 3/4 breadth, as
+    the §10 success criterion (the numeric O(n) vs O(1) chart) is already met.
 
 - **Phase 3 — Visualization breadth.** Mature animation (step controls,
   rotations, rehash, probing); add teaching impls for remaining Linear + Tree

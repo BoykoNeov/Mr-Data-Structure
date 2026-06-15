@@ -10,32 +10,82 @@
 //! (§6.4) calls the same code with `COUNT = true`. One algorithm, no drift
 //! between what is timed and what is counted.
 //!
-//! Phase 2 implements the number-key path (`f64`) — the sweep/demo uses numeric
-//! generators (`generateSorted`). String-key structures land with the TS
-//! teaching impls + conformance corpus (docs/PLAN.md §10, Phase 2 batch 4),
-//! where both languages exercise the offsets+UTF-8 marshal layout together.
+//! Phase 2 implements both key paths: the number-key structures (`f64` —
+//! `dyn_array::ArrayF64`, `hash_set::HashSetF64`) and the string-key structures
+//! (`dyn_array_str::ArrayStr`, `hash_set_str::HashSetStr`), the latter built
+//! from the offsets+UTF-8 marshal layout (docs/PLAN.md §4.2, risk R7). Each key
+//! type carries its own portable hash (`mix_f64`, `mix_str`) with a bit-exact
+//! TypeScript twin (`src/structures/mix.ts`) and a cross-language conformance
+//! corpus (docs/PLAN.md §12), so the two languages stay in lockstep.
 
 pub mod dyn_array;
+pub mod dyn_array_str;
 pub mod hash_set;
+pub mod hash_set_str;
 
 #[cfg(test)]
 mod conformance;
 
-/// SplitMix64 finalizer over the f64 bit pattern — a cheap, well-distributed
-/// integer hash for numeric keys. Consecutive integers (the `sorted` generator)
-/// have very different IEEE-754 bit patterns once mixed, so chains stay short and
-/// hash-set search reads as O(1) (docs/PLAN.md §8).
+/// Decode the first `n` keys of an offsets+UTF-8-bytes marshal buffer
+/// (docs/PLAN.md §4.2) into owned `String`s. `offsets` has length `count + 1`
+/// with `offsets[i]..offsets[i+1]` bounding key `i` (`offsets[0] == 0`); `n` is
+/// clamped to the available `count`. Shared by both string structures so each
+/// builds from the *same* layout the TS marshaller (`src/data/marshal.ts`)
+/// produces — the concrete exercise of risk R7.
+pub(crate) fn decode_keys(offsets: &[u32], bytes: &[u8], n: usize) -> Vec<String> {
+    let count = offsets.len().saturating_sub(1);
+    let n = n.min(count);
+    (0..n)
+        .map(|i| {
+            let (a, b) = (offsets[i] as usize, offsets[i + 1] as usize);
+            std::str::from_utf8(&bytes[a..b])
+                .expect("marshalled keys must be valid UTF-8")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// SplitMix64 finalizer — a cheap, strong bit-avalanche over a 64-bit value.
+/// Both key hashes route their raw integer through this so chains stay short
+/// (and hash-set search reads as O(1), docs/PLAN.md §8) regardless of how
+/// clustered the inputs are.
 #[inline]
-pub fn mix_f64(x: f64) -> u64 {
-    let mut z = x.to_bits();
+pub fn splitmix64(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
 }
 
+/// Hash for numeric keys: the SplitMix64 finalizer over the f64 bit pattern.
+/// Consecutive integers (the `sorted` generator) have very different IEEE-754
+/// bit patterns once mixed, so chains stay short and hash-set search reads as
+/// O(1) (docs/PLAN.md §8).
+#[inline]
+pub fn mix_f64(x: f64) -> u64 {
+    splitmix64(x.to_bits())
+}
+
+/// Hash for string keys: 64-bit FNV-1a over the UTF-8 bytes, then the SplitMix64
+/// finalizer for avalanche (FNV-1a alone mixes its *low* bits — the ones the
+/// bucket mask reads — poorly). FNV-1a is byte-oriented and uses only wrapping
+/// xor/multiply, so the TypeScript twin (`src/structures/mix.ts`, `mixStr`) is
+/// bit-exact. Hashing the UTF-8 *bytes* (not chars) is what binds the two
+/// languages to the same marshal layout (docs/PLAN.md §4.2, §12).
+#[inline]
+pub fn mix_str(s: &str) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut h = FNV_OFFSET;
+    for &b in s.as_bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    splitmix64(h)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::mix_f64;
+    use super::{mix_f64, mix_str};
 
     /// Pinned anchors shared with the TypeScript port (src/structures/mix.ts).
     /// These are the contract the two hashes meet on; the TS unit test asserts
@@ -50,6 +100,21 @@ mod tests {
         assert_eq!(mix_f64(0.5), 306524380890059637);
         assert_eq!(mix_f64(-1.0), 5045323167042602119);
         assert_eq!(mix_f64(1_000_000.0), 4119586053111418004);
+    }
+
+    /// Anchors for the string hash, shared with the TS port (`mixStr`). Inputs
+    /// cover the empty string, ASCII, and multi-byte UTF-8 (an accent, CJK, and
+    /// an emoji) so byte-length ≠ char-length is exercised. The TS unit test
+    /// asserts the same values, catching a hash drift on either side before the
+    /// full conformance corpus (docs/PLAN.md §12).
+    #[test]
+    fn mix_str_matches_pinned_anchors() {
+        assert_eq!(mix_str(""), 17665956581633026203);
+        assert_eq!(mix_str("a"), 198367012849983736);
+        assert_eq!(mix_str("abc"), 996580060897260808);
+        assert_eq!(mix_str("café"), 16195296087438488975);
+        assert_eq!(mix_str("日本語"), 8638792154450581254);
+        assert_eq!(mix_str("🍎"), 8145269713608364353);
     }
 }
 
