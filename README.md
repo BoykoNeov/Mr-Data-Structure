@@ -14,6 +14,22 @@ methodology, and the phased roadmap.
 
 ## Status
 
+**Phase 3 — visualization breadth (in progress; animation engine landed).**
+The step-through exploration spine is in for the two proven structures. Each
+teaching twin emits a typed **step-event** stream via an optional tracer that's
+threaded *alongside* the op-count logic — so a search animation shows exactly the
+comparisons/probes the benchmark counts (a stream's cost-event count equals its
+op-count, pinned against the Rust corpus); the untraced path is byte-identical,
+so conformance is unchanged. A structure-agnostic pure **Player** drives
+play / pause / step / step-back / speed (step-back replays the event prefix — no
+reverse-ops), and plain-SVG renderers animate the array (cells + shift-compact
+slide) and the hash set (buckets/chains + hash/probe highlight + animated rehash
+redistribution). The `delete` op is now in the TS array + hash-set twins too
+(ordered shift-compact / order-preserving chain-remove, mirroring Rust). It's
+wired into the app beside — and without disturbing — the Phase 2 sweep, and
+renders in headless Chromium. No new dependencies. Up next: breadth (sorted
+array, linked lists, BST, AVL, heap — teaching + viz).
+
 **Phase 2 — thin slice (complete).** The first vertical slice is in: two
 contrasting structures — an unsorted dynamic array and a separate-chaining hash
 set — run through the Rust/WASM bench engine, the §6.3 search-measurement

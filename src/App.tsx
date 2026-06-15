@@ -4,6 +4,7 @@ import type { BenchEngine } from './bench/BenchEngine';
 import { geometricSweep } from './bench/sweep';
 import { fitComplexity } from './bench/fit';
 import { SweepChart, type SeriesView, type Signal } from './ui/SweepChart';
+import { VizPanel } from './viz/VizPanel';
 import { generateSorted, marshalKeys } from './data';
 
 /**
@@ -129,7 +130,8 @@ export function App() {
     <main style={{ fontFamily: 'system-ui, sans-serif', padding: 24, lineHeight: 1.6 }}>
       <h1>Mr Data Structure</h1>
       <p style={{ color: '#666' }}>
-        Phase 2 — empirical complexity: array vs hash set, <code>search</code>
+        Phase 3 — explore (step-through animation) · Phase 2 — empirical
+        complexity (sweep below)
       </p>
 
       <ul>
@@ -140,6 +142,16 @@ export function App() {
           engine: <code>{version || '—'}</code>
         </li>
       </ul>
+
+      <section style={{ marginTop: 8 }}>
+        <h2 style={{ fontSize: 18, marginBottom: 4 }}>Explore</h2>
+        <p style={{ color: '#666', marginTop: 0 }}>
+          Run <code>insert</code> / <code>search</code> / <code>delete</code> and
+          step through the comparisons, probes, shifts, and rehashes — the same
+          algorithm the benchmark measures (docs/PLAN.md §2.1, §5).
+        </p>
+        <VizPanel />
+      </section>
 
       {views.length > 0 && (
         <section style={{ marginTop: 16 }}>

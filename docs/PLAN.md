@@ -4,7 +4,13 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 2 complete** — the thin slice's *headline* has landed. An
+Status: **Phase 2 complete; Phase 3 underway (animation engine — batch 1).**
+The step-through visualization spine now exists: the array + hash-set teaching
+twins emit a typed step-event stream (cost events == op-count, pinned to the Rust
+corpus), a pure Player drives play/step/step-back, and SVG renderers animate the
+comparisons, shifts, chain probes, and rehash redistribution — wired into the app
+beside the Phase 2 sweep (which is untouched). Details in §10. The thin slice's
+*headline* (Phase 2) has landed. An
 unsorted dynamic array and a separate-chaining hash set now run through the
 Rust/WASM engine, the §6.3 search-measurement methodology (pure, testable
 orchestration + batched WASM primitives), the §7.2 complexity-class fitter, and
@@ -411,6 +417,27 @@ insert/search/delete group on a shared key type.
 - **Phase 3 — Visualization breadth.** Mature animation (step controls,
   rotations, rehash, probing); add teaching impls for remaining Linear + Tree
   structures + heap.
+  - **Done (batch 1 — the animation engine, on the two proven structures):** a
+    typed **step-event model** (`src/viz/events.ts`) the teaching impls emit via
+    an optional tracer threaded *alongside* the op-count logic — so a search
+    stream's cost-event count equals its op-count, pinned against the Rust corpus
+    (`src/viz/trace.test.ts`) so the animation shows *exactly* what the benchmark
+    counts (§2.1, R1); the untraced path stays byte-identical (conformance
+    unchanged). A structure-agnostic pure **Player** (`src/viz/player.ts`,
+    materialized event list + frame cursor; step-back folds `events[0..f)` — no
+    reverse-ops) with a React `usePlayer` (play/pause/step/back/seek/speed). Pure
+    **fold reducers** (`src/viz/model.ts`) validated *against the real algorithm*
+    (fold of an op's events == the structure's post-op state, including rehash
+    relocation with stable ids). Plain-SVG renderers (array cells with
+    shift-compact slide; hash buckets/chains with probe + animated rehash
+    redistribution), step controls, and the `VizPanel` exploration UI wired
+    additively into `App.tsx` (Phase 2 sweep + its `__sweepProof` mirrors
+    intact). `delete` added to the TS array + hash-set teaching twins (ordered
+    shift-compact / order-preserving chain-remove, mirroring Rust). Verified
+    rendering in headless Chromium alongside the unchanged sweep gate. **No new
+    deps.** Remaining: breadth — sorted array, linked lists (batch 2), BST
+    (batch 3), AVL + heap (batch 4), each TS-teaching + viz only (Rust twins are
+    Phase 4).
 
 - **Phase 4 — Benchmark breadth + methodology hardening.** Warm-up/reps/variance,
   op-counters, churn + finite-difference isolation validated against each other,
