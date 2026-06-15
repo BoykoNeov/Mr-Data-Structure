@@ -18,17 +18,18 @@ let ok = false;
 let proof = null;
 let mutation = null;
 let bst = null;
+let avl = null;
 let text = '(no text captured)';
 const checks = [];
 
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  // The sweeps run in a worker; wait until the BST mutation proof publishes (it is
-  // set last, after search + the array/hashset mutation sweep), or the app reports
-  // an error. Generous timeout — the sweeps do real timed work.
+  // The sweeps run in a worker; wait until the AVL mutation proof publishes (it is
+  // set last, after search + the array/hashset and BST mutation sweeps), or the app
+  // reports an error. Generous timeout — the sweeps do real timed work.
   await page.waitForFunction(
     () =>
-      window.__bstMutationProof !== undefined ||
+      window.__avlMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
     { timeout: 60000 },
   );
@@ -36,6 +37,7 @@ try {
   proof = await page.evaluate(() => window.__sweepProof ?? null);
   mutation = await page.evaluate(() => window.__mutationProof ?? null);
   bst = await page.evaluate(() => window.__bstMutationProof ?? null);
+  avl = await page.evaluate(() => window.__avlMutationProof ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
 
@@ -104,6 +106,24 @@ try {
     }
   }
 
+  // AVL mutation (docs/PLAN.md §6.3, §8 trees): the *balanced* tree bench twin on the
+  // same shuffled (uniform) dataset as the BST. Like the BST, the real clock is too
+  // noisy for the absolute-ns churn-vs-fd claim (proven clock-free in Rust); here we
+  // confirm the worker→WASM AVL path resolves and that balanced-tree mutation is
+  // **sub-linear** (O(log n)) — far flatter than the array's O(n) churn.
+  if (avl) {
+    const aChurn = avl.find((m) => m.structure === 'avl' && m.op === 'churn');
+    want('three AVL mutation series measured', avl.length === 3);
+    if (aChurn) {
+      const ratio = aChurn.lastNanos / aChurn.firstNanos;
+      want(
+        `AVL churn sub-linear (slope ${aChurn.slope.toFixed(2)} < 0.6)`,
+        aChurn.slope < 0.6,
+      );
+      want(`AVL churn stays near-flat (ratio ${ratio.toFixed(1)} < 6)`, ratio < 6);
+    }
+  }
+
   ok = checks.length > 0 && checks.every((c) => c.pass);
 } catch (err) {
   logs.push(`[harness] ${err.message}`);
@@ -124,6 +144,10 @@ if (mutation) {
 if (bst) {
   console.log('--- bst mutation proof ---');
   console.log(JSON.stringify(bst, null, 2));
+}
+if (avl) {
+  console.log('--- avl mutation proof ---');
+  console.log(JSON.stringify(avl, null, 2));
 }
 if (checks.length) {
   console.log('--- checks ---');

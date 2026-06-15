@@ -5,6 +5,7 @@ import init, {
   ArrayF64,
   HashSetF64,
   BstF64,
+  AvlF64,
 } from '../../bench-engine/pkg/bench_engine.js';
 import {
   measureSweep,
@@ -266,6 +267,39 @@ const api = {
       opts,
     );
     return [{ structure: 'bst', op: 'churn', points: churn }, fd.insert, fd.delete];
+  },
+  /**
+   * Run the §6.3 size-mutating measurement for the **AVL** (the balanced tree bench
+   * twin) across `sizes`: the churn primary plus the finite-difference split, as three
+   * series (`churn`, `insert`, `delete`) tagged `'avl'`. A separate call from
+   * {@link runBstMutationSweep} for per-structure tagging and an independent input
+   * choice — **not** because the AVL is data-shape-sensitive: it rebalances regardless
+   * of input order, so unlike the BST it is safe on sorted input too. The AVL satisfies
+   * the same churn/build/teardown surface, so this reuses the exact runner factories the
+   * array/hash set/BST use. On the real browser clock the headline is that AVL mutation
+   * stays **sub-linear** (O(log n)) — the balanced contrast to the array's O(n). The
+   * deterministic op-count finding (AVL stays O(log n) where the BST degenerates on
+   * sorted input; churn ≈ the finite-difference sum) is proven clock-free in Rust
+   * (`structures::methodology`). `keys` is transferred in by the caller.
+   */
+  async runAvlMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const Ctor = AvlF64 as unknown as MutationStructCtor;
+    const churn = measureSweep(sizes, churnRunnerFactory(Ctor, keys), now, opts);
+    const fd = measureMutationFd(
+      'avl',
+      sizes,
+      buildRunnerFactory(Ctor, keys),
+      buildTeardownRunnerFactory(Ctor, keys),
+      now,
+      opts,
+    );
+    return [{ structure: 'avl', op: 'churn', points: churn }, fd.insert, fd.delete];
   },
 };
 

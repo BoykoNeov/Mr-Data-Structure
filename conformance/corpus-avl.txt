@@ -1,0 +1,83 @@
+# Mr Data Structure — AVL conformance corpus (docs/PLAN.md §8, §12).
+# Generated from the Rust bench impl; the TS teaching twin must match.
+# Op-count = comparisons + rotations. Regenerate: cargo test -- --ignored regen_corpus_avl
+
+case empty
+keys 
+probes 1 2
+avl_order 
+avl_search 0:0 0:0
+avl_shape .
+deletes 1
+avl_delete 0:0
+avl_shape_after .
+
+case singleton
+keys 42
+probes 42 7
+avl_order 42
+avl_search 1:1 0:1
+avl_shape 42 . .
+deletes 42
+avl_delete 1:1
+avl_shape_after .
+
+case sorted_stays_balanced
+keys 10 20 30 40 50 60 70
+probes 10 70 35
+avl_order 10 20 30 40 50 60 70
+avl_search 1:3 1:3 0:3
+avl_shape 40 20 10 . . 30 . . 60 50 . . 70 . .
+deletes 10 20
+avl_delete 1:3 1:2
+avl_shape_after 40 30 . . 60 50 . . 70 . .
+
+case descending
+keys 70 60 50 40 30 20 10
+probes 70 10 5
+avl_order 10 20 30 40 50 60 70
+avl_search 1:3 1:3 0:3
+avl_shape 40 20 10 . . 30 . . 60 50 . . 70 . .
+deletes 70 60
+avl_delete 1:3 1:2
+avl_shape_after 40 20 10 . . 30 . . 50 . .
+
+case double_rotations
+keys 50 30 70 60 80 65
+probes 65 99
+avl_order 30 50 60 65 70 80
+avl_search 1:3 0:3
+avl_shape 60 50 30 . . . 70 65 . . 80 . .
+deletes 80
+avl_delete 1:3
+avl_shape_after 60 50 30 . . . 70 65 . . .
+
+case equal_right
+keys 50 50 50 70
+probes 50 70 99
+avl_order 50 50 50 70
+avl_search 1:1 1:3 0:3
+avl_shape 50 50 . . 50 . 70 . .
+deletes 50
+avl_delete 1:1
+avl_shape_after 50 50 . . 70 . .
+
+case delete_rebalance
+keys 20 10 30 5
+probes 5 30
+avl_order 5 10 20 30
+avl_search 1:3 1:2
+avl_shape 20 10 5 . . . 30 . .
+deletes 30
+avl_delete 1:3
+avl_shape_after 10 5 . . 20 . .
+
+case hibbard
+keys 50 30 70 20 40 60 80
+probes 50 20 35
+avl_order 20 30 40 50 60 70 80
+avl_search 1:1 1:3 0:3
+avl_shape 50 30 20 . . 40 . . 70 60 . . 80 . .
+deletes 30 70 50
+avl_delete 1:2 1:2 1:1
+avl_shape_after 60 40 20 . . . 80 . .

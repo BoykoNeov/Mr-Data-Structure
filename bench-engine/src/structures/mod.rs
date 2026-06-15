@@ -20,8 +20,12 @@
 //!
 //! Phase 4 begins the tree family: `bst::BstF64` is the bench twin of the
 //! `src/structures/bst.ts` teaching impl (comparisons cost metric, Hibbard delete),
-//! pinned to it by the `conformance/corpus-bst.txt` corpus.
+//! pinned to it by the `conformance/corpus-bst.txt` corpus; `avl::AvlF64` adds the
+//! balanced twin (comparisons **+ rotations**), recursive rather than arena-backed
+//! because the AVL invariant bounds its height and removes the BST's stack-overflow
+//! hazard, pinned by `conformance/corpus-avl.txt`.
 
+pub mod avl;
 pub mod bst;
 pub mod dyn_array;
 pub mod dyn_array_str;
@@ -133,6 +137,7 @@ mod tests {
 /// `churn(n) ≈ insert_fd(n) + delete_fd(n)`.
 #[cfg(test)]
 mod methodology {
+    use super::avl::AvlF64;
     use super::bst::BstF64;
     use super::dyn_array::ArrayF64;
     use super::hash_set::HashSetF64;
@@ -261,5 +266,76 @@ mod methodology {
         // (2) Both are O(log n), nowhere near the chain's O(n): far below n/10 = 400.
         assert!(churn < 400.0, "balanced churn {churn} must stay O(log n) ≪ n");
         assert!(sum < 400.0, "balanced fd sum {sum} must stay O(log n) ≪ n");
+    }
+
+    // ── AVL: balance changes the methodology story twice over.
+    //
+    // (a) The headline that motivates the structure: where the BST degenerates on sorted
+    //     input to an O(n) chain, the AVL rotates and stays O(log n). That is a *deterministic
+    //     op-count* claim, so it belongs here — the clock-free home for a numeric finding —
+    //     not in the noisy browser proof (which only reads slope).
+    // (b) The churn-vs-finite-difference question, answered a *third* way: unlike the array
+    //     (tight) and the balanced BST (the FD sum overshoots), for the AVL the two methods
+    //     agree closely AND churn marginally *exceeds* the FD sum — because churn's insert
+    //     rides the full-height right spine while `insert_fd` reflects the shallower *average*
+    //     depth. The gap is small because an AVL's height and average depth differ only by
+    //     ~1.44×, not the random BST's ~2× (docs/PLAN.md §2.3, §6.3).
+
+    /// The AVL defeats the exact input that kills the BST. Built from the *same* sorted keys:
+    /// the BST is a right chain (search-max = n comparisons, build = Σ i = O(n²)); the AVL is
+    /// balanced (search-max ≤ height = O(log n), build = O(n log n)). Deterministic, so the
+    /// wide-margin inequalities never flake.
+    #[test]
+    fn avl_stays_log_n_where_the_bst_degenerates_on_sorted_input() {
+        let n = 1023usize;
+        let sorted = keys(n + 1); // 0..=1023, ascending
+        let max = n as f64; // 1023.0, the rightmost key
+
+        let bst = BstF64::new(&sorted, n + 1);
+        let avl = AvlF64::new(&sorted, n + 1);
+
+        // Search the maximum: the BST walks the whole chain; the AVL walks ≤ its height.
+        let (bst_found, bst_ops) = bst.search_one_counted(max);
+        let (avl_found, avl_ops) = avl.search_one_counted(max);
+        assert!(bst_found && avl_found);
+        assert_eq!(bst_ops, (n + 1) as u64, "sorted BST search-max is O(n) — the full chain");
+        assert!(avl_ops <= 20, "AVL search-max {avl_ops} must be O(log n) ≪ {}", n + 1);
+
+        // Build cost: the chain pays Σ i = O(n²); the balanced tree pays O(n log n). The AVL's
+        // total build comparisons+rotations are an order of magnitude below the BST's.
+        let bst_build = BstF64::build_insert_counted(&sorted, n + 1);
+        let avl_build = AvlF64::build_insert_counted(&sorted, n + 1);
+        assert!(
+            avl_build * 10.0 < bst_build,
+            "AVL build {avl_build} must be ≪ BST build {bst_build} on sorted input"
+        );
+    }
+
+    /// On a balanced (shuffled) tree the churn primary and the finite-difference sum agree
+    /// closely — both O(log n), within ~15% — with churn marginally the larger (its insert
+    /// rides the full-height spine, vs the shallower average `insert_fd`). The *opposite*
+    /// direction from the balanced BST's overshoot, reported rather than buried.
+    #[test]
+    fn avl_churn_and_finite_differences_agree_closely() {
+        let ks = shuffled(4000);
+        let (n1, n2) = (2000usize, 4000usize); // wide span denoises the per-op estimate
+        let insert_fd = (AvlF64::build_insert_counted(&ks, n2)
+            - AvlF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (AvlF64::teardown_counted(&ks, n2) - AvlF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut t = AvlF64::new(&ks, n2);
+        t.set_churn_key(n2 as f64 + 1.0); // 4000.0: absent and the new maximum
+        let churn = t.churn_counted();
+        let sum = insert_fd + delete_fd;
+
+        // (1) Close agreement — far tighter than the random BST's overshoot.
+        let rel = (churn - sum).abs() / churn;
+        assert!(rel < 0.15, "AVL churn {churn} vs fd sum {sum} should agree (rel {rel})");
+        // (2) churn rides the deepest (full-height) spine, so it is the marginally larger.
+        assert!(churn >= sum, "AVL churn {churn} should be ≥ fd sum {sum} (full-spine probe)");
+        // (3) Both are O(log n), nowhere near a chain's O(n): far below n/50 = 80.
+        assert!(churn < 80.0 && sum < 80.0, "AVL churn {churn} / sum {sum} must stay O(log n)");
     }
 }

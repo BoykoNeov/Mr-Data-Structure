@@ -14,8 +14,8 @@ methodology, and the phased roadmap.
 
 ## Status
 
-**Phase 4 — benchmark breadth + methodology hardening (in progress; the BST bench
-twin landed).** The first production (Rust→WASM) twin of a Phase 3 teaching-only
+**Phase 4 — benchmark breadth + methodology hardening (in progress; the BST and AVL
+bench twins landed).** The first production (Rust→WASM) twin of a Phase 3 teaching-only
 structure is in: `bst::BstF64`, the bench twin of `src/structures/bst.ts`. It is an
 **iterative, index-arena** multiset BST (`key < node` ⇒ left, else right; equal keys
 go right) — a `Vec<Node{value, left, right: Option<u32>}>` arena walked with loops,
@@ -53,6 +53,28 @@ the array), but on a **balanced** tree the finite-difference sum *overshoots* ch
 rides the cheap right spine while the build pays each key's average depth), so the methods
 agree only in complexity class — reported, not buried. No chart wiring yet (deferred
 breadth, like the string structures). No new dependencies.
+
+The **balanced AVL bench twin** (`avl::AvlF64`) now joins it — the bench twin of
+`src/structures/avl.ts`, same ordering and Hibbard delete as the BST but with the cost
+metric **comparisons + rotations** (single rotation = 1, double = 2; the height/balance
+arithmetic and the successor walk count nothing). It is deliberately a **recursive
+`Box<Node>` tree, not** the BST's arena: the AVL invariant bounds height at ≈ 29 for a
+million keys, so the stack-overflow hazard that forced the BST's arena is gone — and the
+recursive form mirrors the recursive teaching twin almost line-for-line, the surest guard
+against op-count drift (R1). Pinned by **`conformance/corpus-avl.txt`** whose cases force
+every rotation kind (single LL/RR, double LR/RL, equal-keys-then-rebalance, and a *delete*
+that triggers a rotation) — the shape pin is the only cross-language witness that the same
+rotations fired, since in-order can't see them. A **proptest** adds the AVL-specific
+property: the balance factor stays in {−1,0,+1} at every node after every random op. The
+full timed harness + `runAvlMutationSweep` wire it through the same `measure.ts`
+machinery (a separate sweep call for per-structure tagging, **not** for shape-sensitivity
+— the AVL balances on any input), and `verify:browser` confirms balanced-tree churn is
+**sub-linear** on the real clock. Two findings live in the clock-free Rust self-test: the
+AVL stays **O(log n) on the exact sorted input that degenerates the BST to an O(n) chain**
+(a deterministic op-count contrast), and — a third answer to the churn-vs-finite-difference
+question — the two methods here **agree closely** (within ~6%), with churn marginally the
+larger (it rides the full-height spine, vs the shallower average insert). No new
+dependencies.
 
 **Phase 3 — visualization breadth (complete; animation engine, linear breadth,
 the BST, plus the AVL tree + min-heap landed).** The step-through exploration spine is in for the two proven

@@ -60,6 +60,21 @@ export interface BenchEngine {
     opts?: MeasureOptions,
   ): Promise<SweepSeries[]>;
 
+  /**
+   * Measure the size-mutating ops for the **AVL** bench twin across a size sweep
+   * (docs/PLAN.md §6.3, §8 trees) — three {@link SweepSeries} (`churn`, `insert`,
+   * `delete`) tagged `'avl'`. A separate call from {@link runBstMutationSweep} not
+   * because the AVL is data-shape-sensitive (it is *not* — it balances regardless of
+   * input order, which is the whole point), but for per-structure series tagging and an
+   * independent input choice. As with the other sweeps, the engine may transfer
+   * (consume) the `keys` buffer.
+   */
+  runAvlMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
   /** Release the worker / underlying resources. */
   dispose(): void;
 }

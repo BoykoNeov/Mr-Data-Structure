@@ -152,6 +152,40 @@ export function App() {
         (window as unknown as { __bstMutationProof?: MutationProof[] }).__bstMutationProof =
           bstProof;
 
+        // AVL mutation sweep (docs/PLAN.md §6.3, §8 trees): the *balanced* tree bench twin
+        // through the same churn + finite-difference machinery. Fed the **same shuffled
+        // (uniform)** dataset as the BST — apples-to-apples — because for the churn sweep
+        // sorted vs shuffled is identical (the AVL balances at build time either way), so
+        // sorted buys nothing the sweep measures. On the real clock this confirms the
+        // worker→WASM AVL path resolves and that balanced-tree mutation is sub-linear
+        // (O(log n)). The deterministic contrast that motivates the AVL — it stays O(log n)
+        // on the exact sorted input that degenerates the BST to an O(n) chain — is a numeric
+        // op-count claim, proven clock-free in Rust (`structures::methodology`).
+        setStatus('running AVL mutation sweep…');
+        const avlDataset = generateUniform(MUT_MAX, 0, MUT_MAX, false, 11);
+        const avlMarshalled = marshalKeys(avlDataset);
+        if (avlMarshalled.keyType !== 'number') throw new Error('expected numeric keys');
+        const avlSizes = geometricSweep(MUT_MIN, MUT_MAX);
+        const avlSeries = await engine.runAvlMutationSweep(avlMarshalled.values, avlSizes, MUT_OPTS);
+
+        const avlProof: MutationProof[] = avlSeries.map((s) => {
+          const fit = fitComplexity(
+            s.points.map((p) => p.n),
+            s.points.map((p) => p.nanosPerOp),
+          );
+          return {
+            structure: s.structure,
+            op: s.op,
+            best: fit.best,
+            slope: fit.logLogSlope,
+            r2: fit.r2,
+            firstNanos: s.points[0].nanosPerOp,
+            lastNanos: s.points[s.points.length - 1].nanosPerOp,
+          };
+        });
+        (window as unknown as { __avlMutationProof?: MutationProof[] }).__avlMutationProof =
+          avlProof;
+
         setStatus('ready');
       } catch (err) {
         setStatus('error: ' + (err as Error).message);
