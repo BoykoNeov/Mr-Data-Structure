@@ -16,41 +16,73 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
 
 let ok = false;
 let proof = null;
+let mutation = null;
 let text = '(no text captured)';
 const checks = [];
 
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  // The sweep runs in a worker; wait until it publishes its result, or the app
-  // reports an error. Generous timeout — the sweep does real timed work.
+  // Both sweeps run in a worker; wait until the mutation proof publishes (it is
+  // set last, after search), or the app reports an error. Generous timeout — the
+  // sweeps do real timed work.
   await page.waitForFunction(
-    () => window.__sweepProof !== undefined || /status:\s*error/.test(document.body.innerText),
+    () => window.__mutationProof !== undefined || /status:\s*error/.test(document.body.innerText),
     { timeout: 60000 },
   );
   text = await page.evaluate(() => document.body.innerText);
   proof = await page.evaluate(() => window.__sweepProof ?? null);
+  mutation = await page.evaluate(() => window.__mutationProof ?? null);
+
+  const want = (name, cond) => checks.push({ name, pass: !!cond });
 
   if (proof) {
     const array = proof.find((p) => p.structure === 'array');
     const hashset = proof.find((p) => p.structure === 'hashset');
 
-    const want = (name, cond) => checks.push({ name, pass: !!cond });
-
-    want('two series measured', proof.length === 2 && array && hashset);
+    want('two search series measured', proof.length === 2 && array && hashset);
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
-      want('array labelled O(n)', array.best === 'O(n)');
-      want('array slope ~1 (0.7..1.4)', array.slope >= 0.7 && array.slope <= 1.4);
-      want(`array cost rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
+      want('array search labelled O(n)', array.best === 'O(n)');
+      want('array search slope ~1 (0.7..1.4)', array.slope >= 0.7 && array.slope <= 1.4);
+      want(`array search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
     }
     if (hashset) {
       const ratio = hashset.lastNanos / hashset.firstNanos;
-      want('hashset labelled O(1)', hashset.best === 'O(1)');
-      want('hashset slope ~0 (< 0.4)', hashset.slope < 0.4);
-      want(`hashset cost stays flat (ratio ${ratio.toFixed(1)} < 10)`, ratio < 10);
+      want('hashset search labelled O(1)', hashset.best === 'O(1)');
+      want('hashset search slope ~0 (< 0.4)', hashset.slope < 0.4);
+      want(`hashset search stays flat (ratio ${ratio.toFixed(1)} < 10)`, ratio < 10);
     }
-    ok = checks.length > 0 && checks.every((c) => c.pass);
   }
+
+  // Mutation (docs/PLAN.md §6.3): the real clock is too noisy for absolute-ns
+  // sum tolerances at these small sizes, so we assert *class*-level agreement —
+  // the churn primary's shape and that the finite-difference split orders the
+  // ops correctly (array delete grows, insert stays flat).
+  if (mutation) {
+    const find = (st, op) => mutation.find((m) => m.structure === st && m.op === op);
+    const aChurn = find('array', 'churn');
+    const hChurn = find('hashset', 'churn');
+    const aIns = find('array', 'insert');
+    const aDel = find('array', 'delete');
+
+    want('six mutation series measured', mutation.length === 6);
+    if (aChurn) {
+      const ratio = aChurn.lastNanos / aChurn.firstNanos;
+      want(`array churn rises (slope ${aChurn.slope.toFixed(2)} > 0.6)`, aChurn.slope > 0.6);
+      want(`array churn grows with n (ratio ${ratio.toFixed(1)} > 3)`, ratio > 3);
+    }
+    if (hChurn) {
+      want(`hashset churn stays flat (slope ${hChurn.slope.toFixed(2)} < 0.4)`, hChurn.slope < 0.4);
+    }
+    if (aIns && aDel) {
+      want(
+        `array delete grows faster than insert (del ${aDel.slope.toFixed(2)} > ins ${aIns.slope.toFixed(2)})`,
+        aDel.slope > aIns.slope,
+      );
+    }
+  }
+
+  ok = checks.length > 0 && checks.every((c) => c.pass);
 } catch (err) {
   logs.push(`[harness] ${err.message}`);
 }
@@ -60,8 +92,14 @@ await browser.close();
 console.log('--- page text ---');
 console.log(text.trim());
 if (proof) {
-  console.log('--- sweep proof ---');
+  console.log('--- search proof ---');
   console.log(JSON.stringify(proof, null, 2));
+}
+if (mutation) {
+  console.log('--- mutation proof ---');
+  console.log(JSON.stringify(mutation, null, 2));
+}
+if (checks.length) {
   console.log('--- checks ---');
   for (const c of checks) console.log(`${c.pass ? 'PASS' : 'FAIL'}  ${c.name}`);
 }

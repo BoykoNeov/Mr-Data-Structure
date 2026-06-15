@@ -26,11 +26,12 @@ const yValue = (signal: Signal) => (p: { nanosPerOp: number; opCount: number }) 
   signal === 'nanos' ? p.nanosPerOp : p.opCount;
 
 /**
- * Comparison chart (docs/PLAN.md §7.1): per-op search cost vs `n` for each
- * structure, overlaid on **log-log** axes (the default for reading complexity —
- * a straight line whose slope is the exponent). uPlot is imperative, so the
- * chart is (re)built whenever the data or signal changes and torn down on
- * unmount.
+ * Comparison chart (docs/PLAN.md §7.1): per-op cost vs `n` for each structure,
+ * overlaid on **log-log** axes (the default for reading complexity — a straight
+ * line whose slope is the exponent). Each series is labelled with its operation
+ * (search / churn / insert / delete) so the same chart serves every sweep. uPlot
+ * is imperative, so the chart is (re)built whenever the data or signal changes
+ * and torn down on unmount.
  */
 export function SweepChart({ views, signal }: SweepChartProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -47,7 +48,7 @@ export function SweepChart({ views, signal }: SweepChartProps) {
     ];
 
     const opts: uPlot.Options = {
-      title: signal === 'nanos' ? 'search cost — ns / op' : 'search cost — operations / op',
+      title: signal === 'nanos' ? 'cost — ns / op' : 'cost — operations / op',
       width: 760,
       height: 440,
       scales: { x: { distr: 3 }, y: { distr: 3 } }, // 3 = logarithmic
@@ -58,7 +59,7 @@ export function SweepChart({ views, signal }: SweepChartProps) {
       series: [
         { label: 'n' },
         ...views.map((v) => ({
-          label: `${v.series.structure} search — ${v.fit.best} (slope ${v.fit.logLogSlope.toFixed(2)})`,
+          label: `${v.series.structure} ${v.series.op} — ${v.fit.best} (slope ${v.fit.logLogSlope.toFixed(2)})`,
           stroke: v.color,
           width: 2,
           points: { show: true, size: 6 },

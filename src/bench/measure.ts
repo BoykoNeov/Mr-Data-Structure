@@ -19,8 +19,15 @@
 /** Which structure a series was measured on (docs/PLAN.md §8). */
 export type StructureId = 'array' | 'hashset';
 
-/** Which operation was measured. Phase 2 thin slice measures `search` only. */
-export type SweepOp = 'search';
+/**
+ * Which operation a series measured (docs/PLAN.md §4.1, §6.3).
+ * - `search` — size-preserving, timed directly (the thin-slice headline).
+ * - `churn` — insert+delete *pairs* at fixed n: the combined mutation cost, the
+ *   §6.3 *primary* method for size-mutating ops.
+ * - `insert` / `delete` — the separated per-op curves from the §6.3 *finite-
+ *   difference* cross-check (build / teardown cumulative cost, differenced).
+ */
+export type SweepOp = 'search' | 'churn' | 'insert' | 'delete';
 
 /** One measured point on a size sweep. */
 export interface SweepPoint {
@@ -166,4 +173,98 @@ export function measureSweep(
   opts: MeasureOptions = {},
 ): SweepPoint[] {
   return sizes.map((n) => measurePoint(n, makeRunner, now, opts));
+}
+
+// ── Finite-difference cross-check for size-mutating ops (docs/PLAN.md §6.3) ──
+
+/**
+ * Per-op cost near each sweep size by finite differences of a *cumulative* curve
+ * (docs/PLAN.md §6.3, cross-check method). Given cumulative cost `C(nᵢ)` (e.g.
+ * total time to build a structure to size n, or to tear one down), the marginal
+ * per-op cost near `nᵢ` ≈ `(C(nᵢ) − C(nᵢ₋₁)) / (nᵢ − nᵢ₋₁)`. The first point has
+ * no predecessor, so it falls back to the average `C(n₀)/n₀`.
+ *
+ * Tiny *negative* differences are clamped to zero: they only arise from
+ * measurement noise when two cumulative wall-clock curves are subtracted to
+ * isolate teardown (build cancels), and a negative per-op cost is meaningless.
+ */
+export function finiteDifference(
+  ns: readonly number[],
+  cumulative: readonly number[],
+): number[] {
+  return ns.map((n, i) => {
+    if (i === 0) return n > 0 ? Math.max(0, cumulative[0] / n) : 0;
+    const dn = ns[i] - ns[i - 1];
+    const dc = cumulative[i] - cumulative[i - 1];
+    return dn > 0 ? Math.max(0, dc / dn) : 0;
+  });
+}
+
+/** The separated insert/delete curves produced by the finite-difference method. */
+export interface MutationFdSeries {
+  readonly insert: SweepSeries;
+  readonly delete: SweepSeries;
+}
+
+/**
+ * Measure per-insert and per-delete cost via the §6.3 finite-difference method.
+ *
+ * Two cumulative passes are timed (each via {@link measureSweep}, so each gets
+ * its own clamp-clearing auto-grow — a single build/teardown is sub-clamp at
+ * small n, so `run(k)` repeats it `k` times on fresh structures):
+ * - `build` — `run(k)` does `k` builds-from-empty to size n; `opCountPerOp()`
+ *   returns the *cumulative* insert op-count to n. Differencing → **insert**.
+ * - `buildTeardown` — `run(k)` does `k` build+teardown cycles of size n;
+ *   `opCountPerOp()` returns the cumulative (insert+teardown) op-count.
+ *   Subtracting the build pass isolates teardown; differencing → **delete**.
+ *
+ * Build cancels in the subtraction, so only the teardown remains — the per-op
+ * delete cost, free of build contamination. All I/O is injected (`now`, the two
+ * runner factories), so the methodology self-test drives this with stub cost
+ * shapes and a virtual clock (docs/PLAN.md §12).
+ */
+export function measureMutationFd(
+  structure: StructureId,
+  sizes: readonly number[],
+  build: OpRunnerFactory,
+  buildTeardown: OpRunnerFactory,
+  now: Clock,
+  opts: MeasureOptions = {},
+): MutationFdSeries {
+  const buildPts = measureSweep(sizes, build, now, opts);
+  const btPts = measureSweep(sizes, buildTeardown, now, opts);
+
+  // Cumulative build cost (= insert) and the isolated teardown cost (= bt − build).
+  const buildNanos = buildPts.map((p) => p.nanosPerOp);
+  const buildOps = buildPts.map((p) => p.opCount);
+  const teardownNanos = btPts.map((p, i) => Math.max(0, p.nanosPerOp - buildNanos[i]));
+  const teardownOps = btPts.map((p, i) => Math.max(0, p.opCount - buildOps[i]));
+
+  const insertNanos = finiteDifference(sizes, buildNanos);
+  const insertOps = finiteDifference(sizes, buildOps);
+  const deleteNanos = finiteDifference(sizes, teardownNanos);
+  const deleteOps = finiteDifference(sizes, teardownOps);
+
+  const series = (
+    op: SweepOp,
+    nanos: number[],
+    ops: number[],
+    cum: SweepPoint[],
+  ): SweepSeries => ({
+    structure,
+    op,
+    points: sizes.map((n, i) => ({
+      n,
+      nanosPerOp: nanos[i],
+      opCount: ops[i],
+      batch: cum[i].batch,
+      reps: cum[i].reps,
+      stddevNanos: cum[i].stddevNanos,
+    })),
+  });
+
+  return {
+    insert: series('insert', insertNanos, insertOps, buildPts),
+    delete: series('delete', deleteNanos, deleteOps, btPts),
+  };
 }

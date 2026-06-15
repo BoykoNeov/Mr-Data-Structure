@@ -25,9 +25,14 @@ search measures O(n) (slope ≈ 1) while hash-set search stays flat O(1) (slope
 twins of the array and hash set run the *same* algorithm, and a cross-language
 conformance corpus (§12) holds the two languages to identical observable results
 — iteration order and per-search op-count (the hash is a bit-exact port of the
-Rust `mix_f64`). Still pending for the full Phase 2 exit (§10/§12): the
-churn-vs-finite-difference methodology self-test, insert/delete, and the
-string-key bench structures.
+Rust `mix_f64`). The §6.3 **size-mutating measurement** is now in too:
+insert/delete via churn (the combined-cost primary) plus the finite-difference
+cross-check (per-insert from cumulative build, per-delete from cumulative
+teardown), with the §12 self-test proving the two methods agree. Headless
+Chromium confirms it on the real clock: **array churn O(n) (slope ≈ 1), hash-set
+churn O(1)**, with the finite-difference split reading array delete O(n) and
+insert flat. The only Phase 2 exit work left (§10/§12) is the **string-key**
+bench structures.
 
 **Phase 1 — data layer.** On top of the Phase 0 scaffold (Vite + React +
 TypeScript frontend, a Rust → WASM benchmark engine in a Web Worker via Comlink,

@@ -68,4 +68,59 @@ proptest! {
             prop_assert_eq!(a.search_one_counted(q).0, s.search_one_counted(q).0);
         }
     }
+
+    /// Array delete (ordered shift-compact, docs/PLAN.md §8) must track a `Vec`
+    /// reference through an interleaved delete sequence: the array is a multiset,
+    /// so each delete removes the *first* occurrence and `len` drops by one only
+    /// when the key was present.
+    #[test]
+    fn array_delete_matches_reference(
+        keys in prop::collection::vec(-30i32..30, 0..120),
+        targets in prop::collection::vec(-35i32..35, 0..60),
+    ) {
+        let keys: Vec<f64> = keys.into_iter().map(|k| k as f64).collect();
+        let mut a = ArrayF64::new(&keys, keys.len());
+        let mut model = keys.clone();
+        for t in targets {
+            let t = t as f64;
+            let removed = a.delete_one_counted(t).0;
+            let ref_removed = match model.iter().position(|&k| k == t) {
+                Some(i) => { model.remove(i); true }
+                None => false,
+            };
+            prop_assert_eq!(removed, ref_removed);
+            prop_assert_eq!(a.len(), model.len());
+            // Iteration order is preserved (shift-compact, not swap-remove).
+            prop_assert_eq!(a.keys_in_order(), model.clone());
+        }
+    }
+
+    /// Hash-set delete (hash + chain-remove preserving chain order) must track a
+    /// distinct-key set reference through an interleaved delete sequence, with
+    /// membership and `len` agreeing after every operation.
+    #[test]
+    fn hashset_delete_matches_reference(
+        keys in prop::collection::vec(-30i32..30, 0..120),
+        targets in prop::collection::vec(-35i32..35, 0..60),
+    ) {
+        let keys: Vec<f64> = keys.into_iter().map(|k| k as f64).collect();
+        let mut s = HashSetF64::new(&keys, keys.len());
+        let mut model: Vec<f64> = {
+            let mut d = keys.clone();
+            d.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            d.dedup();
+            d
+        };
+        for t in targets {
+            let t = t as f64;
+            let removed = s.delete_one_counted(t).0;
+            let ref_removed = match model.iter().position(|&k| k == t) {
+                Some(i) => { model.remove(i); true }
+                None => false,
+            };
+            prop_assert_eq!(removed, ref_removed);
+            prop_assert_eq!(s.len(), model.len());
+            prop_assert_eq!(s.search_one_counted(t).0, false); // gone after delete
+        }
+    }
 }

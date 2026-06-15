@@ -7,8 +7,10 @@ import init, {
 } from '../../bench-engine/pkg/bench_engine.js';
 import {
   measureSweep,
+  measureMutationFd,
   type MeasureOptions,
   type OpRunnerFactory,
+  type StructureId,
   type SweepSeries,
 } from './measure';
 
@@ -81,6 +83,94 @@ function searchRunnerFactory(
   };
 }
 
+/**
+ * The WASM mutation surface (docs/PLAN.md §6.3): a churn-able instance plus the
+ * static cumulative build/teardown primitives. Both `ArrayF64` and `HashSetF64`
+ * satisfy it structurally.
+ */
+interface MutationStruct {
+  set_churn_key(key: number): void;
+  churn_n(k: number): number;
+  churn_counted(): number;
+  free(): void;
+}
+interface MutationStructStatics {
+  /** Timed cumulative build to n (insert side of the finite-difference method). */
+  build_insert_n(keys: Float64Array, n: number): number;
+  /** Deterministic cumulative insert op-count to n. */
+  build_insert_counted(keys: Float64Array, n: number): number;
+  /** Timed cumulative build+teardown of n (delete side, build cancels on diff). */
+  build_then_teardown_n(keys: Float64Array, n: number): number;
+  /** Deterministic cumulative teardown op-count from n. */
+  teardown_counted(keys: Float64Array, n: number): number;
+}
+type MutationStructCtor = (new (keys: Float64Array, n: number) => MutationStruct) &
+  MutationStructStatics;
+
+/** Largest of the first `n` keys (n > 0 assumed by callers), or 0 if none. */
+function maxOfFirst(keys: Float64Array, n: number): number {
+  let max = -Infinity;
+  for (let i = 0; i < n; i++) if (keys[i] > max) max = keys[i];
+  return Number.isFinite(max) ? max : 0;
+}
+
+/**
+ * Churn runner (docs/PLAN.md §6.3, primary): build to n once (untimed), set a
+ * spare key guaranteed absent (max + 1), then time `k` insert+delete pairs that
+ * hold size at n. `opCountPerOp` is the deterministic per-pair op-count.
+ */
+function churnRunnerFactory(Ctor: MutationStructCtor, keys: Float64Array): OpRunnerFactory {
+  return (n) => {
+    const s = new Ctor(keys.subarray(0, n), n);
+    s.set_churn_key(maxOfFirst(keys, n) + 1);
+    return {
+      run: (k) => s.churn_n(k),
+      opCountPerOp: () => s.churn_counted(),
+      dispose: () => s.free(),
+    };
+  };
+}
+
+/** Build runner (insert side): `run(k)` does `k` builds-from-empty to size n. */
+function buildRunnerFactory(Ctor: MutationStructCtor, keys: Float64Array): OpRunnerFactory {
+  return (n) => {
+    const view = keys.subarray(0, n);
+    const cumulativeOps = Ctor.build_insert_counted(view, n);
+    return {
+      run: (k) => {
+        let acc = 0;
+        for (let i = 0; i < k; i++) acc += Ctor.build_insert_n(view, n);
+        return acc;
+      },
+      opCountPerOp: () => cumulativeOps,
+    };
+  };
+}
+
+/**
+ * Build+teardown runner (delete side): `run(k)` does `k` build-then-teardown
+ * cycles of size n. {@link measureMutationFd} subtracts the build runner's time,
+ * isolating the teardown — the same insert build path cancels.
+ */
+function buildTeardownRunnerFactory(
+  Ctor: MutationStructCtor,
+  keys: Float64Array,
+): OpRunnerFactory {
+  return (n) => {
+    const view = keys.subarray(0, n);
+    const cumulativeOps =
+      Ctor.build_insert_counted(view, n) + Ctor.teardown_counted(view, n);
+    return {
+      run: (k) => {
+        let acc = 0;
+        for (let i = 0; i < k; i++) acc += Ctor.build_then_teardown_n(view, n);
+        return acc;
+      },
+      opCountPerOp: () => cumulativeOps,
+    };
+  };
+}
+
 const api = {
   async ping(x: number): Promise<number> {
     await ready;
@@ -108,6 +198,41 @@ const api = {
       { structure: 'array', op: 'search', points: array },
       { structure: 'hashset', op: 'search', points: hashset },
     ];
+  },
+  /**
+   * Run the §6.3 size-mutating measurement for both Phase 2 structures across
+   * `sizes`: the **churn** primary (combined insert+delete cost at fixed n) plus
+   * the **finite-difference** cross-check that separates per-insert (cumulative
+   * build) from per-delete (cumulative teardown). Returns three series per
+   * structure: `churn`, `insert`, `delete`. `keys` is transferred in by the
+   * caller. Keep `sizes` modest — the array's ordered delete makes teardown O(n²).
+   */
+  async runMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const structures: ReadonlyArray<[StructureId, MutationStructCtor]> = [
+      ['array', ArrayF64 as unknown as MutationStructCtor],
+      ['hashset', HashSetF64 as unknown as MutationStructCtor],
+    ];
+    const out: SweepSeries[] = [];
+    for (const [structure, Ctor] of structures) {
+      const churn = measureSweep(sizes, churnRunnerFactory(Ctor, keys), now, opts);
+      out.push({ structure, op: 'churn', points: churn });
+      const fd = measureMutationFd(
+        structure,
+        sizes,
+        buildRunnerFactory(Ctor, keys),
+        buildTeardownRunnerFactory(Ctor, keys),
+        now,
+        opts,
+      );
+      out.push(fd.insert, fd.delete);
+    }
+    return out;
   },
 };
 

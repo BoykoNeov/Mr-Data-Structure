@@ -13,9 +13,14 @@ Chromium on the real browser clock: **array search → O(n) (slope ≈ 1), hash-
 search → O(1) (slope ≈ 0)**. The dual-impl spine (§2.1) is now closed for both
 structures: TypeScript teaching twins run the same algorithm, and a
 cross-language conformance corpus (§12, R1) holds the two languages to identical
-iteration order and per-search op-count. Remaining Phase 2 exit work (§10/§12):
-the churn-vs-finite-difference self-test, insert/delete, and the string-key bench
-structures. (Phase 1 — data layer — is complete: CSV/JSON + generators →
+iteration order and per-search op-count. The **size-mutating methodology (§6.3)
+has now landed**: insert/delete via churn (the combined-cost primary) plus the
+finite-difference cross-check (per-insert from cumulative build, per-delete from
+cumulative teardown), with the §12 self-test proving the two methods agree. On
+the real browser clock the headline holds — **array churn → O(n) (slope ≈ 1),
+hash-set churn → O(1)**; the finite-difference split reads array delete O(n) /
+insert flat. The only Phase 2 exit work left (§10/§12) is the **string-key bench
+structures**. (Phase 1 — data layer — is complete: CSV/JSON + generators →
 normalized `Dataset` + marshalling.) See §10.
 
 ---
@@ -237,10 +242,15 @@ This section is the technical crux. The value proposition lives or dies here.
 - **`insert` / `delete` (size-mutating) — measure amortized cost *around* n:**
   - **Primary method — churn at fixed size:** pre-build to n, then time `k`
     *insert+delete pairs* that hold size ≈ n (insert a key, delete a key). This
-    isolates the per-op cost at a stable n.
-  - **Cross-check method — finite differences on cumulative build:** record
-    cumulative build time at each sweep point and take differences; per-op cost
-    near n ≈ Δtime / Δn. Used to validate the churn method.
+    isolates the per-op cost at a stable n. Because a single op type can't
+    net-preserve size, churn measures the **combined** insert+delete cost.
+  - **Cross-check method — finite differences on cumulative build *and*
+    teardown:** record cumulative *build* time at each sweep point and difference
+    it (per-insert near n ≈ Δtime/Δn); likewise difference cumulative *teardown*
+    time (per-delete near n). Build alone is inserts only — for an array that is
+    O(1) append and would never reproduce churn's O(n) (delete-dominated) shape,
+    so teardown is essential. The methods agree when
+    `churn(n) ≈ insert_fd(n) + delete_fd(n)`, validated by the §12 self-test.
 - Op-count signal uses the same isolation (counters read at the same points).
 
 This sub-design is implemented and validated **first** (see §10, Phase 2).
@@ -289,7 +299,7 @@ algorithm per structure, implemented identically in TS and Rust.
 ### Linear
 | Structure | insert | search | delete | cost metric | notes |
 |-----------|--------|--------|--------|-------------|-------|
-| Dynamic array (unsorted) | O(1) amort. (append) | O(n) | O(n) | comparisons + shifts | |
+| Dynamic array (unsorted) | O(1) amort. (append) | O(n) | O(n) | comparisons + shifts | delete = ordered shift-compact (scan, then shift the tail left) — *not* swap-remove, so iteration order is preserved for the teaching twin + conformance |
 | Sorted array | O(n) | O(log n) | O(n) | comparisons + shifts | binary search |
 | Singly linked list | O(1) head | O(n) | O(n) | node-visits | |
 | Doubly linked list | O(1) head | O(n) | O(n) | node-visits | |
@@ -297,7 +307,7 @@ algorithm per structure, implemented identically in TS and Rust.
 ### Hashing
 | Structure | insert | search | delete | cost metric | notes |
 |-----------|--------|--------|--------|-------------|-------|
-| Hash map / set | O(1) avg, O(n) worst | O(1) avg, O(n) worst | O(1) avg | probes / chain-steps + hashes | **separate chaining** (canonical v1); load-factor-driven rehash animated |
+| Hash map / set | O(1) avg, O(n) worst | O(1) avg, O(n) worst | O(1) avg | probes / chain-steps + hashes | **separate chaining** (canonical v1); load-factor-driven rehash animated; delete removes from the chain in place (order-preserving), table never shrinks |
 
 ### Trees / heaps
 | Structure | insert | search | delete | cost metric | notes |
@@ -368,11 +378,21 @@ insert/search/delete group on a shared key type.
     assert against (Rust re-checks it; TS reproduces it), pinning identical
     iteration order and per-search op-count across the empty/duplicate/multi-rehash
     cases.
-  - **Remaining for Phase 2 exit:** the churn-vs-finite-difference methodology
-    self-test (§12); insert/delete measurement; and the **string-key** bench
-    structures — now the next pairing, landing the Rust + TS string variants
-    together so both languages exercise the offsets+UTF-8 marshal layout (and the
-    string conformance corpus) at once.
+  - **Done (§6.3 size-mutating measurement):** Rust `delete` for both structures
+    (array ordered shift-compact; hash set order-preserving chain-remove) with
+    zero-overhead op-counters + proptest vs a reference model; the **churn**
+    primary (insert+delete pairs at fixed n) and the **finite-difference**
+    cross-check (cumulative build → insert, cumulative teardown → delete) as pure
+    testable orchestration (`measureMutationFd`); `runMutationSweep` across the
+    `BenchEngine` boundary; and the **§12 methodology self-test** — stub cost
+    shapes on a virtual clock proving `churn ≈ insert_fd + delete_fd` numerically
+    and that both methods infer the same class. Proven on the real browser clock
+    (`verify:browser`): array churn slope ≈ 1.04 (R² 1.000), hash-set churn slope
+    ≈ 0.01; array delete slope ≈ 0.96 (R² 0.999).
+  - **Remaining for Phase 2 exit:** the **string-key** bench structures — the next
+    pairing, landing the Rust + TS string variants together so both languages
+    exercise the offsets+UTF-8 marshal layout (and the string conformance corpus)
+    at once.
 
 - **Phase 3 — Visualization breadth.** Mature animation (step controls,
   rotations, rehash, probing); add teaching impls for remaining Linear + Tree

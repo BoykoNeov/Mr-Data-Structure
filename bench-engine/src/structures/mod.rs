@@ -52,3 +52,63 @@ mod tests {
         assert_eq!(mix_f64(1_000_000.0), 4119586053111418004);
     }
 }
+
+/// Methodology self-test on the **real** structures (docs/PLAN.md §6.3, §12).
+///
+/// Op-counts are deterministic, so the churn-vs-finite-difference agreement can be
+/// checked with no clock at all — the clock-free counterpart to the TS stub
+/// self-test (`src/bench/methodology.test.ts`), and a more literal reading of §12
+/// ("the two methods must agree on known structures"). For a per-pair churn count
+/// `churn(n)` and finite differences of the cumulative build / teardown op-counts:
+/// `churn(n) ≈ insert_fd(n) + delete_fd(n)`.
+#[cfg(test)]
+mod methodology {
+    use super::dyn_array::ArrayF64;
+    use super::hash_set::HashSetF64;
+
+    fn keys(n: usize) -> Vec<f64> {
+        (0..n).map(|i| i as f64).collect()
+    }
+
+    #[test]
+    fn array_churn_matches_finite_differences() {
+        let ks = keys(1001);
+        let (n1, n2) = (999usize, 1000usize);
+        let insert_fd = (ArrayF64::build_insert_counted(&ks, n2)
+            - ArrayF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (ArrayF64::teardown_counted(&ks, n2)
+            - ArrayF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut a = ArrayF64::new(&ks, n2);
+        a.set_churn_key(n2 as f64 + 1.0); // absent from [0, n2)
+        let churn = a.churn_counted();
+
+        // Array insert is a zero-op append, so this is really delete-vs-teardown.
+        assert_eq!(insert_fd, 0.0);
+        let rel = (churn - (insert_fd + delete_fd)).abs() / churn;
+        assert!(rel < 0.02, "churn {churn} vs fd {} (rel {rel})", insert_fd + delete_fd);
+    }
+
+    #[test]
+    fn hashset_churn_matches_finite_differences() {
+        let ks = keys(2000);
+        let (n1, n2) = (1500usize, 1600usize);
+        let insert_fd = (HashSetF64::build_insert_counted(&ks, n2)
+            - HashSetF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (HashSetF64::teardown_counted(&ks, n2)
+            - HashSetF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut s = HashSetF64::new(&ks, n2);
+        s.set_churn_key(n2 as f64 + 1.0);
+        let churn = s.churn_counted();
+
+        // Both sides are small O(1) counts; allow generous slack for chain-length
+        // variation between the churn key's bucket and the swept average.
+        let rel = (churn - (insert_fd + delete_fd)).abs() / churn;
+        assert!(rel < 0.5, "churn {churn} vs fd {} (rel {rel})", insert_fd + delete_fd);
+    }
+}
