@@ -1,0 +1,63 @@
+# Mr Data Structure — BST conformance corpus (docs/PLAN.md §8, §12).
+# Generated from the Rust bench impl; the TS teaching twin must match.
+# Regenerate: cargo test -- --ignored regen_corpus_bst
+
+case empty
+keys 
+probes 1 2
+bst_order 
+bst_search 0:0 0:0
+bst_shape .
+deletes 1
+bst_delete 0:0
+bst_shape_after .
+
+case singleton
+keys 42
+probes 42 7
+bst_order 42
+bst_search 1:1 0:1
+bst_shape 42 . .
+deletes 42
+bst_delete 1:1
+bst_shape_after .
+
+case degenerate
+keys 10 20 30 40 50
+probes 50 10 35
+bst_order 10 20 30 40 50
+bst_search 1:5 1:1 0:4
+bst_shape 10 . 20 . 30 . 40 . 50 . .
+deletes 10 40 30
+bst_delete 1:1 1:3 1:2
+bst_shape_after 20 . 50 . .
+
+case equal_right
+keys 50 50 50 70
+probes 50 70 99
+bst_order 50 50 50 70
+bst_search 1:1 1:4 0:4
+bst_shape 50 . 50 . 50 . 70 . .
+deletes 50
+bst_delete 1:1
+bst_shape_after 50 . 50 . 70 . .
+
+case one_child_left
+keys 50 30 20 70
+probes 30
+bst_order 20 30 50 70
+bst_search 1:2
+bst_shape 50 30 20 . . . 70 . .
+deletes 30
+bst_delete 1:2
+bst_shape_after 50 20 . . 70 . .
+
+case hibbard
+keys 50 30 70 20 40 60 80
+probes 50 20 35
+bst_order 20 30 40 50 60 70 80
+bst_search 1:1 1:3 0:3
+bst_shape 50 30 20 . . 40 . . 70 60 . . 80 . .
+deletes 20 70 50
+bst_delete 1:3 1:2 1:1
+bst_shape_after 60 30 . 40 . . 80 . .

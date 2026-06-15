@@ -14,7 +14,32 @@ methodology, and the phased roadmap.
 
 ## Status
 
-**Phase 3 — visualization breadth (in progress; animation engine, linear breadth,
+**Phase 4 — benchmark breadth + methodology hardening (in progress; the BST bench
+twin landed).** The first production (Rust→WASM) twin of a Phase 3 teaching-only
+structure is in: `bst::BstF64`, the bench twin of `src/structures/bst.ts`. It is an
+**iterative, index-arena** multiset BST (`key < node` ⇒ left, else right; equal keys
+go right) — a `Vec<Node{value, left, right: Option<u32>}>` arena walked with loops,
+deliberately *not* a recursive `Box<Node>` tree, so the headline sorted-input
+degeneration to a 10⁵–10⁶-deep right chain can't overflow the WASM stack (search,
+insert, delete, traversal, and drop are all flat). Cost metric **comparisons**,
+behind the same zero-overhead `const COUNT: bool` flag as the Phase 2 structures,
+with the **Hibbard (value-copy) delete** whose in-order-successor walk carries no
+comparison — the §2.1/R1 contract the teaching twin already fixed. It's pinned to the
+TS twin by a dedicated **`conformance/corpus-bst.txt`** that, unlike the linear/hash
+corpus, also pins the **tree shape** (pre-order with explicit null markers — in-order
+alone can't tell a balanced tree from a chain) and a **delete sequence** with
+per-delete `(removed, ops)` across every Hibbard branch (leaf / one-child each side /
+two-child / two-child root / delete-to-empty / one-of-duplicates). Hand-computed Rust
+unit tests plus a **proptest** (random insert/delete vs a sorted-multiset reference —
+correctness only; op-counts stay pinned by hand + the corpus, since a reference that
+reproduced comparison counts would just be a second BST) round it out. This batch is
+the algorithm + counters + conformance; the timed harness surface (`search_n` /
+churn / build-teardown) and the engine/sweep wiring are the next slice — which owns
+the open question of whether `churn(n) ≈ insert_fd(n) + delete_fd(n)` holds for a tree
+the way it does for the array. No `#[wasm_bindgen]` surface yet, no engine touch. No
+new dependencies (`proptest` was already a dev-dependency).
+
+**Phase 3 — visualization breadth (complete; animation engine, linear breadth,
 the BST, plus the AVL tree + min-heap landed).** The step-through exploration spine is in for the two proven
 structures. Each teaching twin emits a typed **step-event** stream via an
 optional tracer that's threaded *alongside* the op-count logic — so a search

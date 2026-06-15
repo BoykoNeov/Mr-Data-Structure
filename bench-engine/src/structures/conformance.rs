@@ -19,6 +19,7 @@
 //! `probes`, `<struct>_order`, and `<struct>_search` lines. Search results are
 //! `<0|1>:<ops>` tokens (membership flag : op-count).
 
+use super::bst::BstF64;
 use super::dyn_array::ArrayF64;
 use super::dyn_array_str::ArrayStr;
 use super::hash_set::HashSetF64;
@@ -27,6 +28,8 @@ use super::hash_set_str::HashSetStr;
 const CORPUS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus.txt");
 const CORPUS_STR_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-str.txt");
+const CORPUS_BST_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-bst.txt");
 
 struct Case {
     name: &'static str,
@@ -245,5 +248,127 @@ fn corpus_str_matches_committed() {
         normalize(&serialize_str(&str_cases())),
         "string conformance corpus is stale vs the Rust impls; \
          regenerate with: cargo test -- --ignored regen_corpus_str",
+    );
+}
+
+// ── BST corpus (docs/PLAN.md §8 trees, §12) ──────────────────────────────────
+//
+// A tree needs two dimensions the linear/hash corpus format doesn't carry:
+//   • shape — in-order alone can't distinguish a balanced tree from a degenerate
+//     chain (they share an in-order), so each case pins the **pre-order with
+//     explicit null markers** (`.`), an unambiguous serialization of the shape; and
+//   • a **delete sequence** — Hibbard (value-copy) delete is the drift-prone part,
+//     and the cost-metric contract (the in-order-successor walk is *not* a
+//     comparison, risk R1) only shows up under deletes. Each case therefore runs a
+//     delete sequence on a fresh tree and pins per-delete `(removed:ops)` plus the
+//     resulting shape.
+// Keys are integer-valued (the shape/delete dimensions, not float formatting, are
+// the point), so `Number()` round-trips them exactly on the TS side.
+
+struct BstCase {
+    name: &'static str,
+    keys: Vec<f64>,
+    probes: Vec<f64>,
+    deletes: Vec<f64>,
+}
+
+/// BST input cases, chosen to exercise every divergence-prone path (docs/PLAN.md
+/// §12): empty/singleton edges, the **sorted-input degeneration** to an O(n) chain
+/// (which only the shape pin catches — its in-order is identical to a balanced
+/// tree's), **equal-keys-go-right**, and every Hibbard delete branch — leaf,
+/// one-child each side, two-child, two-child root, delete-to-empty, one-of-duplicates.
+fn bst_cases() -> Vec<BstCase> {
+    vec![
+        BstCase { name: "empty", keys: vec![], probes: vec![1.0, 2.0], deletes: vec![1.0] },
+        BstCase {
+            name: "singleton", // delete-to-empty
+            keys: vec![42.0],
+            probes: vec![42.0, 7.0],
+            deletes: vec![42.0],
+        },
+        BstCase {
+            name: "degenerate", // sorted ⇒ right chain; one-child-right deletes
+            keys: vec![10.0, 20.0, 30.0, 40.0, 50.0],
+            probes: vec![50.0, 10.0, 35.0],
+            deletes: vec![10.0, 40.0, 30.0],
+        },
+        BstCase {
+            name: "equal_right", // equal keys go right; delete one of the duplicates
+            keys: vec![50.0, 50.0, 50.0, 70.0],
+            probes: vec![50.0, 70.0, 99.0],
+            deletes: vec![50.0],
+        },
+        BstCase {
+            name: "one_child_left",
+            keys: vec![50.0, 30.0, 20.0, 70.0],
+            probes: vec![30.0],
+            deletes: vec![30.0],
+        },
+        BstCase {
+            name: "hibbard", // leaf, two-child, two-child-root
+            keys: vec![50.0, 30.0, 70.0, 20.0, 40.0, 60.0, 80.0],
+            probes: vec![50.0, 20.0, 35.0],
+            deletes: vec![20.0, 70.0, 50.0],
+        },
+    ]
+}
+
+/// Pre-order shape (`.` = null) — the line-format mirror of [`BstF64::preorder`].
+fn fmt_preorder(nodes: &[Option<f64>]) -> String {
+    nodes
+        .iter()
+        .map(|n| match n {
+            Some(v) => fmt_num(*v),
+            None => ".".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn serialize_bst(cases: &[BstCase]) -> String {
+    let mut out = String::new();
+    out.push_str("# Mr Data Structure — BST conformance corpus (docs/PLAN.md §8, §12).\n");
+    out.push_str("# Generated from the Rust bench impl; the TS teaching twin must match.\n");
+    out.push_str("# Regenerate: cargo test -- --ignored regen_corpus_bst\n");
+    for c in cases {
+        let t = BstF64::new(&c.keys, c.keys.len());
+        let search: Vec<(bool, u64)> =
+            c.probes.iter().map(|&p| t.search_one_counted(p)).collect();
+
+        // Deletes mutate, so run them on a fresh tree built from the same keys.
+        let mut td = BstF64::new(&c.keys, c.keys.len());
+        let del: Vec<(bool, u64)> =
+            c.deletes.iter().map(|&d| td.delete_one_counted(d)).collect();
+
+        out.push('\n');
+        out.push_str(&format!("case {}\n", c.name));
+        out.push_str(&format!("keys {}\n", fmt_nums(&c.keys)));
+        out.push_str(&format!("probes {}\n", fmt_nums(&c.probes)));
+        out.push_str(&format!("bst_order {}\n", fmt_nums(&t.keys_in_order())));
+        out.push_str(&format!("bst_search {}\n", fmt_search(&search)));
+        out.push_str(&format!("bst_shape {}\n", fmt_preorder(&t.preorder())));
+        out.push_str(&format!("deletes {}\n", fmt_nums(&c.deletes)));
+        out.push_str(&format!("bst_delete {}\n", fmt_search(&del)));
+        out.push_str(&format!("bst_shape_after {}\n", fmt_preorder(&td.preorder())));
+    }
+    out
+}
+
+#[test]
+#[ignore = "writes the committed BST corpus; run deliberately after a behavior change"]
+fn regen_corpus_bst() {
+    std::fs::write(CORPUS_BST_PATH, serialize_bst(&bst_cases())).expect("write bst corpus");
+}
+
+#[test]
+fn corpus_bst_matches_committed() {
+    let committed = std::fs::read_to_string(CORPUS_BST_PATH).expect(
+        "BST corpus missing; generate it with: cargo test -- --ignored regen_corpus_bst",
+    );
+    assert_eq!(
+        normalize(&committed),
+        normalize(&serialize_bst(&bst_cases())),
+        "BST conformance corpus is stale vs the Rust impl; \
+         regenerate with: cargo test -- --ignored regen_corpus_bst",
     );
 }

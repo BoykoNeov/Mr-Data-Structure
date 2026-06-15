@@ -4,8 +4,11 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 2 complete; Phase 3 underway (animation engine, linear breadth,
-the BST, plus the AVL tree + min-heap — batches 1–4).** The step-through visualization spine now exists: the array +
+Status: **Phase 3 complete (animation engine, linear breadth, the BST, plus the AVL
+tree + min-heap — batches 1–4); Phase 4 underway (the BST bench twin landed —
+`bst::BstF64`, an iterative index-arena multiset BST pinned to the TS twin by
+`conformance/corpus-bst.txt`, which also pins tree shape + a Hibbard-delete
+sequence).** The step-through visualization spine now exists: the array +
 hash-set teaching twins emit a typed step-event stream (cost events == op-count,
 pinned to the Rust corpus), a pure Player drives play/step/step-back, and SVG
 renderers animate the comparisons, shifts, chain probes, and rehash
@@ -543,6 +546,25 @@ insert/search/delete group on a shared key type.
 - **Phase 4 — Benchmark breadth + methodology hardening.** Warm-up/reps/variance,
   op-counters, churn + finite-difference isolation validated against each other,
   progress reporting; Rust bench impls for all core structures.
+  - **Done (BST bench twin):** `bst::BstF64` (`bench-engine/src/structures/bst.rs`) —
+    the production twin of the `src/structures/bst.ts` teaching impl, the first of the
+    Phase 3 teaching-only structures to get its Rust bench impl. An **iterative,
+    index-arena** multiset BST (`Vec<Node{value, left/right: Option<u32>}>` walked with
+    loops, *not* a recursive `Box<Node>` tree) so the sorted-input degeneration to a
+    10⁵–10⁶-deep right chain can't overflow the WASM stack (search/insert/delete/
+    in-order/pre-order all flat). Cost metric **comparisons** behind the zero-overhead
+    `const COUNT: bool` flag (§6.4); **Hibbard (value-copy) delete** whose
+    in-order-successor walk carries no comparison — the §2.1/R1 contract the teaching
+    twin fixed. Pinned to the TS twin by a dedicated **`conformance/corpus-bst.txt`**
+    that — beyond the linear/hash corpus's in-order + per-probe `(found:ops)` — also
+    pins the **tree shape** (pre-order with explicit null markers; in-order is
+    shape-invariant) and a **delete sequence** with per-delete `(removed:ops)` across
+    every Hibbard branch. Hand-computed Rust unit tests + a **proptest** (random
+    insert/delete vs a sorted-multiset reference — correctness only; op-counts stay
+    pinned by hand + the corpus, a reference reproducing them being circular). The
+    timed harness surface (`search_n`/churn/build-teardown) + engine/sweep wiring — and
+    the open question of whether `churn ≈ insert_fd + delete_fd` holds for a tree — are
+    the next slice. No `#[wasm_bindgen]` surface yet; no engine touch. **No new deps.**
 
 - **Phase 5 — Comparison / analysis.** Multi-overlay, log-log, fitter with
   honesty UI, theoretical overlay, export.

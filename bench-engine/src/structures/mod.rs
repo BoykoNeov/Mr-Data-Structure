@@ -17,7 +17,12 @@
 //! type carries its own portable hash (`mix_f64`, `mix_str`) with a bit-exact
 //! TypeScript twin (`src/structures/mix.ts`) and a cross-language conformance
 //! corpus (docs/PLAN.md §12), so the two languages stay in lockstep.
+//!
+//! Phase 4 begins the tree family: `bst::BstF64` is the bench twin of the
+//! `src/structures/bst.ts` teaching impl (comparisons cost metric, Hibbard delete),
+//! pinned to it by the `conformance/corpus-bst.txt` corpus.
 
+pub mod bst;
 pub mod dyn_array;
 pub mod dyn_array_str;
 pub mod hash_set;
