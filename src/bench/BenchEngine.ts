@@ -46,6 +46,20 @@ export interface BenchEngine {
     opts?: MeasureOptions,
   ): Promise<SweepSeries[]>;
 
+  /**
+   * Measure the size-mutating ops for the **BST** bench twin across a size sweep
+   * (docs/PLAN.md §6.3, §8 trees) — three {@link SweepSeries} (`churn`, `insert`,
+   * `delete`) tagged `'bst'`. Separate from {@link runMutationSweep} because a tree
+   * is data-shape-sensitive: feed a **balanced (shuffled)** dataset at modest n, as
+   * **sorted** input degenerates to an O(n) chain with an O(n²) build. As with the
+   * other sweeps, the engine may transfer (consume) the `keys` buffer.
+   */
+  runBstMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
   /** Release the worker / underlying resources. */
   dispose(): void;
 }

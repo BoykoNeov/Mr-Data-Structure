@@ -32,12 +32,27 @@ per-delete `(removed, ops)` across every Hibbard branch (leaf / one-child each s
 two-child / two-child root / delete-to-empty / one-of-duplicates). Hand-computed Rust
 unit tests plus a **proptest** (random insert/delete vs a sorted-multiset reference —
 correctness only; op-counts stay pinned by hand + the corpus, since a reference that
-reproduced comparison counts would just be a second BST) round it out. This batch is
-the algorithm + counters + conformance; the timed harness surface (`search_n` /
-churn / build-teardown) and the engine/sweep wiring are the next slice — which owns
-the open question of whether `churn(n) ≈ insert_fd(n) + delete_fd(n)` holds for a tree
-the way it does for the array. No `#[wasm_bindgen]` surface yet, no engine touch. No
-new dependencies (`proptest` was already a dev-dependency).
+reproduced comparison counts would just be a second BST) round it out.
+
+On top of that algorithm + counters + conformance batch, the **timed harness surface and
+engine/sweep wiring** have now landed: the `#[wasm_bindgen]` surface on `BstF64` mirrors
+the Phase 2 structures — `search_n`/`search_counted`, the `churn_n`/`churn_counted`
+primary, and the `build_insert_*`/`teardown_*` finite-difference cross-check — reusing the
+existing `measure.ts` orchestration unchanged. **Teardown deletes the current maximum
+repeatedly** (the rightmost node, always leaf-or-one-child — never the two-child Hibbard
+path — reached down the right spine exactly as the churn key `max + 1`; deleting the root
+would be O(1)/op on a chain and break the cross-check). The engine boundary gains
+`runBstMutationSweep` (kept separate from the array/hash-set sweep because a tree is
+data-shape-sensitive: sorted input degenerates to an O(n) chain with an O(n²) build, so the
+caller feeds a **balanced** dataset), and `verify:browser` confirms balanced-tree churn
+measures **sub-linear** on the real clock — the contrast to array O(n) / hash-set O(1). The
+slice owns the open question — does `churn(n) ≈ insert_fd(n) + delete_fd(n)` hold for a tree
+the way it does for the array? — and **answers it both ways** in a clock-free self-test:
+**tight on the degenerate chain** (the right spine is the whole tree, as position-uniform as
+the array), but on a **balanced** tree the finite-difference sum *overshoots* churn (churn
+rides the cheap right spine while the build pays each key's average depth), so the methods
+agree only in complexity class — reported, not buried. No chart wiring yet (deferred
+breadth, like the string structures). No new dependencies.
 
 **Phase 3 — visualization breadth (complete; animation engine, linear breadth,
 the BST, plus the AVL tree + min-heap landed).** The step-through exploration spine is in for the two proven

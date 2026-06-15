@@ -133,11 +133,31 @@ mod tests {
 /// `churn(n) ≈ insert_fd(n) + delete_fd(n)`.
 #[cfg(test)]
 mod methodology {
+    use super::bst::BstF64;
     use super::dyn_array::ArrayF64;
     use super::hash_set::HashSetF64;
 
     fn keys(n: usize) -> Vec<f64> {
         (0..n).map(|i| i as f64).collect()
+    }
+
+    /// A fixed-seed permutation of `0..n` (distinct keys ⇒ a balanced-ish random BST,
+    /// the contrast to the sorted chain). Deterministic, so the op-counts below are
+    /// reproducible — no RNG dependency, no flake.
+    fn shuffled(n: usize) -> Vec<f64> {
+        let mut v: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15; // fixed seed
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for i in (1..n).rev() {
+            let j = (next() % (i as u64 + 1)) as usize;
+            v.swap(i, j);
+        }
+        v
     }
 
     #[test]
@@ -180,5 +200,66 @@ mod methodology {
         // variation between the churn key's bucket and the swept average.
         let rel = (churn - (insert_fd + delete_fd)).abs() / churn;
         assert!(rel < 0.5, "churn {churn} vs fd {} (rel {rel})", insert_fd + delete_fd);
+    }
+
+    // ── BST: the open question — does `churn ≈ insert_fd + delete_fd` hold for a tree?
+    //
+    // For the array the identity is tight because its costs are position-uniform (insert
+    // is a free append; any delete is O(n)). A tree breaks that symmetry: churn's key
+    // (`max + 1`) rides the **right spine** (depth ≈ ln n random / n sorted), while the
+    // build inserts dataset keys at their **average depth** (≈ 2 ln n random / n sorted).
+    // So the answer is regime-dependent, and the slice owns reporting *both* halves.
+
+    /// Sorted input ⇒ the degenerate right **chain** (the headline demo, and a stack-safety
+    /// exercise). On a chain the right spine *is* the whole tree, so churn's probe costs the
+    /// same as the marginal insert/delete — the array-like regime where the identity holds
+    /// **tight**, exactly like `array_churn_matches_finite_differences`.
+    #[test]
+    fn bst_chain_churn_matches_finite_differences() {
+        let ks = keys(1001); // 0..1000, ascending ⇒ right chain
+        let (n1, n2) = (999usize, 1000usize);
+        let insert_fd = (BstF64::build_insert_counted(&ks, n2)
+            - BstF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (BstF64::teardown_counted(&ks, n2) - BstF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut t = BstF64::new(&ks, n2);
+        t.set_churn_key(n2 as f64 + 1.0); // absent, > all keys ⇒ descends the full chain
+        let churn = t.churn_counted();
+
+        // insert_fd = 999 (depth of the 1000th key), delete_fd = 1000 (delete-max find),
+        // churn = 2001 — agreement to within ~0.1%.
+        let rel = (churn - (insert_fd + delete_fd)).abs() / churn;
+        assert!(rel < 0.05, "chain churn {churn} vs fd sum {} (rel {rel})", insert_fd + delete_fd);
+    }
+
+    /// Shuffled input ⇒ a **balanced** random tree. Here the array identity **fails**: the
+    /// finite-difference sum *overshoots* churn, because churn probes only the cheap right
+    /// spine (≈ 2 ln n round-trip) while insert_fd alone already reflects the average key
+    /// depth (≈ 2 ln n) and delete_fd (≈ ln n) is added on top. The two methods agree only
+    /// in **complexity class** (both O(log n) ≪ n), not in constant — the honest finding
+    /// (docs/PLAN.md §2.3, §6.3). Op-counts are deterministic (fixed-seed `shuffled`), so
+    /// the wide-margin inequalities below never flake.
+    #[test]
+    fn bst_balanced_finite_difference_sum_overshoots_churn() {
+        let ks = shuffled(4000);
+        let (n1, n2) = (2000usize, 4000usize); // wide span denoises the per-op estimate
+        let insert_fd = (BstF64::build_insert_counted(&ks, n2)
+            - BstF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (BstF64::teardown_counted(&ks, n2) - BstF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut t = BstF64::new(&ks, n2);
+        t.set_churn_key(n2 as f64 + 1.0); // 4000.0: absent and the new maximum
+        let churn = t.churn_counted();
+        let sum = insert_fd + delete_fd;
+
+        // (1) The overshoot: the FD sum double-counts relative to the right-spine probe.
+        assert!(sum > churn, "balanced: expected fd sum {sum} > churn {churn} (the overshoot)");
+        // (2) Both are O(log n), nowhere near the chain's O(n): far below n/10 = 400.
+        assert!(churn < 400.0, "balanced churn {churn} must stay O(log n) ≪ n");
+        assert!(sum < 400.0, "balanced fd sum {sum} must stay O(log n) ≪ n");
     }
 }

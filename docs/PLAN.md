@@ -8,7 +8,14 @@ Status: **Phase 3 complete (animation engine, linear breadth, the BST, plus the 
 tree + min-heap — batches 1–4); Phase 4 underway (the BST bench twin landed —
 `bst::BstF64`, an iterative index-arena multiset BST pinned to the TS twin by
 `conformance/corpus-bst.txt`, which also pins tree shape + a Hibbard-delete
-sequence).** The step-through visualization spine now exists: the array +
+sequence — and now its timed `#[wasm_bindgen]` harness surface
+(`search_n`/churn/build-teardown, with delete-max teardown) + engine/sweep wiring
+(`runBstMutationSweep`), which answered the open question: `churn ≈ insert_fd +
+delete_fd` holds tight only for the degenerate **chain**; on a **balanced** tree
+the finite-difference sum *overshoots* churn, so the two methods agree in
+complexity class only — proven clock-free in `structures::methodology`, with
+balanced-tree churn measuring sub-linear on the real browser clock).** The
+step-through visualization spine now exists: the array +
 hash-set teaching twins emit a typed step-event stream (cost events == op-count,
 pinned to the Rust corpus), a pure Player drives play/step/step-back, and SVG
 renderers animate the comparisons, shifts, chain probes, and rehash
@@ -280,6 +287,25 @@ This section is the technical crux. The value proposition lives or dies here.
     O(1) append and would never reproduce churn's O(n) (delete-dominated) shape,
     so teardown is essential. The methods agree when
     `churn(n) ≈ insert_fd(n) + delete_fd(n)`, validated by the §12 self-test.
+  - **The identity is structure-specific, not universal.** It holds *tightly* for the
+    array because its costs are **position-uniform** (insert is a free append; any delete
+    is O(n)). A **tree** breaks that symmetry: churn's spare key (`max + 1`) rides the
+    **right spine** (depth ≈ ln n balanced / n sorted), while the build inserts dataset
+    keys at their **average depth** (≈ 2 ln n / n). So for a BST the identity holds tight
+    only on the **degenerate chain** (sorted input — the right spine *is* the whole tree);
+    on a **balanced** tree `insert_fd + delete_fd` *overshoots* churn (insert_fd alone ≈
+    churn), and the two methods agree only in **complexity class**, not constant. Teardown
+    there deletes the current **maximum** repeatedly — the same right-spine path churn
+    probes, always leaf-or-one-child (no two-child Hibbard copy); deleting the *root*
+    instead would be O(1)/op on a chain and break even that agreement. Both regimes are
+    pinned clock-free in the §12 self-test (`structures::methodology`).
+  - **Consequence for the BST mutation curve:** because both churn and the FD-delete ride
+    the cheap right spine (≈ ln n), the BST's *measured mutation magnitude* is right-spine-
+    biased — churn ≈ 2 ln n where a *representative* balanced-tree insert+delete pair, at a
+    random key's average depth, would be ≈ 4 ln n. This is the deliberate price of a
+    robustly-absent churn key and a Hibbard-free teardown, and it is harmless because both
+    are the **same shape** (O(log n)): per §2.3 the BST mutation curve is read for its
+    *shape*, never its absolute ns, exactly as op-count magnitude already is.
 - Op-count signal uses the same isolation (counters read at the same points).
 
 This sub-design is implemented and validated **first** (see §10, Phase 2).
@@ -561,10 +587,31 @@ insert/search/delete group on a shared key type.
     shape-invariant) and a **delete sequence** with per-delete `(removed:ops)` across
     every Hibbard branch. Hand-computed Rust unit tests + a **proptest** (random
     insert/delete vs a sorted-multiset reference — correctness only; op-counts stay
-    pinned by hand + the corpus, a reference reproducing them being circular). The
-    timed harness surface (`search_n`/churn/build-teardown) + engine/sweep wiring — and
-    the open question of whether `churn ≈ insert_fd + delete_fd` holds for a tree — are
-    the next slice. No `#[wasm_bindgen]` surface yet; no engine touch. **No new deps.**
+    pinned by hand + the corpus, a reference reproducing them being circular). No
+    `#[wasm_bindgen]` surface in that batch.
+  - **Done (BST timed harness + engine/sweep wiring):** the `#[wasm_bindgen]` surface on
+    `bst::BstF64`, mirroring `ArrayF64`: `search_n`/`search_counted` (size-preserving),
+    the `churn_n`/`churn_counted` primary (insert+delete pairs at fixed n), and the
+    `build_insert_*`/`teardown_*` finite-difference cross-check — reusing the Phase 2
+    `measure.ts` orchestration unchanged (the BST satisfies the same structural runner
+    interfaces). **Teardown deletes the current maximum repeatedly** — the rightmost node,
+    always leaf-or-one-child (never the two-child Hibbard path), reached down the right
+    spine exactly as the churn key (`max + 1`); deleting the root would be O(1)/op on a
+    chain and break the cross-check. Engine wiring: `StructureId += 'bst'` and a dedicated
+    `runBstMutationSweep` on the `BenchEngine` boundary (worker + Comlink), kept separate
+    from `runMutationSweep` because a tree is **data-shape-sensitive** — sorted input
+    degenerates to an O(n) chain with an O(n²) build, so the caller feeds a **balanced
+    (shuffled)** dataset at modest n. Wired into `App.tsx` on a uniform dataset (publishing
+    `__bstMutationProof`) and asserted in `verify:browser` — balanced-tree churn measures
+    **sub-linear** on the real clock (slope ≈ 0.00, flat), the contrast to array O(n) /
+    hashset O(1). **The open question — does `churn ≈ insert_fd + delete_fd` hold for a
+    tree? — is answered both ways** by the clock-free §12 self-test
+    (`structures::methodology`): **tight on the degenerate chain** (right spine ≡ the whole
+    tree, like the array), but on a **balanced** tree the finite-difference sum *overshoots*
+    churn (churn rides the cheap right spine ≈ 2 ln n while the build pays average depth
+    ≈ 2 ln n per insert), so the methods agree only in complexity class — the honesty point
+    is reported, not buried (§2.3, §6.3). No chart wiring (deferred breadth, like the
+    string structures). **No new deps.**
 
 - **Phase 5 — Comparison / analysis.** Multi-overlay, log-log, fitter with
   honesty UI, theoretical overlay, export.

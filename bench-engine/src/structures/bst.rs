@@ -22,9 +22,27 @@
 //!
 //! **Counting is a zero-overhead `const COUNT: bool` flag** (docs/PLAN.md §6.4), exactly
 //! as the Phase 2 structures: one algorithm, the `*ops` increments compiled away on the
-//! (future) timed hot path, alive on the op-count signal. This batch is the algorithm +
-//! counters + conformance only; the timed WASM harness surface (`search_n`, churn /
-//! build / teardown) and the engine wiring land in the following slice.
+//! timed hot path, alive on the op-count signal.
+//!
+//! **Timed WASM harness surface (docs/PLAN.md §6.2–§6.3).** Mirroring `ArrayF64`, the
+//! `#[wasm_bindgen]` impl exposes the batched primitives the TS `measure.ts` times:
+//! `search_n`/`search_counted` (size-preserving), the `churn_n`/`churn_counted` primary
+//! (insert+delete pairs at fixed n), and the `build_insert_*`/`teardown_*` cumulative
+//! cross-check. **Teardown deletes the current maximum repeatedly** — the rightmost node,
+//! always a leaf-or-one-child (never the two-child Hibbard path), reached down the right
+//! spine exactly as the churn key (`max + 1`) is. Deleting the *root* instead would be
+//! O(1)/op on a chain and break the cross-check. This makes churn's probe and the
+//! finite-difference delete measure the *same* path, the precondition for
+//! `churn ≈ insert_fd + delete_fd` — which (unlike the array) holds tightly only for the
+//! degenerate **chain**; for a balanced tree the FD sum *overshoots* churn (the methods
+//! agree in complexity class only). See the `methodology` self-test in `mod.rs`.
+//!
+//! One honest consequence: because churn (and the delete-max teardown) ride the *cheap*
+//! right spine (≈ ln n) rather than a random key's average depth (≈ 2 ln n), the measured
+//! BST mutation *magnitude* runs low — read the curve for its O(log n) **shape**, not its
+//! absolute ns (docs/PLAN.md §2.3, §6.3).
+
+use wasm_bindgen::prelude::*;
 
 /// An arena node. Children are indices into [`BstF64::nodes`] (`None` = absent), not
 /// pointers, so traversal is a flat loop and reclamation is the `Vec`'s.
@@ -35,6 +53,7 @@ struct Node {
 }
 
 /// An unbalanced multiset BST over `f64` keys, stored in an index arena.
+#[wasm_bindgen]
 pub struct BstF64 {
     nodes: Vec<Node>,
     root: Option<u32>,
@@ -43,16 +62,20 @@ pub struct BstF64 {
     /// root and child links — so reuse never changes iteration order or shape.
     free: Vec<u32>,
     count: usize,
+    /// Query workload, stored once (untimed) so the timed search call carries no
+    /// argument-marshalling overhead per invocation (docs/PLAN.md §6.2). Mirrors `ArrayF64`.
+    probes: Vec<f64>,
+    /// The spare key cycled in/out by `churn_n` (docs/PLAN.md §6.3). The caller sets it to
+    /// a value absent from the tree (the engine uses `max + 1`, so it descends the right
+    /// spine) — each insert is real and the matching delete restores size, holding n stable.
+    churn_key: f64,
 }
 
+#[wasm_bindgen]
 impl BstF64 {
-    /// An empty tree.
-    pub fn new_empty() -> BstF64 {
-        BstF64 { nodes: Vec::new(), root: None, free: Vec::new(), count: 0 }
-    }
-
     /// Build from the first `n` keys of `keys`, inserting in order — insertion order
     /// fixes the shape (docs/PLAN.md §4.3). Mirrors the Phase 2 constructors' `(keys, n)`.
+    #[wasm_bindgen(constructor)]
     pub fn new(keys: &[f64], n: usize) -> BstF64 {
         let n = n.min(keys.len());
         let mut t = BstF64::new_empty();
@@ -68,9 +91,167 @@ impl BstF64 {
         self.count
     }
 
+    // ── Search: size-preserving (docs/PLAN.md §6.3) ──
+
+    /// Set the query workload (present + absent probe keys). Untimed.
+    pub fn set_probes(&mut self, probes: &[f64]) {
+        self.probes = probes.to_vec();
+    }
+
+    /// Timed hot path: perform `k` searches, cycling through the stored probes. Returns
+    /// the hit count so the optimizer can't elide the work (docs/PLAN.md §6.2). No
+    /// op-counting overhead (`COUNT=false`).
+    pub fn search_n(&self, k: u32) -> u32 {
+        let len = self.probes.len();
+        if len == 0 {
+            return 0;
+        }
+        let mut ops = 0u64;
+        let mut found = 0u32;
+        for i in 0..k as usize {
+            if self.find::<false>(self.probes[i % len], &mut ops) {
+                found += 1;
+            }
+        }
+        found
+    }
+
+    /// Op-count signal (§6.4): one pass over the probe set with `COUNT=true`, returning
+    /// total comparisons (the cost metric). `f64` return keeps it a plain JS number.
+    pub fn search_counted(&self) -> f64 {
+        let mut ops = 0u64;
+        for &p in &self.probes {
+            let _ = self.find::<true>(p, &mut ops);
+        }
+        ops as f64
+    }
+
+    // ── Mutation: churn at fixed size (docs/PLAN.md §6.3, primary method) ──
+
+    /// Set the spare key cycled by `churn_n` — must be absent from the tree so each
+    /// insert is real and the matching delete restores size. The engine passes `max + 1`,
+    /// which descends the right spine. Untimed.
+    pub fn set_churn_key(&mut self, key: f64) {
+        self.churn_key = key;
+    }
+
+    /// Timed hot path: `k` insert+delete *pairs* of the churn key, holding size stable at
+    /// ≈ n (docs/PLAN.md §6.3). Isolates the per-op mutation cost at a fixed n — you cannot
+    /// time a batch of plain inserts because each one changes n. The combined insert+delete
+    /// of `max + 1` walks the right spine down and back up. Returns the delete-hit count to
+    /// defeat dead-code elimination. No op-counting overhead (`COUNT=false`).
+    pub fn churn_n(&mut self, k: u32) -> u32 {
+        let key = self.churn_key;
+        let mut ops = 0u64;
+        let mut hits = 0u32;
+        for _ in 0..k {
+            self.insert::<false>(key, &mut ops);
+            if self.delete::<false>(key, &mut ops) {
+                hits += 1;
+            }
+        }
+        hits
+    }
+
+    /// Op-count signal (§6.4) for *one* churn pair: the comparisons of a counted
+    /// insert+delete of the churn key. The pair nets zero size change, so state is
+    /// unchanged afterwards. Cost = insert find-path + delete find-path comparisons
+    /// (≈ 2 × right-spine depth) — the delete's successor walk carries none (risk R1).
+    pub fn churn_counted(&mut self) -> f64 {
+        let key = self.churn_key;
+        let mut ops = 0u64;
+        self.insert::<true>(key, &mut ops);
+        let _ = self.delete::<true>(key, &mut ops);
+        ops as f64
+    }
+
+    // ── Mutation: cumulative build / teardown (docs/PLAN.md §6.3, cross-check) ──
+
+    /// Timed: build a fresh tree of size `n` from empty by inserting each key in turn.
+    /// Differencing this across sweep points yields per-insert cost near n (finite
+    /// differences, docs/PLAN.md §6.3). Returns the size to defeat DCE.
+    pub fn build_insert_n(keys: &[f64], n: usize) -> u32 {
+        BstF64::new(keys, n).count as u32
+    }
+
+    /// Op-count for the cumulative build to size `n`: total find-path comparisons to
+    /// insert the first `n` keys (the tree's internal path length). For sorted input this
+    /// is Σ i = O(n²); for random input ≈ O(n log n).
+    pub fn build_insert_counted(keys: &[f64], n: usize) -> f64 {
+        let n = n.min(keys.len());
+        let mut t = BstF64::new_empty();
+        let mut ops = 0u64;
+        for &k in &keys[..n] {
+            t.insert::<true>(k, &mut ops);
+        }
+        ops as f64
+    }
+
+    /// Timed: delete every stored key by repeatedly removing the current maximum, leaving
+    /// the tree empty (docs/PLAN.md §6.3 teardown). The max is the rightmost node — reached
+    /// down the right spine, the same path the churn key probes — and is always a
+    /// leaf-or-one-child, so no two-child Hibbard copy occurs. Returns the delete count to
+    /// defeat DCE. No op-counting overhead (`COUNT=false`).
+    pub fn teardown_all(&mut self) -> u32 {
+        let mut ops = 0u64;
+        let mut count = 0u32;
+        while let Some(max) = self.max_value() {
+            self.delete::<false>(max, &mut ops);
+            count += 1;
+        }
+        count
+    }
+
+    /// Op-count for a full size-`n` teardown: total comparisons to delete every key by
+    /// repeatedly removing the current maximum (Σ over the shrinking tree of each max's
+    /// find-path depth). Built untimed via `new`, then counted.
+    pub fn teardown_counted(keys: &[f64], n: usize) -> f64 {
+        let mut t = BstF64::new(keys, n);
+        let mut ops = 0u64;
+        while let Some(max) = t.max_value() {
+            t.delete::<true>(max, &mut ops);
+        }
+        ops as f64
+    }
+
+    /// Timed: build a fresh size-`n` tree via inserts, then tear it all down by
+    /// delete-max, in one self-contained call. Subtracting the `build_insert_n` time
+    /// isolates the teardown — the delete side of the finite-difference method (docs/PLAN.md
+    /// §6.3); the identical insert build path cancels in the subtraction.
+    pub fn build_then_teardown_n(keys: &[f64], n: usize) -> u32 {
+        BstF64::new(keys, n).teardown_all()
+    }
+}
+
+impl BstF64 {
+    /// An empty tree.
+    pub fn new_empty() -> BstF64 {
+        BstF64 {
+            nodes: Vec::new(),
+            root: None,
+            free: Vec::new(),
+            count: 0,
+            probes: Vec::new(),
+            churn_key: 0.0,
+        }
+    }
+
     /// Whether the tree holds no keys.
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+
+    /// Value of the current maximum — the rightmost node, found by following right links
+    /// from the root (no key comparison, so it is not a cost event — the same pointer-walk
+    /// rule as the in-order-successor walk, risk R1). `None` for an empty tree.
+    fn max_value(&self) -> Option<f64> {
+        let mut cur = self.root?;
+        loop {
+            match self.nodes[cur as usize].right {
+                Some(r) => cur = r,
+                None => return Some(self.nodes[cur as usize].value),
+            }
+        }
     }
 
     /// Allocate a fresh leaf, reusing a freed slot when one is available.
@@ -419,5 +600,68 @@ mod tests {
         let mut t = bst(&[]);
         assert_eq!(t.delete_one_counted(1.0), (false, 0));
         assert_eq!(shape(&t), "."); // root null
+    }
+
+    // ── Timed harness surface (docs/PLAN.md §6.2–§6.3) ──
+
+    #[test]
+    fn max_value_follows_the_right_spine() {
+        assert_eq!(bst(&[50.0, 30.0, 70.0, 60.0, 80.0]).max_value(), Some(80.0));
+        assert_eq!(bst(&[10.0, 20.0, 30.0]).max_value(), Some(30.0)); // chain
+        assert_eq!(bst(&[]).max_value(), None);
+    }
+
+    #[test]
+    fn search_n_cycles_probes_and_counts_hits() {
+        let mut t = bst(&[50.0, 30.0, 70.0]);
+        t.set_probes(&[30.0, 99.0]); // one present, one absent
+        assert_eq!(t.search_n(4), 2); // [30,99,30,99] => 2 hits
+    }
+
+    #[test]
+    fn search_counted_sums_comparisons_over_probes() {
+        // Balanced: 50 {30, 70}. find(30)=2 (50→30), find(99)=2 (50→70, null right).
+        let mut t = bst(&[50.0, 30.0, 70.0]);
+        t.set_probes(&[30.0, 99.0]);
+        assert_eq!(t.search_counted(), 4.0);
+    }
+
+    #[test]
+    fn churn_holds_size_and_counts_the_right_spine_round_trip() {
+        // Chain 10→20→30: max = 30 at depth 2. churn key 99 (> max) descends the right
+        // spine: insert walks 10,20,30 (3 comparisons) → leaf at depth 3; delete finds it
+        // in 4 comparisons. churn = 3 + 4 = 7. The pair nets zero, so size is restored.
+        let mut t = bst(&[10.0, 20.0, 30.0]);
+        t.set_churn_key(99.0);
+        t.churn_n(5);
+        assert_eq!(t.len(), 3);
+        assert_eq!(t.keys_in_order(), vec![10.0, 20.0, 30.0]);
+        assert_eq!(t.churn_counted(), 7.0);
+        assert_eq!(t.len(), 3); // churn_counted nets zero
+    }
+
+    #[test]
+    fn build_insert_counted_is_the_internal_path_length() {
+        // Chain 0→1→2→3: insertion depths 0,1,2,3 ⇒ Σ = 6.
+        assert_eq!(BstF64::build_insert_n(&[0.0, 1.0, 2.0, 3.0], 4), 4);
+        assert_eq!(BstF64::build_insert_counted(&[0.0, 1.0, 2.0, 3.0], 4), 6.0);
+        // Balanced 50 {30,70}: depths 0,1,1 ⇒ Σ = 2.
+        assert_eq!(BstF64::build_insert_counted(&[50.0, 30.0, 70.0], 3), 2.0);
+    }
+
+    #[test]
+    fn teardown_empties_by_delete_max_and_counts_each_find_path() {
+        let keys = [10.0, 20.0, 30.0]; // chain; max depths 2,1,0 ⇒ finds 3,2,1
+        let mut t = BstF64::new(&keys, 3);
+        assert_eq!(t.teardown_all(), 3);
+        assert!(t.is_empty());
+        assert_eq!(BstF64::teardown_counted(&keys, 3), 6.0); // 3 + 2 + 1
+        // Balanced 50 {30,70}: delete 70 (find 2), then 50 (root, find 1), then 30 (find 1).
+        assert_eq!(BstF64::teardown_counted(&[50.0, 30.0, 70.0], 3), 4.0);
+    }
+
+    #[test]
+    fn build_then_teardown_empties_the_tree() {
+        assert_eq!(BstF64::build_then_teardown_n(&[5.0, 3.0, 8.0, 1.0], 4), 4);
     }
 }

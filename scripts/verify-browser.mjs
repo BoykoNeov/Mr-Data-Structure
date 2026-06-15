@@ -17,21 +17,25 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
 let ok = false;
 let proof = null;
 let mutation = null;
+let bst = null;
 let text = '(no text captured)';
 const checks = [];
 
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  // Both sweeps run in a worker; wait until the mutation proof publishes (it is
-  // set last, after search), or the app reports an error. Generous timeout — the
-  // sweeps do real timed work.
+  // The sweeps run in a worker; wait until the BST mutation proof publishes (it is
+  // set last, after search + the array/hashset mutation sweep), or the app reports
+  // an error. Generous timeout — the sweeps do real timed work.
   await page.waitForFunction(
-    () => window.__mutationProof !== undefined || /status:\s*error/.test(document.body.innerText),
+    () =>
+      window.__bstMutationProof !== undefined ||
+      /status:\s*error/.test(document.body.innerText),
     { timeout: 60000 },
   );
   text = await page.evaluate(() => document.body.innerText);
   proof = await page.evaluate(() => window.__sweepProof ?? null);
   mutation = await page.evaluate(() => window.__mutationProof ?? null);
+  bst = await page.evaluate(() => window.__bstMutationProof ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
 
@@ -82,6 +86,24 @@ try {
     }
   }
 
+  // BST mutation (docs/PLAN.md §6.3, §8 trees): the first tree bench twin on a
+  // *balanced* (uniform) dataset. The real clock is too noisy for the absolute-ns
+  // overshoot sum (proven clock-free in Rust); here we confirm the worker→WASM BST
+  // path resolves and that balanced-tree mutation is **sub-linear** (O(log n)) —
+  // the churn primary stays far flatter than the array's O(n) churn.
+  if (bst) {
+    const bChurn = bst.find((m) => m.structure === 'bst' && m.op === 'churn');
+    want('three BST mutation series measured', bst.length === 3);
+    if (bChurn) {
+      const ratio = bChurn.lastNanos / bChurn.firstNanos;
+      want(
+        `BST churn sub-linear (slope ${bChurn.slope.toFixed(2)} < 0.6)`,
+        bChurn.slope < 0.6,
+      );
+      want(`BST churn stays near-flat (ratio ${ratio.toFixed(1)} < 6)`, ratio < 6);
+    }
+  }
+
   ok = checks.length > 0 && checks.every((c) => c.pass);
 } catch (err) {
   logs.push(`[harness] ${err.message}`);
@@ -98,6 +120,10 @@ if (proof) {
 if (mutation) {
   console.log('--- mutation proof ---');
   console.log(JSON.stringify(mutation, null, 2));
+}
+if (bst) {
+  console.log('--- bst mutation proof ---');
+  console.log(JSON.stringify(bst, null, 2));
 }
 if (checks.length) {
   console.log('--- checks ---');

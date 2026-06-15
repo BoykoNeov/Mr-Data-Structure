@@ -55,6 +55,15 @@ class WasmBenchEngine implements BenchEngine {
     return this.api.runMutationSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts);
   }
 
+  runBstMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    // Transfer the key buffer (docs/PLAN.md risk R7) — detaches `keys` here.
+    return this.api.runBstMutationSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts);
+  }
+
   dispose(): void {
     this.worker.terminate();
   }

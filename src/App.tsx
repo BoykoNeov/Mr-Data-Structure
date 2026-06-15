@@ -5,7 +5,7 @@ import { geometricSweep } from './bench/sweep';
 import { fitComplexity } from './bench/fit';
 import { SweepChart, type SeriesView, type Signal } from './ui/SweepChart';
 import { VizPanel } from './viz/VizPanel';
-import { generateSorted, marshalKeys } from './data';
+import { generateSorted, generateUniform, marshalKeys } from './data';
 
 /**
  * Phase 2 thin slice (docs/PLAN.md §10): generate a dataset, run the search
@@ -117,6 +117,40 @@ export function App() {
           lastNanos: v.series.points[v.series.points.length - 1].nanosPerOp,
         }));
         (window as unknown as { __mutationProof?: MutationProof[] }).__mutationProof = mutProof;
+
+        // BST mutation sweep (docs/PLAN.md §6.3, §8 trees): the first *tree* bench
+        // twin through the same churn + finite-difference machinery, on a **balanced
+        // (uniform)** dataset — sorted input would degenerate to an O(n) chain with an
+        // O(n²) build (the headline demo, but not what we time here). On the real clock
+        // this confirms the worker→WASM BST path resolves and that balanced-tree
+        // mutation is sub-linear (O(log n)) — the contrast to array O(n) / hashset O(1).
+        // The precise finding this slice owns — that `insert_fd + delete_fd` *overshoots*
+        // churn for a tree (it holds tight only for the chain) — is proven clock-free in
+        // Rust (`structures::methodology`), the home for a numeric op-count claim.
+        setStatus('running BST mutation sweep…');
+        const bstDataset = generateUniform(MUT_MAX, 0, MUT_MAX, false, 7);
+        const bstMarshalled = marshalKeys(bstDataset);
+        if (bstMarshalled.keyType !== 'number') throw new Error('expected numeric keys');
+        const bstSizes = geometricSweep(MUT_MIN, MUT_MAX);
+        const bstSeries = await engine.runBstMutationSweep(bstMarshalled.values, bstSizes, MUT_OPTS);
+
+        const bstProof: MutationProof[] = bstSeries.map((s) => {
+          const fit = fitComplexity(
+            s.points.map((p) => p.n),
+            s.points.map((p) => p.nanosPerOp),
+          );
+          return {
+            structure: s.structure,
+            op: s.op,
+            best: fit.best,
+            slope: fit.logLogSlope,
+            r2: fit.r2,
+            firstNanos: s.points[0].nanosPerOp,
+            lastNanos: s.points[s.points.length - 1].nanosPerOp,
+          };
+        });
+        (window as unknown as { __bstMutationProof?: MutationProof[] }).__bstMutationProof =
+          bstProof;
 
         setStatus('ready');
       } catch (err) {

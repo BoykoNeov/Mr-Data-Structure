@@ -4,6 +4,7 @@ import init, {
   engine_version,
   ArrayF64,
   HashSetF64,
+  BstF64,
 } from '../../bench-engine/pkg/bench_engine.js';
 import {
   measureSweep,
@@ -233,6 +234,38 @@ const api = {
       out.push(fd.insert, fd.delete);
     }
     return out;
+  },
+  /**
+   * Run the §6.3 size-mutating measurement for the **BST** (the first tree bench
+   * twin) across `sizes`: the churn primary plus the finite-difference split, as
+   * three series (`churn`, `insert`, `delete`) tagged `'bst'`. Kept a *separate*
+   * call from {@link runMutationSweep} because a tree's cost is data-shape-sensitive
+   * in a way the array/hash set are not — on **sorted** input it degenerates to an
+   * O(n) chain whose build is O(n²), so the caller must feed a *balanced* (shuffled)
+   * dataset at modest n. The BST satisfies the same churn/build/teardown surface, so
+   * this reuses the exact runner factories the array/hash set use. The open question
+   * this slice owns — whether `churn ≈ insert_fd + delete_fd` holds for a tree — is
+   * proven clock-free in Rust (`structures::methodology`); here it runs on the real
+   * browser clock. `keys` is transferred in by the caller.
+   */
+  async runBstMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const Ctor = BstF64 as unknown as MutationStructCtor;
+    const churn = measureSweep(sizes, churnRunnerFactory(Ctor, keys), now, opts);
+    const fd = measureMutationFd(
+      'bst',
+      sizes,
+      buildRunnerFactory(Ctor, keys),
+      buildTeardownRunnerFactory(Ctor, keys),
+      now,
+      opts,
+    );
+    return [{ structure: 'bst', op: 'churn', points: churn }, fd.insert, fd.delete];
   },
 };
 

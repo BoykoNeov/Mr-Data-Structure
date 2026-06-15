@@ -17,7 +17,7 @@
  */
 
 /** Which structure a series was measured on (docs/PLAN.md §8). */
-export type StructureId = 'array' | 'hashset';
+export type StructureId = 'array' | 'hashset' | 'bst';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).
