@@ -6,6 +6,7 @@ import init, {
   HashSetF64,
   BstF64,
   AvlF64,
+  SortedArrayF64,
 } from '../../bench-engine/pkg/bench_engine.js';
 import {
   measureSweep,
@@ -195,9 +196,14 @@ const api = {
     await ready;
     const now = () => performance.now();
     const array = measureSweep(sizes, searchRunnerFactory(ArrayF64, keys), now, opts);
+    const sarr = measureSweep(sizes, searchRunnerFactory(SortedArrayF64, keys), now, opts);
     const hashset = measureSweep(sizes, searchRunnerFactory(HashSetF64, keys), now, opts);
+    // Ordered array → sorted array → hash set: the "missing middle" of search cost,
+    // O(n) → O(log n) → O(1) (docs/PLAN.md §8). The sorted array satisfies the same
+    // SearchStruct interface, so it drops straight into the existing runner.
     return [
       { structure: 'array', op: 'search', points: array },
+      { structure: 'sarr', op: 'search', points: sarr },
       { structure: 'hashset', op: 'search', points: hashset },
     ];
   },

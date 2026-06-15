@@ -14,9 +14,9 @@ methodology, and the phased roadmap.
 
 ## Status
 
-**Phase 4 — benchmark breadth + methodology hardening (in progress; the BST and AVL
-bench twins landed).** The first production (Rust→WASM) twin of a Phase 3 teaching-only
-structure is in: `bst::BstF64`, the bench twin of `src/structures/bst.ts`. It is an
+**Phase 4 — benchmark breadth + methodology hardening (in progress; the BST, AVL, and
+sorted-array bench twins landed).** The first production (Rust→WASM) twin of a Phase 3
+teaching-only structure is in: `bst::BstF64`, the bench twin of `src/structures/bst.ts`. It is an
 **iterative, index-arena** multiset BST (`key < node` ⇒ left, else right; equal keys
 go right) — a `Vec<Node{value, left, right: Option<u32>}>` arena walked with loops,
 deliberately *not* a recursive `Box<Node>` tree, so the headline sorted-input
@@ -75,6 +75,33 @@ AVL stays **O(log n) on the exact sorted input that degenerates the BST to an O(
 question — the two methods here **agree closely** (within ~6%), with churn marginally the
 larger (it rides the full-height spine, vs the shallower average insert). No new
 dependencies.
+
+The first **Linear**-family bench twin now joins them: `sorted_array::SortedArrayF64`,
+the bench twin of `src/structures/sortedArray.ts` — a sorted multiset with
+**binary-search** lookup and shift-based insert/delete (cost metric **comparisons +
+shifts**). Its search is the O(log n) **"missing middle"** between the unsorted array's
+O(n) scan and the hash set's O(1) lookup, and it is **wired into the search sweep**, so
+the chart now shows the three-way contrast — `verify:browser` confirms it on the real
+clock (array O(n) slope ≈ 0.92 / **sorted O(log n) slope ≈ 0.23** / hash set O(1) slope
+≈ 0.00). The drift-prone half (R1) is the binary-search comparison count: `locate`
+mirrors the TS twin exactly (one comparison per midpoint, `==` short-circuit before `<`,
+half-open window). It is pinned by **`conformance/corpus-sarr.txt`** — which, unlike the
+BST/AVL corpora, has no shape dimension (a sorted array's iteration order *is* the sorted
+multiset) but is the **first corpus to pin a shift-inclusive op-count cross-language**, its
+delete sequence running front / back / middle deletes so the `+ shifts` term agrees across
+languages. A hand-computed unit suite plus a **proptest** (random ops vs a sorted-multiset
+reference) round it out. The full timed harness mirrors `ArrayF64`, with two mutation
+specifics in the module doc: churn rides the **front** (`min − 1`) so mutation reads the
+honest O(n) — a tail key would read a misleading O(log n), and (unlike the BST's cheap
+right spine) a sorted array's tail is a *different class* than its average position — and
+the build must see **shuffled** input to read O(n). Two findings live in the clock-free
+Rust self-test: a fourth churn-vs-finite-difference regime (front churn *overshoots* the
+finite-difference sum, both O(n)) and the structure's **signature split** — the same
+structure is O(log n) to search but O(n) to mutate. The mutation side stays Rust-only this
+slice — the `#[wasm_bindgen]` timed surface is ready and the self-test proves the
+methodology, but (like the string structures) the TS sweep + chart wiring is deferred to
+Phase 5, and a browser mutation curve would be slow (build *and* teardown are O(n²)). No
+new dependencies.
 
 **Phase 3 — visualization breadth (complete; animation engine, linear breadth,
 the BST, plus the AVL tree + min-heap landed).** The step-through exploration spine is in for the two proven

@@ -23,7 +23,11 @@
 //! pinned to it by the `conformance/corpus-bst.txt` corpus; `avl::AvlF64` adds the
 //! balanced twin (comparisons **+ rotations**), recursive rather than arena-backed
 //! because the AVL invariant bounds its height and removes the BST's stack-overflow
-//! hazard, pinned by `conformance/corpus-avl.txt`.
+//! hazard, pinned by `conformance/corpus-avl.txt`. `sorted_array::SortedArrayF64`
+//! is the Linear-family bench twin of `src/structures/sortedArray.ts` — a sorted
+//! multiset with **binary-search** lookup (the O(log n) "missing middle" between the
+//! unsorted array's O(n) and the hash set's O(1)) and shift-based insert/delete (cost
+//! metric **comparisons + shifts**), pinned by `conformance/corpus-sarr.txt`.
 
 pub mod avl;
 pub mod bst;
@@ -31,6 +35,7 @@ pub mod dyn_array;
 pub mod dyn_array_str;
 pub mod hash_set;
 pub mod hash_set_str;
+pub mod sorted_array;
 
 #[cfg(test)]
 mod conformance;
@@ -141,6 +146,7 @@ mod methodology {
     use super::bst::BstF64;
     use super::dyn_array::ArrayF64;
     use super::hash_set::HashSetF64;
+    use super::sorted_array::SortedArrayF64;
 
     fn keys(n: usize) -> Vec<f64> {
         (0..n).map(|i| i as f64).collect()
@@ -337,5 +343,73 @@ mod methodology {
         assert!(churn >= sum, "AVL churn {churn} should be ≥ fd sum {sum} (full-spine probe)");
         // (3) Both are O(log n), nowhere near a chain's O(n): far below n/50 = 80.
         assert!(churn < 80.0 && sum < 80.0, "AVL churn {churn} / sum {sum} must stay O(log n)");
+    }
+
+    // ── Sorted array: a fourth churn-vs-finite-difference regime, and the structure's
+    //    signature split (O(log n) search vs O(n) mutation).
+    //
+    // The sorted array's mutation cost is dominated by **shifts**, whose size depends on
+    // *where* the key lands — so the churn-key choice sets the class the curve reports.
+    // The engine uses the **front** key (`min − 1`): each insert/delete shifts the whole
+    // array (O(n)). A *tail* key would append/pop with zero shifts and read O(log n) —
+    // dishonest, since (unlike the BST's right spine, which is the same O(log n) class as
+    // the average path) the tail of a sorted array is a *different class* than the average
+    // position. Front churn shifts the whole array twice (≈ 2n); the finite-difference sum
+    // is insert (≈ n/2, the average position of a shuffled build) + delete (≈ n, the
+    // front teardown) ≈ 3n/2, so churn *overshoots* the sum — yet a fourth direction after
+    // the array (tight), the balanced BST (sum overshoots), and the AVL (close, churn ≥ sum).
+
+    /// Front churn overshoots the finite-difference sum, and both are unmistakably O(n)
+    /// (≫ what a tail/best-case churn would read). Build is fed **shuffled** keys so its
+    /// inserts land at average depth (≈ n/2 shifts) — on ascending input every insert would
+    /// append (0 shifts) and `insert_fd` would read O(log n), contradicting the O(n) churn.
+    /// Deterministic via the fixed-seed `shuffled`, so the wide-margin inequalities never flake.
+    #[test]
+    fn sorted_array_front_churn_overshoots_finite_difference_sum() {
+        let ks = shuffled(4000); // keys 0..3999 in a fixed-seed scramble
+        let (n1, n2) = (2000usize, 4000usize); // wide span denoises the per-op estimate
+        let insert_fd = (SortedArrayF64::build_insert_counted(&ks, n2)
+            - SortedArrayF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (SortedArrayF64::teardown_counted(&ks, n2)
+            - SortedArrayF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut a = SortedArrayF64::new(&ks, n2);
+        a.set_churn_key(-1.0); // min(0..3999) − 1: absent, < all ⇒ front insert/delete
+        let churn = a.churn_counted();
+        let sum = insert_fd + delete_fd;
+
+        // (1) Front churn double-shifts the whole array, overshooting the FD sum.
+        assert!(churn > sum, "sorted array: churn {churn} should overshoot fd sum {sum}");
+        // (2) Same complexity class — the sum is within a factor of 2 of churn.
+        assert!(sum > churn / 2.0, "sorted array: churn {churn} and sum {sum} same class");
+        // (3) Unmistakably O(n): churn ≫ n (a tail/best-case churn would read ≈ 2·log n ≪ n).
+        assert!(churn > n2 as f64, "sorted array churn {churn} must be O(n), not the tail's O(log n)");
+        // (4) And O(n), not O(n²): bounded well below n².
+        assert!(churn < 4.0 * n2 as f64, "sorted array churn {churn} must stay O(n) ≪ O(n²)");
+    }
+
+    /// The sorted array's signature: the *same* structure is O(log n) to **search** but O(n)
+    /// to **mutate** — binary search vs shifts. A deterministic op-count contrast (the clock-
+    /// free home for a numeric claim, like the AVL-beats-BST finding above), built on ascending
+    /// keys so the binary search is exercised at full depth.
+    #[test]
+    fn sorted_array_search_is_log_n_while_mutation_is_linear() {
+        let n = 4096usize;
+        let ks = keys(n); // 0..4095 ascending
+        let a = SortedArrayF64::new(&ks, n);
+
+        // Search the maximum: binary search ⇒ ≈ log2(4096) = 12 comparisons, nowhere near n.
+        let (found, ops) = a.search_one_counted((n - 1) as f64);
+        assert!(found);
+        assert!(ops <= 14, "sorted-array search-max {ops} must be O(log n) ≈ 12, not O(n)");
+
+        // Front churn, by contrast, shifts the whole array ⇒ O(n) ≫ the search's log n.
+        let mut b = SortedArrayF64::new(&ks, n);
+        b.set_churn_key(-1.0);
+        let churn = b.churn_counted();
+        assert!(churn > n as f64, "sorted-array front churn {churn} must be O(n) — the shift cost");
+        assert!(churn > 100.0 * ops as f64, "mutation {churn} ≫ search {ops}: the signature split");
     }
 }

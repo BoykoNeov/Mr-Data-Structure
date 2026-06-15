@@ -25,6 +25,7 @@ use super::dyn_array::ArrayF64;
 use super::dyn_array_str::ArrayStr;
 use super::hash_set::HashSetF64;
 use super::hash_set_str::HashSetStr;
+use super::sorted_array::SortedArrayF64;
 
 const CORPUS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus.txt");
 const CORPUS_STR_PATH: &str =
@@ -33,6 +34,8 @@ const CORPUS_BST_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-bst.txt");
 const CORPUS_AVL_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-avl.txt");
+const CORPUS_SARR_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-sarr.txt");
 
 struct Case {
     name: &'static str,
@@ -497,5 +500,104 @@ fn corpus_avl_matches_committed() {
         normalize(&serialize_avl(&avl_cases())),
         "AVL conformance corpus is stale vs the Rust impl; \
          regenerate with: cargo test -- --ignored regen_corpus_avl",
+    );
+}
+
+// ── Sorted-array corpus (docs/PLAN.md §8 Linear, §12) ────────────────────────
+//
+// The sorted array reuses the linear/hash format's `*_order` + `*_search` lines (a sorted
+// array has no shape dimension — its iteration order *is* the sorted multiset, fully
+// determined), and adds a **delete sequence** with per-delete `(removed:ops)`. The deletes
+// are the point: this is the first structure whose cost metric folds in **shifts**, so the
+// delete cases pin that the `+ shifts` term agrees cross-language — front (whole-array shift),
+// back (zero shift), and middle deletes. The binary-search comparison count is the other
+// drift-prone half (risk R1), pinned by every `sarr_search` line. Integer-valued keys round-
+// trip through TS `Number()`.
+
+struct SarrCase {
+    name: &'static str,
+    keys: Vec<f64>,
+    probes: Vec<f64>,
+    deletes: Vec<f64>,
+}
+
+/// Sorted-array input cases (docs/PLAN.md §12): empty/singleton edges, **unsorted input**
+/// (proves the array sorts itself — input order ≠ iteration order — and exercises front/back/
+/// middle deletes for the shift term), multiset duplicates (delete one of a run), and an
+/// already-ascending case (the append-only build path).
+fn sarr_cases() -> Vec<SarrCase> {
+    vec![
+        SarrCase { name: "empty", keys: vec![], probes: vec![1.0, 2.0], deletes: vec![1.0] },
+        SarrCase {
+            name: "singleton", // delete-to-empty
+            keys: vec![42.0],
+            probes: vec![42.0, 7.0],
+            deletes: vec![42.0],
+        },
+        SarrCase {
+            name: "unsorted_input", // self-sorts; front/back/middle deletes (the shift term)
+            keys: vec![50.0, 30.0, 70.0, 20.0, 40.0, 60.0, 80.0],
+            probes: vec![20.0, 80.0, 55.0],
+            deletes: vec![20.0, 80.0, 50.0],
+        },
+        SarrCase {
+            name: "duplicates", // multiset; delete one of a run
+            keys: vec![5.0, 5.0, 5.0, 7.0, 5.0, 9.0],
+            probes: vec![5.0, 7.0, 9.0, 99.0],
+            deletes: vec![5.0],
+        },
+        SarrCase {
+            name: "ordered", // ascending input ⇒ append-only build; middle then front delete
+            keys: vec![10.0, 20.0, 30.0, 40.0, 50.0],
+            probes: vec![10.0, 30.0, 50.0, 5.0],
+            deletes: vec![30.0, 10.0],
+        },
+    ]
+}
+
+fn serialize_sarr(cases: &[SarrCase]) -> String {
+    let mut out = String::new();
+    out.push_str("# Mr Data Structure — sorted-array conformance corpus (docs/PLAN.md §8, §12).\n");
+    out.push_str("# Generated from the Rust bench impl; the TS teaching twin must match.\n");
+    out.push_str("# Op-count = comparisons + shifts. Regenerate: cargo test -- --ignored regen_corpus_sarr\n");
+    for c in cases {
+        let a = SortedArrayF64::new(&c.keys, c.keys.len());
+        let search: Vec<(bool, u64)> =
+            c.probes.iter().map(|&p| a.search_one_counted(p)).collect();
+
+        // Deletes mutate, so run them on a fresh array built from the same keys.
+        let mut td = SortedArrayF64::new(&c.keys, c.keys.len());
+        let del: Vec<(bool, u64)> =
+            c.deletes.iter().map(|&d| td.delete_one_counted(d)).collect();
+
+        out.push('\n');
+        out.push_str(&format!("case {}\n", c.name));
+        out.push_str(&format!("keys {}\n", fmt_nums(&c.keys)));
+        out.push_str(&format!("probes {}\n", fmt_nums(&c.probes)));
+        out.push_str(&format!("sarr_order {}\n", fmt_nums(&a.keys_in_order())));
+        out.push_str(&format!("sarr_search {}\n", fmt_search(&search)));
+        out.push_str(&format!("deletes {}\n", fmt_nums(&c.deletes)));
+        out.push_str(&format!("sarr_delete {}\n", fmt_search(&del)));
+        out.push_str(&format!("sarr_order_after {}\n", fmt_nums(&td.keys_in_order())));
+    }
+    out
+}
+
+#[test]
+#[ignore = "writes the committed sorted-array corpus; run deliberately after a behavior change"]
+fn regen_corpus_sarr() {
+    std::fs::write(CORPUS_SARR_PATH, serialize_sarr(&sarr_cases())).expect("write sarr corpus");
+}
+
+#[test]
+fn corpus_sarr_matches_committed() {
+    let committed = std::fs::read_to_string(CORPUS_SARR_PATH).expect(
+        "sorted-array corpus missing; generate it with: cargo test -- --ignored regen_corpus_sarr",
+    );
+    assert_eq!(
+        normalize(&committed),
+        normalize(&serialize_sarr(&sarr_cases())),
+        "sorted-array conformance corpus is stale vs the Rust impl; \
+         regenerate with: cargo test -- --ignored regen_corpus_sarr",
     );
 }

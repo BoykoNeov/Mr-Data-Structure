@@ -22,7 +22,15 @@ kind incl. a delete-triggered one) + a balance-invariant proptest, wired through
 `runAvlMutationSweep`; its self-test proves the AVL stays **O(log n) on the exact
 sorted input that degenerates the BST to a chain**, and that here churn and the
 finite-difference sum **agree closely** — the third regime after the array's tight
-match and the balanced BST's overshoot).** The
+match and the balanced BST's overshoot). The first **Linear**-family bench twin lands
+too: `sorted_array::SortedArrayF64` — a sorted multiset with **binary-search** lookup
+(the O(log n) **"missing middle"** between the unsorted array's O(n) and the hash set's
+O(1), now wired into the search sweep and proven on the real clock at slope ≈ 0.23) and
+shift-based insert/delete (cost = comparisons + shifts), pinned by
+`conformance/corpus-sarr.txt` — the first corpus to pin a shift-inclusive op-count
+cross-language (front/back/middle deletes) — whose churn rides the **front** (`min − 1`)
+so its mutation reads the honest O(n), a fourth churn-vs-finite-difference regime (front
+churn *overshoots* the sum).** The
 step-through visualization spine now exists: the array +
 hash-set teaching twins emit a typed step-event stream (cost events == op-count,
 pinned to the Rust corpus), a pure Player drives play/step/step-back, and SVG
@@ -650,6 +658,45 @@ insert/search/delete group on a shared key type.
     overshoots), here the two methods **agree closely** (~6%), with churn marginally the larger
     because it rides the full-height right spine while `insert_fd` reflects the shallower
     average depth. No chart wiring (deferred breadth). **No new deps.**
+  - **Done (sorted-array bench twin):** `sorted_array::SortedArrayF64`
+    (`bench-engine/src/structures/sorted_array.rs`) — the bench twin of
+    `src/structures/sortedArray.ts`, the first **Linear**-family teaching-only structure to
+    get its Rust impl. A sorted multiset with **binary-search** lookup — the O(log n) **"missing
+    middle"** between the unsorted array's O(n) scan and the hash set's O(1) — and shift-based
+    insert/delete, cost metric **comparisons + shifts** (§8). The drift-prone half (R1) is the
+    binary-search comparison count: `locate` mirrors the TS twin *exactly* — `mid = lo +
+    (hi−lo)/2` (floored, == JS `>>> 1`), **one** comparison per midpoint, the `==` match
+    short-circuit checked **before** the `<` branch, a half-open `lo < hi` window — hand-verified
+    on `[10,20,30,40,50]` (`search(50)`=2, `search(35)`=3) before trusting the corpus. Pinned by
+    a dedicated **`conformance/corpus-sarr.txt`**: unlike the BST/AVL corpora it carries no
+    *shape* (a sorted array's iteration order *is* the sorted multiset, fully determined), but it
+    is the **first corpus to pin a shift-inclusive op-count cross-language** — its delete sequence
+    runs front / back / middle deletes so the `+ shifts` term agrees across the two languages
+    (the unsorted array's corpus skipped deletes; BST/AVL deletes are pure comparisons).
+    Hand-computed Rust unit tests + a **proptest** (random insert/delete vs a sorted-multiset
+    reference — correctness only). The full `#[wasm_bindgen]` timed surface mirrors `ArrayF64`
+    (`search_n`/churn/build-teardown), with **two mutation specifics** the module doc records:
+    (1) churn rides the **front** (`min − 1`), not the tail — each op shifts the whole array, the
+    honest O(n); a *tail* key would append/pop with zero shifts and read O(log n), and (unlike the
+    BST's cheap right spine, the *same* O(log n) class as the average path, only a constant
+    cheaper) the tail of a sorted array is a **different class** than the average position, so tail
+    churn would *mislabel* the structure's mutation; and (2) the build must see **shuffled** input
+    (ascending input is all appends → 0 shifts → `insert_fd` would read O(log n) and contradict the
+    O(n) churn in the same proof). Two findings live in the clock-free `structures::methodology`
+    self-test: (a) a **fourth** churn-vs-finite-difference regime — front churn *overshoots* the FD
+    sum (≈ 2n vs ≈ 3n/2), both unmistakably O(n), the opposite direction from the balanced BST and
+    distinct from the array's tight match and the AVL's close agreement; and (b) the structure's
+    **signature split** — the *same* structure is O(log n) to **search** but O(n) to **mutate**.
+    Engine wiring: `StructureId += 'sarr'` and the **search sweep now includes the sorted array**,
+    so `runSweep` returns the three-way contrast (array O(n) / sorted O(log n) / hash set O(1)) —
+    asserted in `verify:browser` (sorted-array search slope ≈ 0.23, R² 0.99, sub-linear and
+    flatter than the array; the slope *band* is asserted, not the fitter label, since §7.2 can't
+    reliably separate log n from constant). The **mutation** side stays Rust-only this slice: the
+    `#[wasm_bindgen]` timed surface (front-churn, build/teardown) is ready and the methodology is
+    proven by the self-test, but — exactly as the string structures left their impls ready with no
+    TS `BenchEngine` method — the TS sweep + chart wiring waits for Phase 5 (a browser mutation
+    curve would also be slow, both build and teardown being O(n²), and overhead-dominated at the
+    small n that stays affordable). **No new deps.**
 
 - **Phase 5 — Comparison / analysis.** Multi-overlay, log-log, fitter with
   honesty UI, theoretical overlay, export.

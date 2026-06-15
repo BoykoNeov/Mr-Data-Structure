@@ -24,9 +24,10 @@ const checks = [];
 
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  // The sweeps run in a worker; wait until the AVL mutation proof publishes (it is
-  // set last, after search + the array/hashset and BST mutation sweeps), or the app
-  // reports an error. Generous timeout — the sweeps do real timed work.
+  // The sweeps run in a worker; wait until the AVL mutation proof publishes (it is set
+  // last, after the search sweep — which now includes the sorted array — and the
+  // array/hashset and BST mutation sweeps), or the app reports an error. Generous timeout
+  // — the sweeps do real timed work.
   await page.waitForFunction(
     () =>
       window.__avlMutationProof !== undefined ||
@@ -43,14 +44,31 @@ try {
 
   if (proof) {
     const array = proof.find((p) => p.structure === 'array');
+    const sarrSearch = proof.find((p) => p.structure === 'sarr');
     const hashset = proof.find((p) => p.structure === 'hashset');
 
-    want('two search series measured', proof.length === 2 && array && hashset);
+    want(
+      'three search series measured',
+      proof.length === 3 && array && sarrSearch && hashset,
+    );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
       want('array search labelled O(n)', array.best === 'O(n)');
       want('array search slope ~1 (0.7..1.4)', array.slope >= 0.7 && array.slope <= 1.4);
       want(`array search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
+    }
+    // Sorted array: the "missing middle" — binary search is sub-linear (O(log n)). Assert
+    // the slope *band* (well below the array's ~1), NOT the label: the §7.2 fitter cannot
+    // reliably separate log n from constant, so `best` may come back O(1) or O(log n).
+    if (sarrSearch && array) {
+      want(
+        `sorted-array search sub-linear (slope ${sarrSearch.slope.toFixed(2)} < 0.4)`,
+        sarrSearch.slope < 0.4,
+      );
+      want(
+        `sorted-array search flatter than array (${sarrSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
+        sarrSearch.slope < array.slope,
+      );
     }
     if (hashset) {
       const ratio = hashset.lastNanos / hashset.firstNanos;

@@ -1,0 +1,48 @@
+# Mr Data Structure — sorted-array conformance corpus (docs/PLAN.md §8, §12).
+# Generated from the Rust bench impl; the TS teaching twin must match.
+# Op-count = comparisons + shifts. Regenerate: cargo test -- --ignored regen_corpus_sarr
+
+case empty
+keys 
+probes 1 2
+sarr_order 
+sarr_search 0:0 0:0
+deletes 1
+sarr_delete 0:0
+sarr_order_after 
+
+case singleton
+keys 42
+probes 42 7
+sarr_order 42
+sarr_search 1:1 0:1
+deletes 42
+sarr_delete 1:1
+sarr_order_after 
+
+case unsorted_input
+keys 50 30 70 20 40 60 80
+probes 20 80 55
+sarr_order 20 30 40 50 60 70 80
+sarr_search 1:3 1:3 0:3
+deletes 20 80 50
+sarr_delete 1:9 1:2 1:3
+sarr_order_after 30 40 60 70
+
+case duplicates
+keys 5 5 5 7 5 9
+probes 5 7 9 99
+sarr_order 5 5 5 5 7 9
+sarr_search 1:1 1:3 1:2 0:2
+deletes 5
+sarr_delete 1:3
+sarr_order_after 5 5 5 7 9
+
+case ordered
+keys 10 20 30 40 50
+probes 10 30 50 5
+sarr_order 10 20 30 40 50
+sarr_search 1:3 1:1 1:2 0:3
+deletes 30 10
+sarr_delete 1:3 1:6
+sarr_order_after 20 40 50

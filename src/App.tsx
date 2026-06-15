@@ -18,7 +18,9 @@ import { generateSorted, generateUniform, marshalKeys } from './data';
 
 const SWEEP_MAX = 100_000;
 const SWEEP_MIN = 10;
-const COLORS = ['#d62728', '#1f77b4']; // array (red, rising), hashset (blue, flat)
+// array (red, rising O(n)), sorted array (green, O(log n)), hashset (blue, flat O(1))
+// — the order runSweep returns them, the "missing middle" of search cost.
+const COLORS = ['#d62728', '#2ca02c', '#1f77b4'];
 
 // The mutation sweep is bounded much lower than search: the array's ordered
 // delete makes a full teardown O(n²), so even a few thousand keys is plenty to
@@ -26,7 +28,11 @@ const COLORS = ['#d62728', '#1f77b4']; // array (red, rising), hashset (blue, fl
 const MUT_MAX = 4_000;
 const MUT_MIN = 250;
 const MUT_OPTS = { minBatchMillis: 1, warmupReps: 0, reps: 3 };
-const STRUCTURE_COLOR: Record<string, string> = { array: '#d62728', hashset: '#1f77b4' };
+const STRUCTURE_COLOR: Record<string, string> = {
+  array: '#d62728',
+  hashset: '#1f77b4',
+  sarr: '#2ca02c',
+};
 
 /** Shape mirrored onto `window` for the headless runtime check (scripts/verify-browser.mjs). */
 export interface SweepProof {
@@ -185,6 +191,15 @@ export function App() {
         });
         (window as unknown as { __avlMutationProof?: MutationProof[] }).__avlMutationProof =
           avlProof;
+
+        // Sorted array — search only here (its O(log n) "missing middle" is in __sweepProof
+        // above). Its *mutation* twin is the Rust `#[wasm_bindgen]` timed surface on
+        // `SortedArrayF64` (front-churn, build/teardown), proven by the deterministic
+        // `structures::methodology` self-test: front churn overshoots the finite-difference sum
+        // (both O(n)), and the same structure is O(log n) to search but O(n) to mutate. Like the
+        // string structures, the TS sweep + chart wiring is deferred to Phase 5 — and a browser
+        // mutation curve would be slow (build *and* teardown are O(n²)) and overhead-dominated at
+        // the small n that stays affordable, so the rigorous home for that numeric claim is Rust.
 
         setStatus('ready');
       } catch (err) {
