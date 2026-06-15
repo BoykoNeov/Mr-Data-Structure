@@ -14,8 +14,8 @@ methodology, and the phased roadmap.
 
 ## Status
 
-**Phase 3 — visualization breadth (in progress; animation engine + linear
-breadth landed).** The step-through exploration spine is in for the two proven
+**Phase 3 — visualization breadth (in progress; animation engine, linear breadth
++ the BST landed).** The step-through exploration spine is in for the two proven
 structures. Each teaching twin emits a typed **step-event** stream via an
 optional tracer that's threaded *alongside* the op-count logic — so a search
 animation shows exactly the comparisons/probes the benchmark counts (a stream's
@@ -38,8 +38,24 @@ draws both, the doubly variant adding back-pointers). The step-event ↔ op-coun
 honesty gate is extended to the new cost events, fold reducers are proven against
 the real algorithm (every animation prefix renderable), and a render-smoke test
 draws every frame of each new view to SVG (the browser gate only drives the sweep
-tab). Three new exploration tabs, `App.tsx` untouched. No new dependencies. Up
-next: BST, then AVL + heap (teaching + viz).
+tab). Three new exploration tabs, `App.tsx` untouched. No new dependencies.
+
+**Batch 3** adds the unbalanced **binary search tree** (`BstF64`) as a teaching
+twin + viz (its Rust twin is Phase 4): a multiset BST (`key < node` ⇒ left, else
+right, so equal keys go right — never deduped; in-order traversal is the sorted
+multiset). Its cost metric is **comparisons**, and the only cost event is the key
+comparison, so the honesty gate pins `countCostEvents == ops` for search, insert,
+*and* delete. Delete is the textbook value-copy (Hibbard) scheme — a two-child
+node takes its in-order successor's value, then the successor is unlinked (the
+successor walk follows pointers, not comparisons, so it isn't counted — the
+contract the Phase 4 Rust op-counter mirrors). Step-events address nodes by a root
+path, so the path-based fold reducer never replays the search logic; the
+fold-mirrors-structure test compares the full nested tree shape (not just the
+in-order keys, which can't distinguish a balanced tree from a degenerate chain).
+The tree view lays nodes out by in-order rank × depth with stable ids — inserting
+a sorted run visibly degenerates it to an O(n) right-leaning chain. A fourth
+exploration tab, `App.tsx` untouched. No new dependencies. Up next: AVL + heap
+(teaching + viz).
 
 **Phase 2 — thin slice (complete).** The first vertical slice is in: two
 contrasting structures — an unsorted dynamic array and a separate-chaining hash

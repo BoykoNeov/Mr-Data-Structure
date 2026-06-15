@@ -3,10 +3,12 @@ import { DynArrayF64 } from '../structures/dynArray';
 import { HashSetF64 } from '../structures/hashSet';
 import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent } from './events';
+import { BstF64, type BstShape } from '../structures/bst';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList,
+  bstModel, foldBst, type BstDisplayNode,
 } from './model';
 
 /**
@@ -216,4 +218,94 @@ describe('linked-list fold mirrors the structure (singly + doubly)', () => {
       });
     });
   }
+});
+
+describe('bst fold mirrors the structure', () => {
+  // The BST fold MUST be checked against the full nested {value,left,right} shape,
+  // NOT keysInOrder(): in-order traversal is shape-invariant (a right-chain and a
+  // balanced tree can share an in-order), so a keys-only assertion would pass
+  // while proving nothing about which *side* the reducer attached a node. This
+  // serializer strips the animation ids so the structure's BstShape compares deep.
+  const shapeOfModel = (n: BstDisplayNode | null): BstShape | null =>
+    n === null ? null : { value: n.value, left: shapeOfModel(n.left), right: shapeOfModel(n.right) };
+  const ids = (n: BstDisplayNode | null): number[] =>
+    n === null ? [] : [n.id, ...ids(n.left), ...ids(n.right)];
+
+  /** Capture before-state, run the op with a tracer, fold, and return the pieces —
+   * the assertions compare the fold's shape to the structure's actual post-op shape. */
+  const runFold = (build: number[], op: (t: BstF64, push: (e: BstEvent) => void) => void) => {
+    const t = BstF64.fromKeys(build);
+    const before = bstModel(t.snapshot());
+    const events: BstEvent[] = [];
+    op(t, (e) => events.push(e));
+    return { t, before, events };
+  };
+
+  it('a search stream leaves the tree shape unchanged', () => {
+    const { t, before, events } = runFold([50, 30, 70, 20, 40], (s, push) => s.search(40, push));
+    expect(shapeOfModel(foldBst(before, events).root)).toEqual(t.snapshot());
+  });
+
+  it('an insert folds to the structure’s post-insert shape (not just its keys)', () => {
+    const { t, before, events } = runFold([50, 30, 70], (s, push) => s.insert(40, push));
+    expect(shapeOfModel(foldBst(before, events).root)).toEqual(t.snapshot());
+  });
+
+  it('inserting into an empty tree seeds the root (path [])', () => {
+    const t = new BstF64();
+    const before = bstModel(t.snapshot()); // null root
+    const events: BstEvent[] = [];
+    t.insert(42, (e) => events.push(e));
+    expect(shapeOfModel(foldBst(before, events).root)).toEqual({ value: 42, left: null, right: null });
+  });
+
+  it('a duplicate insert attaches on the RIGHT — shape catches what in-order cannot', () => {
+    const { t, before, events } = runFold([50, 30], (s, push) => s.insert(50, push));
+    const after = foldBst(before, events);
+    // in-order would be [30,50,50] regardless of side; the shape pins the right child.
+    expect(shapeOfModel(after.root)).toEqual(t.snapshot());
+    expect(after.root!.right).toEqual(expect.objectContaining({ value: 50 }));
+  });
+
+  it('a leaf delete folds to the structure’s post-delete shape', () => {
+    const { t, before, events } = runFold([50, 30, 70, 20], (s, push) => s.delete(20, push));
+    expect(shapeOfModel(foldBst(before, events).root)).toEqual(t.snapshot());
+  });
+
+  it('a one-child delete (left child) folds to the structure’s shape', () => {
+    const { t, before, events } = runFold([50, 30, 20], (s, push) => s.delete(30, push));
+    expect(shapeOfModel(foldBst(before, events).root)).toEqual(t.snapshot());
+  });
+
+  it('a two-child delete (successor copy-up) folds to the structure’s shape', () => {
+    const { t, before, events } = runFold([50, 30, 70, 60, 80], (s, push) => s.delete(70, push));
+    expect(shapeOfModel(foldBst(before, events).root)).toEqual(t.snapshot());
+  });
+
+  it('deleting the root down to empty folds to a null root', () => {
+    const { t, before, events } = runFold([42], (s, push) => s.delete(42, push));
+    expect(foldBst(before, events).root).toBeNull();
+    expect(t.snapshot()).toBeNull();
+  });
+
+  it('deleting an absent key leaves the shape unchanged', () => {
+    const { t, before, events } = runFold([50, 30, 70], (s, push) => s.delete(99, push));
+    expect(shapeOfModel(foldBst(before, events).root)).toEqual(t.snapshot());
+  });
+
+  it('every frame of a two-child delete is renderable (unique node ids each prefix)', () => {
+    const { before, events } = runFold([50, 30, 70, 60, 80], (s, push) => s.delete(50, push));
+    for (let f = 0; f <= events.length; f++) {
+      const frameIds = ids(foldBst(before, events.slice(0, f)).root);
+      expect(new Set(frameIds).size).toBe(frameIds.length);
+    }
+  });
+
+  it('every frame of an insert is renderable (unique node ids each prefix)', () => {
+    const { before, events } = runFold([50, 30, 70, 20, 40], (s, push) => s.insert(35, push));
+    for (let f = 0; f <= events.length; f++) {
+      const frameIds = ids(foldBst(before, events.slice(0, f)).root);
+      expect(new Set(frameIds).size).toBe(frameIds.length);
+    }
+  });
 });

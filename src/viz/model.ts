@@ -13,7 +13,8 @@
  * the highlight from the active event instead).
  */
 
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent } from './events';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, BstStep } from './events';
+import type { BstShape } from '../structures/bst';
 
 /** A stored array cell with a stable identity for animation. */
 export interface Cell {
@@ -219,4 +220,95 @@ export function reduceLinkedList(m: LinkedListModel, e: LinkedListEvent): Linked
 
 export function foldLinkedList(initial: LinkedListModel, events: readonly LinkedListEvent[]): LinkedListModel {
   return events.reduce(reduceLinkedList, initial);
+}
+
+// ── Binary search tree (docs/PLAN.md §8, "Trees / heaps", unbalanced) ────────
+// Nodes are addressed by a root path (`'L'|'R'[]`); each carries a stable `id` so
+// the renderer can transition a node to its new (x, y) as siblings shift. The
+// reducer is "dumb" — it applies the structural change the event already located,
+// never re-running the search/compare logic (that lives in the teaching impl), so
+// `foldBst(before, events)` mirrors the structure by construction (model.test.ts).
+
+/** A stored tree node with a stable identity for animation. */
+export interface BstDisplayNode {
+  readonly id: number;
+  readonly value: number;
+  readonly left: BstDisplayNode | null;
+  readonly right: BstDisplayNode | null;
+}
+
+/** The tree's display state: the root subtree plus the next free id. */
+export interface BstModel {
+  readonly root: BstDisplayNode | null;
+  readonly nextId: number;
+}
+
+/** Build the initial tree model from the structure's shape snapshot, assigning a
+ * fresh id to each node (pre-order — the order is irrelevant, only uniqueness is). */
+export function bstModel(shape: BstShape | null): BstModel {
+  let id = 0;
+  const walk = (s: BstShape | null): BstDisplayNode | null =>
+    s === null ? null : { id: id++, value: s.value, left: walk(s.left), right: walk(s.right) };
+  const root = walk(shape);
+  return { root, nextId: id };
+}
+
+/** Apply `edit` to the (possibly null) node reached by `path`, path-copying the
+ * spine so the result is a fresh immutable tree sharing untouched subtrees. A `[]`
+ * path edits the root; descending the final step into a null slot lets an insert
+ * materialize a new child there. */
+function editAtPath(
+  node: BstDisplayNode | null,
+  path: readonly BstStep[],
+  edit: (target: BstDisplayNode | null) => BstDisplayNode | null,
+): BstDisplayNode | null {
+  if (path.length === 0) return edit(node);
+  const [step, ...rest] = path;
+  if (node === null) return node; // invalid path (never produced by a valid stream)
+  return step === 'L'
+    ? { ...node, left: editAtPath(node.left, rest, edit) }
+    : { ...node, right: editAtPath(node.right, rest, edit) };
+}
+
+/** Fold one BST event into the model. Structural events (`insert`,
+ * `replaceValue`, `remove`) edit the node at their path; `remove` always targets a
+ * node with ≤1 child, so it splices in that child (or null). Compares / descends /
+ * removeTarget / result are highlight-only (the view derives the highlight from the
+ * active event). */
+export function reduceBst(m: BstModel, e: BstEvent): BstModel {
+  switch (e.kind) {
+    case 'bst.insert': {
+      const node: BstDisplayNode = { id: m.nextId, value: e.value, left: null, right: null };
+      return { root: editAtPath(m.root, e.path, () => node), nextId: m.nextId + 1 };
+    }
+    case 'bst.replaceValue': {
+      const root = editAtPath(m.root, e.path, (t) => (t === null ? null : { ...t, value: e.value }));
+      return { root, nextId: m.nextId };
+    }
+    case 'bst.remove': {
+      // The node at `path` has at most one child — replace it with that child (or
+      // null). `left ?? right` picks whichever side is present.
+      const root = editAtPath(m.root, e.path, (t) => (t === null ? null : t.left ?? t.right));
+      return { root, nextId: m.nextId };
+    }
+    // highlight-only: compare / removeTarget / descend / result — no structural change.
+    default:
+      return m;
+  }
+}
+
+export function foldBst(initial: BstModel, events: readonly BstEvent[]): BstModel {
+  return events.reduce(reduceBst, initial);
+}
+
+/** Resolve a root path to the node it addresses in `model`, or `undefined` if the
+ * path runs off the tree (defensive — the renderer highlights nothing then). Used
+ * by {@link ./BstView} to turn a compare/descend event's path into a node to tint. */
+export function bstNodeAtPath(model: BstModel, path: readonly BstStep[]): BstDisplayNode | undefined {
+  let cur = model.root;
+  for (const step of path) {
+    if (cur === null) return undefined;
+    cur = step === 'L' ? cur.left : cur.right;
+  }
+  return cur ?? undefined;
 }

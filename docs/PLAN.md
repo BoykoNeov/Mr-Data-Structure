@@ -4,8 +4,8 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 2 complete; Phase 3 underway (animation engine + linear breadth —
-batches 1–2).** The step-through visualization spine now exists: the array +
+Status: **Phase 2 complete; Phase 3 underway (animation engine, linear breadth +
+the BST — batches 1–3).** The step-through visualization spine now exists: the array +
 hash-set teaching twins emit a typed step-event stream (cost events == op-count,
 pinned to the Rust corpus), a pure Player drives play/step/step-back, and SVG
 renderers animate the comparisons, shifts, chain probes, and rehash
@@ -14,7 +14,11 @@ Batch 2 adds the rest of the **Linear** family as teaching twins + viz (Rust twi
 are Phase 4): a **sorted array** (binary search with an animated lo/hi window;
 shift-right insert / shift-left delete) and the **singly + doubly linked lists**
 (O(1) head insert; node-visit search/delete; the doubly view adds back-pointers).
-Details in §10. The thin slice's
+Batch 3 adds the unbalanced **binary search tree** (`BstF64`) as a teaching twin +
+viz: a multiset BST (equal keys go right) whose only cost event is the key
+comparison, with value-copy (Hibbard) delete; the tree view lays nodes out by
+in-order rank × depth and animates compares, the successor walk, and the
+sorted-data degeneration to O(n). Its Rust twin is Phase 4. Details in §10. The thin slice's
 *headline* (Phase 2) has landed. An
 unsorted dynamic array and a separate-chaining hash set now run through the
 Rust/WASM engine, the §6.3 search-measurement methodology (pure, testable
@@ -462,9 +466,30 @@ insert/search/delete group on a shared key type.
     new shift directions), and `views.render.test.ts` renders **every animation
     frame** of each view to static SVG (the browser gate never clicks past the
     default sweep tab). Wired additively into `VizPanel` as three new tabs;
-    `App.tsx` and the Phase 2 sweep untouched. **No new deps.** Remaining: BST
-    (batch 3), AVL + heap (batch 4), each TS-teaching + viz only (Rust twins are
-    Phase 4).
+    `App.tsx` and the Phase 2 sweep untouched. **No new deps.**
+  - **Done (batch 3 — the unbalanced BST, teaching twin + viz):** `BstF64`
+    (`src/structures/bst.ts`) — an unbalanced **multiset** BST (`key < node` ⇒
+    left, else right, so equal keys go right and never dedupe; in-order traversal
+    is the sorted multiset). Cost metric **comparisons**: the *only* cost event is
+    `bst.compare`, emitted where the comparison counter ticks, so the honesty gate
+    (`trace.bst.test.ts`) pins `countCostEvents == ops` for **search, insert, *and*
+    delete** (cleaner than the sorted array — no untagged shift term). Delete is the
+    textbook **value-copy (Hibbard)** scheme: a two-child node takes its in-order
+    successor's value, then the successor is unlinked; the successor min-walk
+    (`bst.descend`) follows pointers, not comparisons, so it is deliberately not a
+    cost event — the **Phase 4 Rust op-counter must mirror this** (documented on
+    `bst.ts` + `events.ts`, risk R1). Step-events address nodes by **root path**
+    (`'L'|'R'[]`, the tree analog of the linear structures' indices), so the dumb
+    path-based reducer (`reduceBst`) never replays the search logic; the
+    fold-mirrors-structure test (`model.test.ts`) compares the **full nested
+    `{value,left,right}` shape** (not `keysInOrder()`, which is shape-invariant for
+    BSTs — a right-chain and a balanced tree share an in-order). `BstView` lays
+    nodes out by in-order rank × depth with stable ids (insert/delete shift ranks
+    and the nodes transition to their new positions); `views.render.test.ts`
+    renders **every frame** of leaf / one-child *either side* / two-child / root /
+    empty deletes. New `binary search tree` tab in `VizPanel`; `App.tsx` and the
+    sweep untouched. **No new deps.** Remaining: AVL + heap (batch 4), each
+    TS-teaching + viz only (Rust twins are Phase 4).
 
 - **Phase 4 — Benchmark breadth + methodology hardening.** Warm-up/reps/variance,
   op-counters, churn + finite-difference isolation validated against each other,

@@ -3,11 +3,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
+import { BstF64 } from '../structures/bst';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
-import { SortedPanel, LinkedPanel } from './VizPanel';
-import { arrayModel, foldSortedArray, linkedModel, foldLinkedList } from './model';
-import type { SortedArrayEvent, LinkedListEvent, Tracer } from './events';
+import { BstView } from './BstView';
+import { SortedPanel, LinkedPanel, BstPanel } from './VizPanel';
+import { arrayModel, foldSortedArray, linkedModel, foldLinkedList, bstModel, foldBst } from './model';
+import type { SortedArrayEvent, LinkedListEvent, BstEvent, Tracer } from './events';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -89,6 +91,36 @@ describe.each([
   });
 });
 
+describe('BstView renders every frame without throwing', () => {
+  const cases: [string, number[], (t: BstF64, tr: Tracer<BstEvent>) => void][] = [
+    ['search found', [50, 30, 70, 20, 40], (t, tr) => t.search(20, tr)],
+    ['search absent', [50, 30, 70], (t, tr) => t.search(35, tr)],
+    ['insert leaf', [50, 30, 70], (t, tr) => t.insert(40, tr)],
+    ['insert into empty', [], (t, tr) => t.insert(42, tr)],
+    ['insert duplicate (right)', [50, 30], (t, tr) => t.insert(50, tr)],
+    ['delete leaf', [50, 30, 70, 20], (t, tr) => t.delete(20, tr)],
+    ['delete one-child (left)', [50, 30, 20], (t, tr) => t.delete(30, tr)],
+    ['delete two-child', [50, 30, 70, 60, 80], (t, tr) => t.delete(70, tr)],
+    ['delete root two-child', [50, 30, 70, 20, 40, 60, 80], (t, tr) => t.delete(50, tr)],
+    ['delete to empty', [42], (t, tr) => t.delete(42, tr)],
+    ['delete absent', [50, 30, 70], (t, tr) => t.delete(99, tr)],
+  ];
+  it.each(cases)('%s', (_label, build, op) => {
+    const t = BstF64.fromKeys(build);
+    const before = bstModel(t.snapshot());
+    const events: BstEvent[] = [];
+    op(t, (e) => events.push(e));
+    renderEveryFrame(before, events, foldBst, (model, active) =>
+      renderToStaticMarkup(createElement(BstView, { model, active })),
+    );
+  });
+
+  it('renders the empty tree', () => {
+    const html = renderToStaticMarkup(createElement(BstView, { model: bstModel(null), active: undefined }));
+    expect(html).toContain('(empty)');
+  });
+});
+
 describe('new panels mount without throwing', () => {
   // The views above are pure SVG; the panels add the hook wiring (ref-held
   // structure, usePlayer, the singly↔doubly key-remount). A single SSR pass runs
@@ -103,5 +135,8 @@ describe('new panels mount without throwing', () => {
   });
   it('LinkedPanel (doubly) renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(LinkedPanel, { doubly: true }))).toContain('<svg');
+  });
+  it('BstPanel renders its seeded SVG', () => {
+    expect(renderToStaticMarkup(createElement(BstPanel))).toContain('<svg');
   });
 });

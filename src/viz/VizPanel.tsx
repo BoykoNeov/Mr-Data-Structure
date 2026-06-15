@@ -3,10 +3,12 @@ import { DynArrayF64 } from '../structures/dynArray';
 import { HashSetF64 } from '../structures/hashSet';
 import { SortedArrayF64 } from '../structures/sortedArray';
 import { LinkedListF64, SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent } from './events';
+import { BstF64 } from '../structures/bst';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList, type LinkedListModel,
+  bstModel, foldBst, type BstModel,
 } from './model';
 import * as P from './player';
 import { usePlayer } from './usePlayer';
@@ -14,6 +16,7 @@ import { ArrayView } from './ArrayView';
 import { HashSetView } from './HashSetView';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
+import { BstView } from './BstView';
 import { Controls } from './Controls';
 
 /**
@@ -28,13 +31,16 @@ import { Controls } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
 const LIST_SEED = [10, 20, 30, 40];
 // Six keys → 8 buckets; one more distinct insert (e.g. 70) trips a rehash → 16.
 const HASH_SEED = [10, 20, 30, 40, 50, 60];
+// Root-first insertion order yields a balanced 3-level tree; inserting a sorted
+// run (e.g. 90, 95, 99) then visibly degenerates it to a right-leaning chain.
+const BST_SEED = [50, 30, 70, 20, 40, 60, 80];
 
 type Op = 'search' | 'insert' | 'delete';
 
@@ -99,6 +105,22 @@ function describeHash(e: HashSetEvent | undefined): string {
     case 'hs.rehash':
       return `rehash: ${e.oldCap} → ${e.newCap} buckets, redistribute ${e.moves.length} keys`;
     case 'hs.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+function describeBst(e: BstEvent | undefined): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'bst.compare': {
+      const dir = e.dir === 'match' ? 'match ✓' : e.dir === 'left' ? 'smaller → go left' : '≥ → go right';
+      return `compare ${e.target} vs node ${e.value} → ${dir}`;
+    }
+    case 'bst.insert': return e.path.length === 0 ? `insert ${e.value} as the root` : `insert ${e.value} as a new leaf`;
+    case 'bst.removeTarget': return 'found the node to delete';
+    case 'bst.descend': return 'walk to the in-order successor (smallest key in the right subtree)';
+    case 'bst.replaceValue': return `copy the successor (${e.value}) up into the deleted node`;
+    case 'bst.remove': return 'unlink the node (it has at most one child now)';
+    case 'bst.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
 
@@ -260,6 +282,44 @@ export function LinkedPanel({ doubly }: { readonly doubly: boolean }) {
   );
 }
 
+export function BstPanel() {
+  const ref = useRef<BstF64 | null>(null);
+  if (ref.current === null) ref.current = BstF64.fromKeys(BST_SEED);
+  const [base, setBase] = useState<BstModel>(() => bstModel(BstF64.fromKeys(BST_SEED).snapshot()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<BstEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const t = ref.current!;
+    const snapshot = bstModel(t.snapshot()); // before-state
+    const events: BstEvent[] = [];
+    const push = (e: BstEvent) => events.push(e);
+    if (op === 'search') {
+      const r = t.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} comparisons`);
+    } else if (op === 'insert') {
+      const r = t.insert(value, push);
+      setSummary(`insert(${value}) → placed · ${r.ops} comparisons`);
+    } else {
+      const r = t.delete(value, push);
+      setSummary(`delete(${value}) → ${r.removed ? 'removed' : 'absent'} · ${r.ops} comparisons`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldBst(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || 'Unbalanced BST — go left if smaller, right if ≥; insert a sorted run to watch it degenerate to O(n).'}</p>
+      <BstView model={model} active={active} />
+      <Controls player={player} onOp={onOp} caption={describeBst(active)} />
+    </>
+  );
+}
+
 const tab = (selected: boolean): React.CSSProperties => ({
   padding: '6px 14px', fontSize: 14, cursor: 'pointer', borderRadius: 6,
   border: '1px solid ' + (selected ? '#4a90d9' : '#ccc'),
@@ -272,6 +332,7 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'singly', label: 'singly linked list' },
   { kind: 'doubly', label: 'doubly linked list' },
   { kind: 'hashset', label: 'hash set' },
+  { kind: 'bst', label: 'binary search tree' },
 ];
 
 function panelFor(kind: Kind) {
@@ -282,6 +343,7 @@ function panelFor(kind: Kind) {
     case 'singly': return <LinkedPanel key="singly" doubly={false} />;
     case 'doubly': return <LinkedPanel key="doubly" doubly />;
     case 'hashset': return <HashPanel />;
+    case 'bst': return <BstPanel />;
   }
 }
 

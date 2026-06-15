@@ -246,9 +246,108 @@ export interface LlResult {
 
 export type LinkedListEvent = LlVisit | LlInsertHead | LlUnlink | LlResult;
 
+// ── Binary search tree (docs/PLAN.md §8, "Trees / heaps", unbalanced) ───────
+//
+// Nodes are addressed by a **root path** — the sequence of left/right steps from
+// the root — which is the tree analog of the linear structures' slot indices: it
+// is stable between the teaching impl (which walked it) and the renderer (which
+// folds it), so the events never reference the model's animation ids. A `[]` path
+// is the root.
+//
+// **Cost-counting convention (the Phase 4 Rust twin must mirror this, risk R1):**
+// the BST's declared cost metric is **key comparisons** (docs/PLAN.md §8), and the
+// *only* cost event is `bst.compare` — one per node examined on a search path
+// (insert/search/delete's find phase). The in-order-successor walk of a two-child
+// delete (`bst.descend`) follows pointers (right once, then left to the bottom)
+// and performs **no key comparisons**, so it is deliberately *not* a cost event —
+// exactly as the Rust op-counter will count it (the successor min-walk increments
+// no comparison counter). This keeps `countCostEvents(stream) === op-count` for
+// search, insert, *and* delete (pinned in `src/viz/trace.bst.test.ts`).
+
+/** One step down the tree: to the left or right child. */
+export type BstStep = 'L' | 'R';
+
+/** Which way the search proceeds from the compared node, or that it matched. With
+ * multiset semantics insert descends `right` on an equal key (never `match`); a
+ * search/delete *find* stops on `match`. */
+export type BstDir = 'left' | 'right' | 'match';
+
+/** Compare `target` against the key `value` at the node reached by `path` (one key
+ * comparison — the BST's only cost event). `dir` is the branch taken next (or
+ * `match`); the renderer highlights the node and, on a miss, the chosen subtree. */
+export interface BstCompare {
+  readonly kind: 'bst.compare';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+  readonly target: number;
+  readonly dir: BstDir;
+}
+
+/** Attach a new leaf carrying `value` at `path` (the full path to the new node;
+ * its parent is `path[0..-1]`, its side is the last step). `path === []` seeds the
+ * root of an empty tree. No comparison — the compares that located the slot
+ * preceded it. */
+export interface BstInsert {
+  readonly kind: 'bst.insert';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+}
+
+/** Mark the node at `path` (found by the search) as the delete target — a
+ * highlight-only marker before the removal events that follow. */
+export interface BstRemoveTarget {
+  readonly kind: 'bst.removeTarget';
+  readonly path: readonly BstStep[];
+}
+
+/** Step onto the node at `path` while walking to the in-order successor of a
+ * two-child delete (right once, then left to the bottom). Pointer-following, *not*
+ * a comparison — highlight-only, never a cost event. */
+export interface BstDescend {
+  readonly kind: 'bst.descend';
+  readonly path: readonly BstStep[];
+}
+
+/** Copy the successor's `value` up into the node at `path` (the two-child delete's
+ * value-copy step). The node keeps its animation id — the number changes in place;
+ * the successor node is then removed by a following `bst.remove`. */
+export interface BstReplaceValue {
+  readonly kind: 'bst.replaceValue';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+}
+
+/** Remove the node at `path`, which is guaranteed to have **at most one child**
+ * (a leaf, a one-child node, or the in-order successor — whose left is always
+ * empty). The reducer replaces it with that single child, or `null` for a leaf. */
+export interface BstRemove {
+  readonly kind: 'bst.remove';
+  readonly path: readonly BstStep[];
+}
+
+/** Terminal marker for a search/delete: whether the key was present. Not a cost event. */
+export interface BstResult {
+  readonly kind: 'bst.result';
+  readonly found: boolean;
+}
+
+export type BstEvent =
+  | BstCompare
+  | BstInsert
+  | BstRemoveTarget
+  | BstDescend
+  | BstReplaceValue
+  | BstRemove
+  | BstResult;
+
 // ── Union + cost tagging ────────────────────────────────────────────────────
 
-export type VizEvent = ArrayEvent | HashSetEvent | SortedArrayEvent | LinkedListEvent;
+export type VizEvent =
+  | ArrayEvent
+  | HashSetEvent
+  | SortedArrayEvent
+  | LinkedListEvent
+  | BstEvent;
 export type VizEventKind = VizEvent['kind'];
 
 /** Sink the teaching impls emit into. Typed per family at the call site
@@ -266,6 +365,10 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   'hs.probe',
   'sarr.compare',
   'll.visit',
+  // BST: the in-order-successor descend (`bst.descend`) follows pointers, not
+  // key comparisons, so only `bst.compare` is a cost event (see the convention
+  // note above and risk R1). This holds for search, insert, *and* delete.
+  'bst.compare',
 ]);
 
 /** Count the cost-bearing events in a stream (the op-count it represents). */
