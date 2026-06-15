@@ -37,6 +37,41 @@ const DEFAULT_OPS: readonly OpSpec<DefaultOp>[] = [
   { op: 'delete', label: 'delete' },
 ];
 
+/** Does this op consume the typed-in key? Default yes; `needsValue: false`
+ * (extract-min, peek) runs without one. */
+export function opNeedsValue<O extends string>(spec: OpSpec<O>): boolean {
+  return spec.needsValue !== false;
+}
+
+/** Parse the key input: a key is `valid` only when the box is non-blank and reads
+ * as a finite number (so an empty box or stray text never dispatches as `NaN`). */
+export function parseKey(text: string): { readonly valid: boolean; readonly value: number } {
+  const value = Number(text);
+  return { valid: text.trim() !== '' && Number.isFinite(value), value };
+}
+
+/**
+ * Decide what a click / Enter on `spec` dispatches given the current input, or
+ * `null` to suppress it. A key-taking op with no valid key is suppressed; a
+ * `needsValue: false` op (extract-min, peek) always dispatches and passes `0`
+ * (never `NaN`) when the box is blank — the structure ignores the value. This is
+ * the heap tab's headline path, which the SSR render-smoke test can't exercise.
+ */
+export function dispatchFor<O extends string>(
+  spec: OpSpec<O>,
+  text: string,
+): { readonly op: O; readonly value: number } | null {
+  const { valid, value } = parseKey(text);
+  if (opNeedsValue(spec) && !valid) return null;
+  return { op: spec.op, value: valid ? value : 0 };
+}
+
+/** Which op the Enter key triggers: `search` if the structure has it, else the
+ * first key-taking op (so Enter never fires a no-key op like extract-min). */
+export function enterSpecFor<O extends string>(ops: readonly OpSpec<O>[]): OpSpec<O> | undefined {
+  return ops.find((o) => o.op === 'search') ?? ops.find(opNeedsValue);
+}
+
 interface ControlsProps<E, O extends string = DefaultOp> {
   readonly player: PlayerControls<E>;
   readonly onOp: (op: O, value: number) => void;
@@ -48,15 +83,12 @@ interface ControlsProps<E, O extends string = DefaultOp> {
 export function Controls<E, O extends string = DefaultOp>({ player, onOp, caption, ops }: ControlsProps<E, O>) {
   const opList = ops ?? (DEFAULT_OPS as readonly OpSpec<O>[]);
   const [text, setText] = useState('');
-  const value = Number(text);
-  const valid = text.trim() !== '' && Number.isFinite(value);
-  const needsValue = (spec: OpSpec<O>) => spec.needsValue !== false;
+  const { valid } = parseKey(text);
   const run = (spec: OpSpec<O>) => {
-    if (needsValue(spec) && !valid) return;
-    onOp(spec.op, valid ? value : 0);
+    const d = dispatchFor(spec, text);
+    if (d) onOp(d.op, d.value);
   };
-  // Enter runs `search` if the structure has it, else the first key-taking op.
-  const enterSpec = opList.find((o) => o.op === 'search') ?? opList.find(needsValue);
+  const enterSpec = enterSpecFor(opList);
 
   const { state } = player;
   const len = P.length(state);
@@ -78,7 +110,7 @@ export function Controls<E, O extends string = DefaultOp>({ player, onOp, captio
           <button
             key={spec.op}
             style={opBtn}
-            disabled={needsValue(spec) && !valid}
+            disabled={opNeedsValue(spec) && !valid}
             onClick={() => run(spec)}
           >
             {spec.label}

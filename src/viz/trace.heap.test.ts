@@ -54,6 +54,27 @@ describe('heap extract-min: cost-events == comparisons + swaps', () => {
   });
 });
 
+describe('heap insert: absolute op-counts (anchored, not just self-consistent)', () => {
+  // Hand-computed totals, so a *symmetric* miscount (drop a compare from both the
+  // tracer and the counter) can't slip past the `countCostEvents === ops` gate.
+  it('sifts all the way up: 1 compare + 1 swap = 2', () => {
+    const h = MinHeapF64.fromKeys([10, 20]);
+    const events: HeapEvent[] = [];
+    const r = h.insert(5, (e) => events.push(e)); // 5 < 10 → swap to the root, then stop
+    expect(r.ops).toBe(2);
+    expect(countCostEvents(events)).toBe(2);
+    expect(events.filter((e) => e.kind === 'heap.swap').length).toBe(1);
+  });
+  it('stops at the first compare: 1 compare + 0 swaps = 1', () => {
+    const h = MinHeapF64.fromKeys([10, 20]);
+    const events: HeapEvent[] = [];
+    const r = h.insert(25, (e) => events.push(e)); // 25 ≥ 10 → no swap
+    expect(r.ops).toBe(1);
+    expect(countCostEvents(events)).toBe(1);
+    expect(events.filter((e) => e.kind === 'heap.swap').length).toBe(0);
+  });
+});
+
 describe('heap search: cost-events == scan comparisons', () => {
   const probes = [10, 70, 50, 999];
   it.each(probes)('search(%i)', (p) => {

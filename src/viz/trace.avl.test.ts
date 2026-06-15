@@ -57,6 +57,12 @@ describe('AVL insert: cost-events == comparisons + rotations', () => {
     const compares = events.filter((e) => e.kind === 'avl.compare').length;
     expect(r.ops).toBe(compares + rotations);
     expect(countCostEvents(events)).toBe(r.ops);
+    // Absolute anchor (not just self-consistency): 10<30 then 10<20 are the two
+    // compares down the left spine, then the LL imbalance at 30 fires exactly one
+    // right rotation — 2 + 1 = 3. Hand-computed, so a *symmetric* miscount (drop a
+    // compare from both the tracer and the counter) can't slip through here.
+    expect(r.ops).toBe(3);
+    expect(compares).toBe(2);
   });
 });
 
