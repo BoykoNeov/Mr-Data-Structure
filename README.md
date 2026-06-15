@@ -14,8 +14,8 @@ methodology, and the phased roadmap.
 
 ## Status
 
-**Phase 3 — visualization breadth (in progress; animation engine, linear breadth
-+ the BST landed).** The step-through exploration spine is in for the two proven
+**Phase 3 — visualization breadth (in progress; animation engine, linear breadth,
+the BST, plus the AVL tree + min-heap landed).** The step-through exploration spine is in for the two proven
 structures. Each teaching twin emits a typed **step-event** stream via an
 optional tracer that's threaded *alongside* the op-count logic — so a search
 animation shows exactly the comparisons/probes the benchmark counts (a stream's
@@ -54,8 +54,24 @@ fold-mirrors-structure test compares the full nested tree shape (not just the
 in-order keys, which can't distinguish a balanced tree from a degenerate chain).
 The tree view lays nodes out by in-order rank × depth with stable ids — inserting
 a sorted run visibly degenerates it to an O(n) right-leaning chain. A fourth
-exploration tab, `App.tsx` untouched. No new dependencies. Up next: AVL + heap
-(teaching + viz).
+exploration tab, `App.tsx` untouched. No new dependencies.
+
+**Batch 4** adds the two remaining tree-family teaching twins + viz (Rust twins are
+Phase 4), closing the Phase 3 teaching breadth. The balanced **AVL tree** (`AvlF64`)
+shares the BST's ordering and value-copy delete but retraces each insert/delete and
+**rotates** to stay O(log n) — so the AVL tab stays balanced on a sorted run where
+the BST tab degenerates. Its cost metric is **comparisons + rotations**, and *both*
+are tagged cost events, so the honesty gate `countCostEvents == ops` holds for
+search, insert, *and* delete; the view reuses the BST tree layout and derives each
+node's balance factor from the drawn shape, tinting any node that reaches ±2 so you
+watch imbalance appear and a rotation fix it (the rotate reducer preserves node ids,
+so nodes slide to their new places). The array-backed **binary min-heap**
+(`MinHeapF64`) has a *different* op set — insert / peek / extract-min — with `search`
+kept as a deliberate O(n) contrast; its cost metric is **comparisons + swaps**, and
+it is drawn as **both an array and the implicit tree** (the child of `i` at `2i+1` /
+`2i+2`), the same chip animating in both as it sifts. The `Controls` op-button row is
+now configurable so the heap can declare its own ops. Two more exploration tabs,
+`App.tsx` untouched. No new dependencies.
 
 **Phase 2 — thin slice (complete).** The first vertical slice is in: two
 contrasting structures — an unsorted dynamic array and a separate-chaining hash

@@ -3,10 +3,16 @@ import * as P from './player';
 import type { PlayerControls } from './usePlayer';
 
 /**
- * Step controls (docs/PLAN.md §5): run an op (insert / search / delete on a
- * typed-in key) and the transport for the resulting animation — reset, step
- * back, play / pause, step, jump to end, plus a speed slider and a step counter.
- * The active-step caption explains what the highlighted frame is doing.
+ * Step controls (docs/PLAN.md §5): run an op on a typed-in key and the transport
+ * for the resulting animation — reset, step back, play / pause, step, jump to end,
+ * plus a speed slider and a step counter. The active-step caption explains what the
+ * highlighted frame is doing.
+ *
+ * The op buttons are configurable ({@link ControlsProps.ops}) so each structure can
+ * declare its own op set (docs/PLAN.md §4.1): the default is the canonical
+ * insert / search / delete trio, while e.g. the heap declares insert / peek /
+ * extract-min / search. An op with `needsValue: false` (extract-min, peek) runs
+ * without a typed-in key.
  */
 
 const btn: React.CSSProperties = {
@@ -15,19 +21,42 @@ const btn: React.CSSProperties = {
 };
 const opBtn: React.CSSProperties = { ...btn, fontWeight: 600 };
 
-interface ControlsProps<E> {
-  readonly player: PlayerControls<E>;
-  readonly onOp: (op: 'search' | 'insert' | 'delete', value: number) => void;
-  readonly caption: string;
+/** One op button: its op token, its label, and whether it consumes the key input. */
+export interface OpSpec<O extends string> {
+  readonly op: O;
+  readonly label: string;
+  /** Default true; set false for ops that take no key (extract-min, peek). */
+  readonly needsValue?: boolean;
 }
 
-export function Controls<E>({ player, onOp, caption }: ControlsProps<E>) {
+type DefaultOp = 'search' | 'insert' | 'delete';
+
+const DEFAULT_OPS: readonly OpSpec<DefaultOp>[] = [
+  { op: 'insert', label: 'insert' },
+  { op: 'search', label: 'search' },
+  { op: 'delete', label: 'delete' },
+];
+
+interface ControlsProps<E, O extends string = DefaultOp> {
+  readonly player: PlayerControls<E>;
+  readonly onOp: (op: O, value: number) => void;
+  readonly caption: string;
+  /** Op buttons to show; defaults to the canonical insert / search / delete. */
+  readonly ops?: readonly OpSpec<O>[];
+}
+
+export function Controls<E, O extends string = DefaultOp>({ player, onOp, caption, ops }: ControlsProps<E, O>) {
+  const opList = ops ?? (DEFAULT_OPS as readonly OpSpec<O>[]);
   const [text, setText] = useState('');
   const value = Number(text);
   const valid = text.trim() !== '' && Number.isFinite(value);
-  const run = (op: 'search' | 'insert' | 'delete') => {
-    if (valid) onOp(op, value);
+  const needsValue = (spec: OpSpec<O>) => spec.needsValue !== false;
+  const run = (spec: OpSpec<O>) => {
+    if (needsValue(spec) && !valid) return;
+    onOp(spec.op, valid ? value : 0);
   };
+  // Enter runs `search` if the structure has it, else the first key-taking op.
+  const enterSpec = opList.find((o) => o.op === 'search') ?? opList.find(needsValue);
 
   const { state } = player;
   const len = P.length(state);
@@ -41,13 +70,20 @@ export function Controls<E>({ player, onOp, caption }: ControlsProps<E>) {
           type="number"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') run('search'); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && enterSpec) run(enterSpec); }}
           placeholder="key"
           style={{ width: 90, padding: '4px 6px', fontSize: 13 }}
         />
-        <button style={opBtn} disabled={!valid} onClick={() => run('insert')}>insert</button>
-        <button style={opBtn} disabled={!valid} onClick={() => run('search')}>search</button>
-        <button style={opBtn} disabled={!valid} onClick={() => run('delete')}>delete</button>
+        {opList.map((spec) => (
+          <button
+            key={spec.op}
+            style={opBtn}
+            disabled={needsValue(spec) && !valid}
+            onClick={() => run(spec)}
+          >
+            {spec.label}
+          </button>
+        ))}
       </div>
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>

@@ -340,6 +340,190 @@ export type BstEvent =
   | BstRemove
   | BstResult;
 
+// ── AVL tree (docs/PLAN.md §8, "Trees / heaps", balanced) ───────────────────
+//
+// A **balanced multiset BST** sharing the BST's ordering (`key < node` ⇒ left,
+// else right), addressing (root path, {@link BstStep}[]), and value-copy delete,
+// so it reuses the generic binary-tree display model. The one structural addition
+// is the **rotation** — the rebalancing step that keeps every node's balance
+// factor in {-1, 0, +1}, so the height (and the comparison cost) stays O(log n)
+// where the unbalanced BST degenerates to O(n) on sorted input.
+//
+// **Cost metric — comparisons + rotations (docs/PLAN.md §8), and both are cost
+// events.** `avl.compare` is emitted once per node examined on a find path, and
+// `avl.rotate` once per single rotation (a double rotation is two). So — unlike
+// the sorted array, whose insert/delete carry an *untagged* `+ shifts` term — the
+// honesty gate `countCostEvents(stream) === op-count` holds for **search, insert,
+// AND delete** (pinned in `src/viz/trace.avl.test.ts`). The in-order-successor
+// walk of a two-child delete (`avl.descend`) follows pointers — no key comparison,
+// so not a cost event — exactly as in the BST. The Phase 4 Rust twin must mirror
+// both conventions (the successor walk counts no comparison; each rotation counts
+// one) or the cross-language corpus mismatches (risk R1).
+
+/** Compare `target` against the key `value` at the node reached by `path` (one key
+ * comparison — a cost event). `dir` is the branch taken next (or `match`). */
+export interface AvlCompare {
+  readonly kind: 'avl.compare';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+  readonly target: number;
+  readonly dir: BstDir;
+}
+
+/** Attach a new leaf carrying `value` at `path` (its parent is `path[0..-1]`).
+ * `path === []` seeds the root of an empty tree. No comparison. The rebalancing
+ * rotations (if any) follow as `avl.rotate` events. */
+export interface AvlInsert {
+  readonly kind: 'avl.insert';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+}
+
+/** Mark the node at `path` (found by the search) as the delete target — a
+ * highlight-only marker before the removal/rebalance events that follow. */
+export interface AvlRemoveTarget {
+  readonly kind: 'avl.removeTarget';
+  readonly path: readonly BstStep[];
+}
+
+/** Step onto the node at `path` while walking to the in-order successor of a
+ * two-child delete (right once, then left to the bottom). Pointer-following, *not*
+ * a comparison — highlight-only, never a cost event. */
+export interface AvlDescend {
+  readonly kind: 'avl.descend';
+  readonly path: readonly BstStep[];
+}
+
+/** Copy the successor's `value` up into the node at `path` (the two-child delete's
+ * value-copy step). The node keeps its id — the number changes in place. */
+export interface AvlReplaceValue {
+  readonly kind: 'avl.replaceValue';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+}
+
+/** Remove the node at `path`, guaranteed to have **at most one child** (a leaf, a
+ * one-child node, or the in-order successor — whose left is always empty). The
+ * reducer replaces it with that single child, or `null`. */
+export interface AvlRemove {
+  readonly kind: 'avl.remove';
+  readonly path: readonly BstStep[];
+}
+
+/** Rotate the subtree rooted at `path` (the **pivot**) one step `dir` — the AVL's
+ * rebalancing primitive (one rotation = one cost unit, a cost event). A `right`
+ * rotation lifts the pivot's left child into its place; a `left` rotation lifts the
+ * right child. A double rotation (LR / RL) is emitted as the child rotation then
+ * the pivot rotation, exactly as the algorithm performs it. `value` is the pivot's
+ * key, carried for the caption: after the fold the pivot has moved down one level,
+ * so `path` no longer addresses it. */
+export interface AvlRotate {
+  readonly kind: 'avl.rotate';
+  readonly path: readonly BstStep[];
+  readonly dir: 'left' | 'right';
+  readonly value: number;
+}
+
+/** Terminal marker for a search/delete: whether the key was present. Not a cost event. */
+export interface AvlResult {
+  readonly kind: 'avl.result';
+  readonly found: boolean;
+}
+
+export type AvlEvent =
+  | AvlCompare
+  | AvlInsert
+  | AvlRemoveTarget
+  | AvlDescend
+  | AvlReplaceValue
+  | AvlRemove
+  | AvlRotate
+  | AvlResult;
+
+// ── Binary min-heap (docs/PLAN.md §8, "Trees / heaps") ──────────────────────
+//
+// Array-backed **complete binary tree**; the renderer draws BOTH the array and the
+// implicit tree (the child of position `i` lives at `2i+1` / `2i+2`,
+// docs/PLAN.md §5). A **different op set** (docs/PLAN.md §4.1, §8): insert / peek /
+// extract-min, plus an O(n) `search` shown as a deliberate contrast (heaps are not
+// search structures). Cost metric — **comparisons + swaps (docs/PLAN.md §8)**:
+// `heap.compare` (a sift key-comparison between two positions), `heap.scan` (a
+// search's linear key-comparison), and `heap.swap` are the cost events, so
+// `countCostEvents(stream) === op-count` holds for insert, extract-min, AND search
+// (pinned in `src/viz/trace.heap.test.ts`). `peek` is O(1) with no cost.
+
+/** Append `value` at the tail array slot — the start of an insert, before the
+ * sift-up restores the heap order. No comparison. */
+export interface HeapAppend {
+  readonly kind: 'heap.append';
+  readonly value: number;
+}
+
+/** Compare the keys at positions `a` and `b` during a sift (one comparison — a
+ * cost event). `winner` is the position holding the **smaller** key (min-heap):
+ * `a` or `b`. */
+export interface HeapCompare {
+  readonly kind: 'heap.compare';
+  readonly a: number;
+  readonly b: number;
+  readonly winner: number;
+}
+
+/** Compare the cell at `index` against `target` during the O(n) search scan (one
+ * comparison — a cost event). `matched` ends the scan. */
+export interface HeapScan {
+  readonly kind: 'heap.scan';
+  readonly index: number;
+  readonly target: number;
+  readonly matched: boolean;
+}
+
+/** Swap the keys at positions `i` and `j` (one swap — a cost event). Both cells
+ * keep their ids, so the renderer animates the exchange in the array and the tree. */
+export interface HeapSwap {
+  readonly kind: 'heap.swap';
+  readonly i: number;
+  readonly j: number;
+}
+
+/** Highlight the root as the minimum being extracted (highlight-only; the
+ * structural refill is the following `heap.replaceRoot`). */
+export interface HeapExtractRoot {
+  readonly kind: 'heap.extractRoot';
+  readonly value: number;
+}
+
+/** Drop the root and move the last cell into the root slot — extract-min's refill,
+ * before the sift-down (the moved cell keeps its id, so it animates from the tail
+ * to the root). `value` is the key moved up; on a one-element heap this just empties
+ * it. Not a cost event (the structural move isn't a compare-driven swap). */
+export interface HeapReplaceRoot {
+  readonly kind: 'heap.replaceRoot';
+  readonly value: number;
+}
+
+/** Read the root key without mutating (peek — O(1), no cost). Highlight-only. */
+export interface HeapPeek {
+  readonly kind: 'heap.peek';
+  readonly value: number;
+}
+
+/** Terminal marker for a search/extract/peek: whether a key was present. Not a cost event. */
+export interface HeapResult {
+  readonly kind: 'heap.result';
+  readonly found: boolean;
+}
+
+export type HeapEvent =
+  | HeapAppend
+  | HeapCompare
+  | HeapScan
+  | HeapSwap
+  | HeapExtractRoot
+  | HeapReplaceRoot
+  | HeapPeek
+  | HeapResult;
+
 // ── Union + cost tagging ────────────────────────────────────────────────────
 
 export type VizEvent =
@@ -347,7 +531,9 @@ export type VizEvent =
   | HashSetEvent
   | SortedArrayEvent
   | LinkedListEvent
-  | BstEvent;
+  | BstEvent
+  | AvlEvent
+  | HeapEvent;
 export type VizEventKind = VizEvent['kind'];
 
 /** Sink the teaching impls emit into. Typed per family at the call site
@@ -369,6 +555,16 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   // key comparisons, so only `bst.compare` is a cost event (see the convention
   // note above and risk R1). This holds for search, insert, *and* delete.
   'bst.compare',
+  // AVL: comparisons + rotations (docs/PLAN.md §8). Both are discrete cost events,
+  // so the gate holds for search, insert, AND delete (the `avl.descend` successor
+  // walk carries no comparison, like the BST).
+  'avl.compare',
+  'avl.rotate',
+  // Min-heap: comparisons + swaps (docs/PLAN.md §8). Sift comparisons, search-scan
+  // comparisons, and swaps are the cost events.
+  'heap.compare',
+  'heap.scan',
+  'heap.swap',
 ]);
 
 /** Count the cost-bearing events in a stream (the op-count it represents). */

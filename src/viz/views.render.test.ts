@@ -4,12 +4,19 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
 import { BstF64 } from '../structures/bst';
+import { AvlF64 } from '../structures/avl';
+import { MinHeapF64 } from '../structures/heap';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
 import { BstView } from './BstView';
-import { SortedPanel, LinkedPanel, BstPanel } from './VizPanel';
-import { arrayModel, foldSortedArray, linkedModel, foldLinkedList, bstModel, foldBst } from './model';
-import type { SortedArrayEvent, LinkedListEvent, BstEvent, Tracer } from './events';
+import { AvlView } from './AvlView';
+import { HeapView } from './HeapView';
+import { SortedPanel, LinkedPanel, BstPanel, AvlPanel, HeapPanel } from './VizPanel';
+import {
+  arrayModel, foldSortedArray, linkedModel, foldLinkedList, bstModel, foldBst,
+  avlModel, foldAvl, heapModel, foldHeap,
+} from './model';
+import type { SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, Tracer } from './events';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -121,6 +128,63 @@ describe('BstView renders every frame without throwing', () => {
   });
 });
 
+describe('AvlView renders every frame without throwing', () => {
+  const cases: [string, number[], (t: AvlF64, tr: Tracer<AvlEvent>) => void][] = [
+    ['search found', [50, 30, 70, 20, 40], (t, tr) => t.search(20, tr)],
+    ['search absent', [50, 30, 70], (t, tr) => t.search(35, tr)],
+    ['insert leaf (no rotation)', [50, 30, 70], (t, tr) => t.insert(40, tr)],
+    ['insert into empty', [], (t, tr) => t.insert(42, tr)],
+    ['LL insert (single rotation)', [30, 20], (t, tr) => t.insert(10, tr)],
+    ['LR insert (double rotation)', [30, 10], (t, tr) => t.insert(20, tr)],
+    ['sorted-run insert (cascading)', [10, 20, 30, 40, 50], (t, tr) => t.insert(60, tr)],
+    ['delete leaf', [50, 30, 70, 20], (t, tr) => t.delete(20, tr)],
+    ['delete two-child', [50, 30, 70, 60, 80], (t, tr) => t.delete(70, tr)],
+    ['delete that rebalances', [50, 30, 70, 20, 40, 60, 80, 10], (t, tr) => t.delete(70, tr)],
+    ['delete to empty', [42], (t, tr) => t.delete(42, tr)],
+    ['delete absent', [50, 30, 70], (t, tr) => t.delete(99, tr)],
+  ];
+  it.each(cases)('%s', (_label, build, op) => {
+    const t = AvlF64.fromKeys(build);
+    const before = avlModel(t.snapshot());
+    const events: AvlEvent[] = [];
+    op(t, (e) => events.push(e));
+    renderEveryFrame(before, events, foldAvl, (model, active) =>
+      renderToStaticMarkup(createElement(AvlView, { model, active })),
+    );
+  });
+
+  it('renders the empty tree', () => {
+    const html = renderToStaticMarkup(createElement(AvlView, { model: avlModel(null), active: undefined }));
+    expect(html).toContain('(empty)');
+  });
+});
+
+describe('HeapView renders every frame without throwing', () => {
+  const cases: [string, number[], (h: MinHeapF64, tr: Tracer<HeapEvent>) => void][] = [
+    ['insert new min', [50, 30, 70, 20, 40, 60, 10], (h, tr) => h.insert(5, tr)],
+    ['insert new max', [10, 20, 30], (h, tr) => h.insert(99, tr)],
+    ['extract-min (sift-down)', [50, 30, 70, 20, 40, 60, 10], (h, tr) => h.extractMin(tr)],
+    ['extract-min to empty', [42], (h, tr) => h.extractMin(tr)],
+    ['peek', [50, 30, 70], (h, tr) => h.peek(tr)],
+    ['search found', [50, 30, 70, 20], (h, tr) => h.search(70, tr)],
+    ['search absent', [50, 30, 70], (h, tr) => h.search(999, tr)],
+  ];
+  it.each(cases)('%s', (_label, build, op) => {
+    const h = MinHeapF64.fromKeys(build);
+    const before = heapModel(h.toArray());
+    const events: HeapEvent[] = [];
+    op(h, (e) => events.push(e));
+    renderEveryFrame(before, events, foldHeap, (model, active) =>
+      renderToStaticMarkup(createElement(HeapView, { model, active })),
+    );
+  });
+
+  it('renders the empty heap', () => {
+    const html = renderToStaticMarkup(createElement(HeapView, { model: heapModel([]), active: undefined }));
+    expect(html).toContain('(empty)');
+  });
+});
+
 describe('new panels mount without throwing', () => {
   // The views above are pure SVG; the panels add the hook wiring (ref-held
   // structure, usePlayer, the singly↔doubly key-remount). A single SSR pass runs
@@ -138,5 +202,11 @@ describe('new panels mount without throwing', () => {
   });
   it('BstPanel renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(BstPanel))).toContain('<svg');
+  });
+  it('AvlPanel renders its seeded SVG', () => {
+    expect(renderToStaticMarkup(createElement(AvlPanel))).toContain('<svg');
+  });
+  it('HeapPanel renders its seeded SVG', () => {
+    expect(renderToStaticMarkup(createElement(HeapPanel))).toContain('<svg');
   });
 });

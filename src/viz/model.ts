@@ -13,7 +13,9 @@
  * the highlight from the active event instead).
  */
 
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, BstStep } from './events';
+import type {
+  ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
+} from './events';
 import type { BstShape } from '../structures/bst';
 
 /** A stored array cell with a stable identity for animation. */
@@ -311,4 +313,113 @@ export function bstNodeAtPath(model: BstModel, path: readonly BstStep[]): BstDis
     cur = step === 'L' ? cur.left : cur.right;
   }
   return cur ?? undefined;
+}
+
+// ── AVL tree (docs/PLAN.md §8, "Trees / heaps", balanced) ────────────────────
+// The AVL reuses the generic binary-tree display model (its node shape is identical
+// to the BST's: `{ id, value, left, right }`) and the root-path addressing. The one
+// extra reducer case is the **rotation**, which restructures the subtree at a path
+// while preserving node ids — so the renderer animates each node sliding to its new
+// place. The aliases below let `AvlView` read in AVL terms.
+
+export type AvlDisplayNode = BstDisplayNode;
+export type AvlModel = BstModel;
+/** Build the initial AVL model from the structure's shape snapshot (= {@link bstModel}). */
+export const avlModel = bstModel;
+/** Resolve a root path to the node it addresses (= {@link bstNodeAtPath}). */
+export const avlNodeAtPath = bstNodeAtPath;
+
+/** Rotate the subtree rooted at `path` one step `dir`, **preserving every node's
+ * id** (each node keeps its identity as it moves). A `right` rotation lifts the
+ * pivot's left child into its place; a `left` rotation lifts the right child — exact
+ * mirrors of the teaching impl's `rotateRight`/`rotateLeft`, so `foldAvl(before,
+ * events)` reproduces the structure (model.test.ts). */
+function rotateAtPath(
+  node: BstDisplayNode | null,
+  path: readonly BstStep[],
+  dir: 'left' | 'right',
+): BstDisplayNode | null {
+  return editAtPath(node, path, (pivot) => {
+    if (pivot === null) return null; // invalid path (never produced by a valid stream)
+    if (dir === 'right') {
+      const x = pivot.left!;
+      // x rises to the pivot's slot; the pivot becomes x's right child, taking x's
+      // old right subtree as its new left.
+      return { ...x, right: { ...pivot, left: x.right } };
+    }
+    const y = pivot.right!;
+    return { ...y, left: { ...pivot, right: y.left } };
+  });
+}
+
+/** Fold one AVL event into the model. `insert`/`replaceValue`/`remove` mirror the
+ * BST reducer; `rotate` restructures the pivot's subtree. Compares / descends /
+ * removeTarget / result are highlight-only (the view derives the highlight from the
+ * active event and the imbalance from the folded shape). */
+export function reduceAvl(m: AvlModel, e: AvlEvent): AvlModel {
+  switch (e.kind) {
+    case 'avl.insert': {
+      const node: BstDisplayNode = { id: m.nextId, value: e.value, left: null, right: null };
+      return { root: editAtPath(m.root, e.path, () => node), nextId: m.nextId + 1 };
+    }
+    case 'avl.replaceValue': {
+      const root = editAtPath(m.root, e.path, (t) => (t === null ? null : { ...t, value: e.value }));
+      return { root, nextId: m.nextId };
+    }
+    case 'avl.remove': {
+      const root = editAtPath(m.root, e.path, (t) => (t === null ? null : t.left ?? t.right));
+      return { root, nextId: m.nextId };
+    }
+    case 'avl.rotate':
+      return { root: rotateAtPath(m.root, e.path, e.dir), nextId: m.nextId };
+    // highlight-only: compare / removeTarget / descend / result — no structural change.
+    default:
+      return m;
+  }
+}
+
+export function foldAvl(initial: AvlModel, events: readonly AvlEvent[]): AvlModel {
+  return events.reduce(reduceAvl, initial);
+}
+
+// ── Binary min-heap (docs/PLAN.md §8, "Trees / heaps") ───────────────────────
+// Array-backed: the heap reuses the {@link ArrayModel} (cells + ids), and the view
+// derives the implicit tree from the slot indices (child of `i` at `2i+1`/`2i+2`).
+// `heap.swap` exchanges two cells (ids kept → animated); `heap.replaceRoot` drops
+// the root and moves the last cell into its slot (extract-min's refill).
+
+export type HeapModel = ArrayModel;
+/** Build the initial heap model from the structure's backing array (= {@link arrayModel}). */
+export const heapModel = (values: readonly number[]): HeapModel => arrayModel(values);
+
+/** Fold one heap event into the model (append / swap / replaceRoot). The compares,
+ * scans, peek, extractRoot, and result are highlight-only. */
+export function reduceHeap(m: HeapModel, e: HeapEvent): HeapModel {
+  switch (e.kind) {
+    case 'heap.append':
+      return { cells: [...m.cells, { id: m.nextId, value: e.value }], nextId: m.nextId + 1 };
+    case 'heap.swap': {
+      // Exchange the two cells in place (both keep their ids → the renderer animates
+      // the swap in the array and the implicit tree).
+      const cells = m.cells.slice();
+      const tmp = cells[e.i];
+      cells[e.i] = cells[e.j];
+      cells[e.j] = tmp;
+      return { cells, nextId: m.nextId };
+    }
+    case 'heap.replaceRoot': {
+      // Drop the root; move the last cell into its slot (keeping the moved cell's id
+      // so it flies from the tail to the root). A one-element heap just empties.
+      if (m.cells.length <= 1) return { cells: [], nextId: m.nextId };
+      const last = m.cells[m.cells.length - 1];
+      return { cells: [last, ...m.cells.slice(1, -1)], nextId: m.nextId };
+    }
+    // highlight-only: compare / scan / extractRoot / peek / result — no structural change.
+    default:
+      return m;
+  }
+}
+
+export function foldHeap(initial: HeapModel, events: readonly HeapEvent[]): HeapModel {
+  return events.reduce(reduceHeap, initial);
 }

@@ -4,8 +4,8 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 2 complete; Phase 3 underway (animation engine, linear breadth +
-the BST — batches 1–3).** The step-through visualization spine now exists: the array +
+Status: **Phase 2 complete; Phase 3 underway (animation engine, linear breadth,
+the BST, plus the AVL tree + min-heap — batches 1–4).** The step-through visualization spine now exists: the array +
 hash-set teaching twins emit a typed step-event stream (cost events == op-count,
 pinned to the Rust corpus), a pure Player drives play/step/step-back, and SVG
 renderers animate the comparisons, shifts, chain probes, and rehash
@@ -18,7 +18,14 @@ Batch 3 adds the unbalanced **binary search tree** (`BstF64`) as a teaching twin
 viz: a multiset BST (equal keys go right) whose only cost event is the key
 comparison, with value-copy (Hibbard) delete; the tree view lays nodes out by
 in-order rank × depth and animates compares, the successor walk, and the
-sorted-data degeneration to O(n). Its Rust twin is Phase 4. Details in §10. The thin slice's
+sorted-data degeneration to O(n). Its Rust twin is Phase 4. Batch 4 adds the two
+remaining tree-family teaching twins + viz: the balanced **AVL tree** (`AvlF64`) —
+same ordering and value-copy delete as the BST but it retraces and **rotates** to
+stay O(log n) where the BST tab degenerates (cost = comparisons + rotations, both
+cost events; the view derives each node's balance factor from the drawn shape) —
+and the array-backed **binary min-heap** (`MinHeapF64`) with the §8 different op
+set (insert / peek / extract-min, search a deliberate O(n) contrast; cost =
+comparisons + swaps), drawn as **both an array and the implicit tree**. Details in §10. The thin slice's
 *headline* (Phase 2) has landed. An
 unsorted dynamic array and a separate-chaining hash set now run through the
 Rust/WASM engine, the §6.3 search-measurement methodology (pure, testable
@@ -490,6 +497,48 @@ insert/search/delete group on a shared key type.
     empty deletes. New `binary search tree` tab in `VizPanel`; `App.tsx` and the
     sweep untouched. **No new deps.** Remaining: AVL + heap (batch 4), each
     TS-teaching + viz only (Rust twins are Phase 4).
+  - **Done (batch 4 — the balanced AVL tree + the binary min-heap, teaching twins +
+    viz):** the two remaining tree-family structures, each TS-teaching + viz only
+    (Rust twins are Phase 4). This closes the Phase 3 teaching breadth — the Linear,
+    Hashing, BST, AVL, and heap twins + viz are all in.
+    - **AVL** (`AvlF64`, `src/structures/avl.ts`) — a height-balanced **multiset**
+      BST sharing the unbalanced BST's ordering (`key < node` ⇒ left, else right) and
+      value-copy (Hibbard) delete, but it retraces the insert/delete path to update
+      node heights and **rotate** wherever a balance factor leaves {-1, 0, +1}. So
+      where the BST tab degenerates to an O(n) chain on sorted input, the AVL tab
+      stays O(log n) — the contrast the two tree tabs now make side by side. Cost
+      metric **comparisons + rotations** (§8): *both* are tagged cost events
+      (`avl.compare`, one per node on a find path; `avl.rotate`, one per single
+      rotation — a double rotation is two), so the honesty gate `countCostEvents ==
+      ops` holds for **search, insert, AND delete** (`trace.avl.test.ts`) — cleaner
+      than the sorted array's untagged `+ shifts`. The in-order-successor walk
+      (`avl.descend`) follows pointers, no comparison, mirroring the BST (risk R1, the
+      Phase 4 Rust contract). The display model **reuses the BST's generic tree node**
+      (identical `{id,value,left,right}`, via aliases); the one new reducer case,
+      `rotateAtPath`, restructures a subtree **preserving node ids** so each node
+      slides to its new place — proven by the fold-mirrors-structure test against the
+      full *rebalanced* shape (`model.test.ts`; every rotating-insert/delete frame is
+      uniquely-id'd and renderable). `AvlView` reuses the BST layout and **derives
+      each node's balance factor from the drawn shape** (height is a pure function of
+      subtree shape — no extra model state), tinting any |bf| ≥ 2 node so you watch
+      imbalance appear and then a rotation fix it.
+    - **Min-heap** (`MinHeapF64`, `src/structures/heap.ts`) — an array-backed binary
+      **min-heap** with the §8 **different op set: insert / peek / extract-min**, plus
+      an O(n) `search` kept as a deliberate **contrast** (a heap gives no membership
+      shortcut). Insert sifts up; extract-min moves the last element to the root and
+      sifts down. Cost metric **comparisons + swaps** (§8): `heap.compare` (sift),
+      `heap.scan` (search), and `heap.swap` are the cost events, so `countCostEvents
+      == ops` for insert, extract-min, and search (`trace.heap.test.ts`); `peek` is
+      O(1) with no cost. It **reuses the array display model**; the new reducer cases
+      (`heap.swap`, `heap.replaceRoot`) keep cell ids stable so the same chip animates
+      in *both* the **array and the implicit tree** the renderer draws (§5: the child
+      of `i` at `2i+1` / `2i+2`). The fold test pins the model to the backing array
+      through insert/extract churn; the round-trip test heap-sorts (extract-all ==
+      sorted multiset).
+    - The `Controls` op-button row is now **configurable** so the heap can declare its
+      own op set (the canonical insert/search/delete stays the default). Two new
+      `VizPanel` tabs (`AVL tree`, `min-heap`); `App.tsx` and the Phase 2 sweep
+      untouched. **No new deps.**
 
 - **Phase 4 — Benchmark breadth + methodology hardening.** Warm-up/reps/variance,
   op-counters, churn + finite-difference isolation validated against each other,

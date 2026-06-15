@@ -4,11 +4,15 @@ import { HashSetF64 } from '../structures/hashSet';
 import { SortedArrayF64 } from '../structures/sortedArray';
 import { LinkedListF64, SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
 import { BstF64 } from '../structures/bst';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent } from './events';
+import { AvlF64 } from '../structures/avl';
+import { MinHeapF64 } from '../structures/heap';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList, type LinkedListModel,
   bstModel, foldBst, type BstModel,
+  avlModel, foldAvl, type AvlModel,
+  heapModel, foldHeap, type HeapModel,
 } from './model';
 import * as P from './player';
 import { usePlayer } from './usePlayer';
@@ -17,7 +21,9 @@ import { HashSetView } from './HashSetView';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
 import { BstView } from './BstView';
-import { Controls } from './Controls';
+import { AvlView } from './AvlView';
+import { HeapView } from './HeapView';
+import { Controls, type OpSpec } from './Controls';
 
 /**
  * The exploration panel (docs/PLAN.md §5): pick a structure, run insert / search
@@ -31,7 +37,7 @@ import { Controls } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst' | 'avl' | 'heap';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
@@ -41,8 +47,20 @@ const HASH_SEED = [10, 20, 30, 40, 50, 60];
 // Root-first insertion order yields a balanced 3-level tree; inserting a sorted
 // run (e.g. 90, 95, 99) then visibly degenerates it to a right-leaning chain.
 const BST_SEED = [50, 30, 70, 20, 40, 60, 80];
+// Same keys as the BST — but the AVL stays balanced; inserting a sorted run keeps it
+// O(log n) (watch the rotations) where the BST tab degenerates to a chain.
+const AVL_SEED = [50, 30, 70, 20, 40, 60, 80];
+// Built by sifting each key up; the result is a valid min-heap (root = 10).
+const HEAP_SEED = [50, 30, 70, 20, 40, 60, 10];
 
 type Op = 'search' | 'insert' | 'delete';
+type HeapOp = 'insert' | 'extractMin' | 'peek' | 'search';
+const HEAP_OPS: readonly OpSpec<HeapOp>[] = [
+  { op: 'insert', label: 'insert' },
+  { op: 'extractMin', label: 'extract-min', needsValue: false },
+  { op: 'peek', label: 'peek', needsValue: false },
+  { op: 'search', label: 'search' },
+];
 
 function describeArray(e: ArrayEvent | undefined, m: ArrayModel): string {
   if (!e) return '';
@@ -121,6 +139,39 @@ function describeBst(e: BstEvent | undefined): string {
     case 'bst.replaceValue': return `copy the successor (${e.value}) up into the deleted node`;
     case 'bst.remove': return 'unlink the node (it has at most one child now)';
     case 'bst.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+function describeAvl(e: AvlEvent | undefined): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'avl.compare': {
+      const dir = e.dir === 'match' ? 'match ✓' : e.dir === 'left' ? 'smaller → go left' : '≥ → go right';
+      return `compare ${e.target} vs node ${e.value} → ${dir}`;
+    }
+    case 'avl.insert': return e.path.length === 0 ? `insert ${e.value} as the root` : `insert ${e.value} as a new leaf`;
+    case 'avl.removeTarget': return 'found the node to delete';
+    case 'avl.descend': return 'walk to the in-order successor (smallest key in the right subtree)';
+    case 'avl.replaceValue': return `copy the successor (${e.value}) up into the deleted node`;
+    case 'avl.remove': return 'unlink the node (it has at most one child now)';
+    case 'avl.rotate': return `rotate ${e.dir} at ${e.value} — rebalance (this is the cost beyond a plain BST)`;
+    case 'avl.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+function describeHeap(e: HeapEvent | undefined): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'heap.append': return `append ${e.value} at the tail, then sift it up`;
+    case 'heap.compare':
+      return `compare [${e.a}] vs [${e.b}] → smaller is [${e.winner}]`;
+    case 'heap.scan':
+      return `scan [${e.index}] vs ${e.target} → ${e.matched ? 'match ✓' : 'no match (heaps have no search shortcut)'}`;
+    case 'heap.swap': return `swap [${e.i}] ⇄ [${e.j}]`;
+    case 'heap.extractRoot': return `extract the minimum (${e.value}) at the root`;
+    case 'heap.replaceRoot': return 'move the last element to the root, then sift it down';
+    case 'heap.peek': return `peek → minimum is ${e.value} (O(1), no change)`;
+    case 'heap.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
 
@@ -320,6 +371,87 @@ export function BstPanel() {
   );
 }
 
+export function AvlPanel() {
+  const ref = useRef<AvlF64 | null>(null);
+  if (ref.current === null) ref.current = AvlF64.fromKeys(AVL_SEED);
+  const [base, setBase] = useState<AvlModel>(() => avlModel(AvlF64.fromKeys(AVL_SEED).snapshot()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<AvlEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const t = ref.current!;
+    const snapshot = avlModel(t.snapshot()); // before-state
+    const events: AvlEvent[] = [];
+    const push = (e: AvlEvent) => events.push(e);
+    if (op === 'search') {
+      const r = t.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} comparisons`);
+    } else if (op === 'insert') {
+      const r = t.insert(value, push);
+      const rot = events.filter((e) => e.kind === 'avl.rotate').length;
+      setSummary(`insert(${value}) → placed · ${r.ops} ops (comparisons${rot ? ` + ${rot} rotation${rot > 1 ? 's' : ''}` : ''})`);
+    } else {
+      const r = t.delete(value, push);
+      const rot = events.filter((e) => e.kind === 'avl.rotate').length;
+      setSummary(`delete(${value}) → ${r.removed ? 'removed' : 'absent'} · ${r.ops} ops (comparisons${rot ? ` + ${rot} rotation${rot > 1 ? 's' : ''}` : ''})`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldAvl(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || 'Balanced AVL — same ordering as the BST, but it rotates to stay O(log n). Insert a sorted run and watch the balance factors and rotations (the BST tab degenerates instead).'}</p>
+      <AvlView model={model} active={active} />
+      <Controls player={player} onOp={onOp} caption={describeAvl(active)} />
+    </>
+  );
+}
+
+export function HeapPanel() {
+  const ref = useRef<MinHeapF64 | null>(null);
+  if (ref.current === null) ref.current = MinHeapF64.fromKeys(HEAP_SEED);
+  const [base, setBase] = useState<HeapModel>(() => heapModel(MinHeapF64.fromKeys(HEAP_SEED).toArray()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<HeapEvent>();
+
+  const onOp = (op: HeapOp, value: number) => {
+    const h = ref.current!;
+    const snapshot = heapModel(h.toArray()); // before-state
+    const events: HeapEvent[] = [];
+    const push = (e: HeapEvent) => events.push(e);
+    if (op === 'search') {
+      const r = h.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} comparisons (O(n) scan — a heap is not a search structure)`);
+    } else if (op === 'insert') {
+      const r = h.insert(value, push);
+      setSummary(`insert(${value}) → sifted up · ${r.ops} ops (comparisons + swaps)`);
+    } else if (op === 'peek') {
+      const r = h.peek(push);
+      setSummary(r.min === undefined ? 'peek → heap is empty' : `peek → minimum is ${r.min} (O(1))`);
+    } else {
+      const r = h.extractMin(push);
+      setSummary(r.min === undefined ? 'extract-min → heap is empty' : `extract-min → ${r.min} · ${r.ops} ops (comparisons + swaps to sift down)`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldHeap(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || 'Binary min-heap — insert / peek / extract-min (a different op set). The array and the tree are the same data; search is an O(n) scan, shown as a contrast.'}</p>
+      <HeapView model={model} active={active} />
+      <Controls<HeapEvent, HeapOp> player={player} onOp={onOp} caption={describeHeap(active)} ops={HEAP_OPS} />
+    </>
+  );
+}
+
 const tab = (selected: boolean): React.CSSProperties => ({
   padding: '6px 14px', fontSize: 14, cursor: 'pointer', borderRadius: 6,
   border: '1px solid ' + (selected ? '#4a90d9' : '#ccc'),
@@ -333,6 +465,8 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'doubly', label: 'doubly linked list' },
   { kind: 'hashset', label: 'hash set' },
   { kind: 'bst', label: 'binary search tree' },
+  { kind: 'avl', label: 'AVL tree' },
+  { kind: 'heap', label: 'min-heap' },
 ];
 
 function panelFor(kind: Kind) {
@@ -344,6 +478,8 @@ function panelFor(kind: Kind) {
     case 'doubly': return <LinkedPanel key="doubly" doubly />;
     case 'hashset': return <HashPanel />;
     case 'bst': return <BstPanel />;
+    case 'avl': return <AvlPanel />;
+    case 'heap': return <HeapPanel />;
   }
 }
 
