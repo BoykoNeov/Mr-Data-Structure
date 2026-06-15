@@ -13,7 +13,7 @@
  * the highlight from the active event instead).
  */
 
-import type { ArrayEvent, HashSetEvent } from './events';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent } from './events';
 
 /** A stored array cell with a stable identity for animation. */
 export interface Cell {
@@ -137,4 +137,86 @@ export function foldArray(initial: ArrayModel, events: readonly ArrayEvent[]): A
 
 export function foldHash(initial: HashModel, events: readonly HashSetEvent[]): HashModel {
   return events.reduce(reduceHash, initial);
+}
+
+// ── Sorted array ────────────────────────────────────────────────────────────
+// Reuses the {@link ArrayModel} shape (cells + holes + nextId); only the event
+// vocabulary differs (binary-search compares, and an insert that opens a gap by
+// shifting *right*). Build the initial model with {@link arrayModel}.
+
+/** Fold one sorted-array event into the model (docs/PLAN.md §8 binary search +
+ * shift insert/delete). `sarr.shift` swaps the slot with its neighbour either
+ * way — right to open an insert gap, left to compact a delete — so the hole keeps
+ * a unique id every frame (each prefix is renderable). */
+export function reduceSortedArray(m: ArrayModel, e: SortedArrayEvent): ArrayModel {
+  switch (e.kind) {
+    case 'sarr.appendHole':
+      return { cells: [...m.cells, { id: m.nextId, hole: true }], nextId: m.nextId + 1 };
+    case 'sarr.shift': {
+      const cells = m.cells.slice();
+      const tmp = cells[e.to];
+      cells[e.to] = cells[e.from];
+      cells[e.from] = tmp;
+      return { cells, nextId: m.nextId };
+    }
+    case 'sarr.fill': {
+      // The hole resting at `index` becomes a real cell — reuse its id so the
+      // value "drops into" the same slot rather than a new one appearing.
+      const cells = m.cells.slice();
+      cells[e.index] = { id: cells[e.index].id, value: e.value };
+      return { cells, nextId: m.nextId };
+    }
+    case 'sarr.removeTarget': {
+      const cells = m.cells.slice();
+      cells[e.index] = { id: m.nextId, hole: true };
+      return { cells, nextId: m.nextId + 1 };
+    }
+    case 'sarr.pop':
+      return { cells: m.cells.slice(0, -1), nextId: m.nextId };
+    // highlight-only: compare / result — no structural change.
+    default:
+      return m;
+  }
+}
+
+export function foldSortedArray(initial: ArrayModel, events: readonly SortedArrayEvent[]): ArrayModel {
+  return events.reduce(reduceSortedArray, initial);
+}
+
+// ── Linked list (singly / doubly) ───────────────────────────────────────────
+
+/** A stored list node with a stable identity for animation. */
+export interface ListNode {
+  readonly id: number;
+  readonly value: number;
+}
+
+/** The list's display state: nodes head-to-tail, plus the next free id. */
+export interface LinkedListModel {
+  readonly nodes: readonly ListNode[];
+  readonly nextId: number;
+}
+
+/** Build the initial list model from the structure's head-to-tail keys. */
+export function linkedModel(values: readonly number[]): LinkedListModel {
+  return { nodes: values.map((value, id) => ({ id, value })), nextId: values.length };
+}
+
+/** Fold one linked-list event into the model. `ll.insertHead` prepends a fresh
+ * node; `ll.unlink` drops the node at its position and the survivors slide
+ * together. Visits/results are highlight-only. Shared by singly + doubly. */
+export function reduceLinkedList(m: LinkedListModel, e: LinkedListEvent): LinkedListModel {
+  switch (e.kind) {
+    case 'll.insertHead':
+      return { nodes: [{ id: m.nextId, value: e.value }, ...m.nodes], nextId: m.nextId + 1 };
+    case 'll.unlink':
+      return { nodes: m.nodes.filter((_, i) => i !== e.index), nextId: m.nextId };
+    // highlight-only: visit / result — no structural change.
+    default:
+      return m;
+  }
+}
+
+export function foldLinkedList(initial: LinkedListModel, events: readonly LinkedListEvent[]): LinkedListModel {
+  return events.reduce(reduceLinkedList, initial);
 }

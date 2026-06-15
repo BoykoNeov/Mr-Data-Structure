@@ -147,9 +147,108 @@ export type HashSetEvent =
   | HsRehash
   | HsResult;
 
+// ── Sorted array (docs/PLAN.md §8, "Linear", binary search) ─────────────────
+
+/** Compare the midpoint cell at `index` against `target` within the live binary-
+ * search window `[lo, hi)` (one comparison — a cost event). The renderer shades
+ * the eliminated halves; `matched` ends the search. */
+export interface SArrCompare {
+  readonly kind: 'sarr.compare';
+  readonly index: number;
+  readonly lo: number;
+  readonly hi: number;
+  readonly target: number;
+  readonly matched: boolean;
+}
+
+/** Open a fresh empty slot at the tail to make room for an insert. The hole then
+ * bubbles left (via `sarr.shift`) to the sorted insertion point. */
+export interface SArrAppendHole {
+  readonly kind: 'sarr.appendHole';
+}
+
+/** Shift the cell at `from` one slot to `to` (`to = from ± 1`) — a rightward
+ * shift opens the insert gap; a leftward shift compacts after a delete. The hole
+ * swaps the other way, keeping every slot id unique per frame. Not a cost event
+ * on its own; the `+ shifts` term of the cost metric is counted in `ops`. */
+export interface SArrShift {
+  readonly kind: 'sarr.shift';
+  readonly from: number;
+  readonly to: number;
+}
+
+/** Drop `value` into the hole now resting at `index`, completing an insert. */
+export interface SArrFill {
+  readonly kind: 'sarr.fill';
+  readonly index: number;
+  readonly value: number;
+}
+
+/** Mark the cell at `index` (found by binary search) as the delete target,
+ * turning it into a hole the survivors then shift left past. */
+export interface SArrRemoveTarget {
+  readonly kind: 'sarr.removeTarget';
+  readonly index: number;
+}
+
+/** Drop the now-duplicated tail slot, completing a delete. */
+export interface SArrPop {
+  readonly kind: 'sarr.pop';
+}
+
+/** Terminal marker for a search/delete: whether the key was present. Not a cost event. */
+export interface SArrResult {
+  readonly kind: 'sarr.result';
+  readonly found: boolean;
+}
+
+export type SortedArrayEvent =
+  | SArrCompare
+  | SArrAppendHole
+  | SArrShift
+  | SArrFill
+  | SArrRemoveTarget
+  | SArrPop
+  | SArrResult;
+
+// ── Linked list (docs/PLAN.md §8, "Linear", singly / doubly) ────────────────
+
+/** Visit the node at position `index` (0-based from the head), comparing its
+ * `value` against `target` (one node-visit — a cost event). `matched` ends the
+ * walk. Shared by the singly and doubly lists: their observable cost is identical
+ * (the doubly list only adds back-pointers, drawn by the renderer). */
+export interface LlVisit {
+  readonly kind: 'll.visit';
+  readonly index: number;
+  readonly value: number;
+  readonly target: number;
+  readonly matched: boolean;
+}
+
+/** Splice a new node carrying `value` at the head (insert — O(1), no visits). */
+export interface LlInsertHead {
+  readonly kind: 'll.insertHead';
+  readonly value: number;
+}
+
+/** Unlink the node at position `index` (found during delete); its neighbours
+ * reconnect and the survivors slide together. */
+export interface LlUnlink {
+  readonly kind: 'll.unlink';
+  readonly index: number;
+}
+
+/** Terminal marker for a search/delete: whether the key was present. Not a cost event. */
+export interface LlResult {
+  readonly kind: 'll.result';
+  readonly found: boolean;
+}
+
+export type LinkedListEvent = LlVisit | LlInsertHead | LlUnlink | LlResult;
+
 // ── Union + cost tagging ────────────────────────────────────────────────────
 
-export type VizEvent = ArrayEvent | HashSetEvent;
+export type VizEvent = ArrayEvent | HashSetEvent | SortedArrayEvent | LinkedListEvent;
 export type VizEventKind = VizEvent['kind'];
 
 /** Sink the teaching impls emit into. Typed per family at the call site
@@ -165,6 +264,8 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   'arr.compare',
   'hs.hash',
   'hs.probe',
+  'sarr.compare',
+  'll.visit',
 ]);
 
 /** Count the cost-bearing events in a stream (the op-count it represents). */

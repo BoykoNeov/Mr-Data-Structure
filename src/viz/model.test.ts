@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { DynArrayF64 } from '../structures/dynArray';
 import { HashSetF64 } from '../structures/hashSet';
-import type { ArrayEvent, HashSetEvent } from './events';
+import { SortedArrayF64 } from '../structures/sortedArray';
+import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
+  foldSortedArray, linkedModel, foldLinkedList,
 } from './model';
 
 /**
@@ -103,4 +106,114 @@ describe('hash-set fold mirrors the structure', () => {
     expect(events.some((e) => e.kind === 'hs.duplicate')).toBe(true);
     expect(hashValues(foldHash(before, events))).toEqual(s.snapshotBuckets());
   });
+});
+
+describe('sorted-array fold mirrors the structure', () => {
+  /** Capture before-state, run the op with a tracer, fold, and compare to the
+   * structure's actual post-op keys — the fold can't drift from the algorithm. */
+  const runFold = (build: number[], op: (a: SortedArrayF64, push: (e: SortedArrayEvent) => void) => void) => {
+    const a = SortedArrayF64.fromKeys(build);
+    const before = arrayModel(a.keysInOrder());
+    const events: SortedArrayEvent[] = [];
+    op(a, (e) => events.push(e));
+    return { a, before, events };
+  };
+
+  it('a binary-search stream leaves the model unchanged', () => {
+    const { a, before, events } = runFold([10, 20, 30, 40, 50], (s, push) => s.search(30, push));
+    expect(arrValues(foldSortedArray(before, events))).toEqual(a.keysInOrder());
+  });
+
+  it('an insert folds to the structure’s post-insert keys, ids distinct', () => {
+    const { a, before, events } = runFold([10, 20, 40, 50], (s, push) => s.insert(30, push));
+    const after = foldSortedArray(before, events);
+    expect(arrValues(after)).toEqual(a.keysInOrder());
+    expect(a.keysInOrder()).toEqual([10, 20, 30, 40, 50]);
+    expect(new Set(after.cells.map((c) => c.id)).size).toBe(after.cells.length);
+  });
+
+  it('inserting a new minimum (max shift count) still folds correctly', () => {
+    const { a, before, events } = runFold([20, 30, 40], (s, push) => s.insert(5, push));
+    expect(arrValues(foldSortedArray(before, events))).toEqual([5, 20, 30, 40]);
+    expect(a.keysInOrder()).toEqual([5, 20, 30, 40]);
+  });
+
+  it('every frame of an insert is renderable (unique slot ids each prefix)', () => {
+    // The hole bubbles right→left through the shifts; each prefix must keep ids
+    // unique (the renderer keys slots by id and folds every prefix, not just the end).
+    const { a, before, events } = runFold([10, 20, 40, 50], (s, push) => s.insert(30, push));
+    for (let f = 0; f <= events.length; f++) {
+      const ids = foldSortedArray(before, events.slice(0, f)).cells.map((c) => c.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+    expect(arrValues(foldSortedArray(before, events))).toEqual(a.keysInOrder());
+  });
+
+  it('a delete folds to the structure’s post-delete keys', () => {
+    const { a, before, events } = runFold([10, 20, 30, 40, 50], (s, push) => s.delete(20, push));
+    expect(arrValues(foldSortedArray(before, events))).toEqual(a.keysInOrder());
+    expect(a.keysInOrder()).toEqual([10, 30, 40, 50]);
+  });
+
+  it('every frame of a delete is renderable (unique slot ids each prefix)', () => {
+    const { before, events } = runFold([10, 20, 30, 40, 50], (s, push) => s.delete(20, push));
+    for (let f = 0; f <= events.length; f++) {
+      const ids = foldSortedArray(before, events.slice(0, f)).cells.map((c) => c.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+  });
+
+  it('deleting an absent key leaves the model unchanged', () => {
+    const { a, before, events } = runFold([10, 20, 30], (s, push) => s.delete(99, push));
+    expect(arrValues(foldSortedArray(before, events))).toEqual(a.keysInOrder());
+  });
+});
+
+describe('linked-list fold mirrors the structure (singly + doubly)', () => {
+  for (const List of [SinglyLinkedListF64, DoublyLinkedListF64]) {
+    describe(List.name, () => {
+      it('head insert reverses input order and folds to the structure', () => {
+        const l = List.fromKeys([10, 20, 30]); // head-insert ⇒ 30→20→10
+        expect(l.keysInOrder()).toEqual([30, 20, 10]);
+        const before = linkedModel(l.keysInOrder());
+        const events: LinkedListEvent[] = [];
+        l.insert(40, (e) => events.push(e));
+        const after = foldLinkedList(before, events);
+        expect(after.nodes.map((n) => n.value)).toEqual(l.keysInOrder());
+        expect(l.keysInOrder()).toEqual([40, 30, 20, 10]);
+        expect(new Set(after.nodes.map((n) => n.id)).size).toBe(after.nodes.length);
+      });
+
+      it('a search leaves the model unchanged', () => {
+        const l = List.fromKeys([1, 2, 3]);
+        const before = linkedModel(l.keysInOrder());
+        const events: LinkedListEvent[] = [];
+        l.search(2, (e) => events.push(e));
+        expect(foldLinkedList(before, events).nodes.map((n) => n.value)).toEqual(l.keysInOrder());
+      });
+
+      it('a delete unlinks the node and folds to the post-delete list', () => {
+        const l = List.fromKeys([10, 20, 30, 40]); // 40→30→20→10
+        const before = linkedModel(l.keysInOrder());
+        const events: LinkedListEvent[] = [];
+        l.delete(30, (e) => events.push(e));
+        const after = foldLinkedList(before, events);
+        expect(after.nodes.map((n) => n.value)).toEqual(l.keysInOrder());
+        expect(l.keysInOrder()).toEqual([40, 20, 10]);
+        // every prefix renderable (ids stay unique through the unlink)
+        for (let f = 0; f <= events.length; f++) {
+          const ids = foldLinkedList(before, events.slice(0, f)).nodes.map((n) => n.id);
+          expect(new Set(ids).size).toBe(ids.length);
+        }
+      });
+
+      it('deleting an absent key leaves the model unchanged', () => {
+        const l = List.fromKeys([1, 2, 3]);
+        const before = linkedModel(l.keysInOrder());
+        const events: LinkedListEvent[] = [];
+        l.delete(99, (e) => events.push(e));
+        expect(foldLinkedList(before, events).nodes.map((n) => n.value)).toEqual(l.keysInOrder());
+      });
+    });
+  }
 });

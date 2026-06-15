@@ -4,12 +4,17 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 2 complete; Phase 3 underway (animation engine — batch 1).**
-The step-through visualization spine now exists: the array + hash-set teaching
-twins emit a typed step-event stream (cost events == op-count, pinned to the Rust
-corpus), a pure Player drives play/step/step-back, and SVG renderers animate the
-comparisons, shifts, chain probes, and rehash redistribution — wired into the app
-beside the Phase 2 sweep (which is untouched). Details in §10. The thin slice's
+Status: **Phase 2 complete; Phase 3 underway (animation engine + linear breadth —
+batches 1–2).** The step-through visualization spine now exists: the array +
+hash-set teaching twins emit a typed step-event stream (cost events == op-count,
+pinned to the Rust corpus), a pure Player drives play/step/step-back, and SVG
+renderers animate the comparisons, shifts, chain probes, and rehash
+redistribution — wired into the app beside the Phase 2 sweep (which is untouched).
+Batch 2 adds the rest of the **Linear** family as teaching twins + viz (Rust twins
+are Phase 4): a **sorted array** (binary search with an animated lo/hi window;
+shift-right insert / shift-left delete) and the **singly + doubly linked lists**
+(O(1) head insert; node-visit search/delete; the doubly view adds back-pointers).
+Details in §10. The thin slice's
 *headline* (Phase 2) has landed. An
 unsorted dynamic array and a separate-chaining hash set now run through the
 Rust/WASM engine, the §6.3 search-measurement methodology (pure, testable
@@ -435,7 +440,29 @@ insert/search/delete group on a shared key type.
     intact). `delete` added to the TS array + hash-set teaching twins (ordered
     shift-compact / order-preserving chain-remove, mirroring Rust). Verified
     rendering in headless Chromium alongside the unchanged sweep gate. **No new
-    deps.** Remaining: breadth — sorted array, linked lists (batch 2), BST
+    deps.**
+  - **Done (batch 2 — linear breadth, teaching twins + viz):** the rest of the
+    **Linear** family (§8) as TypeScript teaching twins with step-event
+    animation; their Rust bench twins (and a cross-language corpus) come in
+    Phase 4. A **sorted array** (`SortedArrayF64`): binary search whose
+    `sarr.compare` events carry the live `[lo, hi)` window so the renderer shades
+    the eliminated halves (the O(log n) halving made visible); insert
+    binary-searches the slot then shifts the tail *right* to open a gap and drops
+    the value in; delete shifts *left* and pops (cost metric comparisons +
+    shifts). The **singly + doubly linked lists** (`SinglyLinkedListF64` /
+    `DoublyLinkedListF64`, sharing one `LinkedListF64` algorithm): O(1) head
+    insert (0 node-visits), linear search/delete counted in node-visits; one
+    `LinkedListView` draws both, the doubly variant adding back-pointers. The
+    step-event ↔ op-count honesty gate (§2.1, R1) is extended: `sarr.compare`
+    and `ll.visit` join `COST_EVENT_KINDS`, with `trace.linear.test.ts` pinning
+    `countCostEvents == ops` for sorted-array *search* (insert/delete add the
+    untagged `+ shifts` term by design) and for linked-list *search and delete*
+    (pure node-visits; insert is 0). Fold reducers are proven against the real
+    algorithm (`model.test.ts`, every prefix renderable / unique ids through the
+    new shift directions), and `views.render.test.ts` renders **every animation
+    frame** of each view to static SVG (the browser gate never clicks past the
+    default sweep tab). Wired additively into `VizPanel` as three new tabs;
+    `App.tsx` and the Phase 2 sweep untouched. **No new deps.** Remaining: BST
     (batch 3), AVL + heap (batch 4), each TS-teaching + viz only (Rust twins are
     Phase 4).
 

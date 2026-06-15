@@ -1,14 +1,19 @@
 import { useMemo, useRef, useState } from 'react';
 import { DynArrayF64 } from '../structures/dynArray';
 import { HashSetF64 } from '../structures/hashSet';
-import type { ArrayEvent, HashSetEvent } from './events';
+import { SortedArrayF64 } from '../structures/sortedArray';
+import { LinkedListF64, SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
+  foldSortedArray, linkedModel, foldLinkedList, type LinkedListModel,
 } from './model';
 import * as P from './player';
 import { usePlayer } from './usePlayer';
 import { ArrayView } from './ArrayView';
 import { HashSetView } from './HashSetView';
+import { SortedArrayView } from './SortedArrayView';
+import { LinkedListView } from './LinkedListView';
 import { Controls } from './Controls';
 
 /**
@@ -23,8 +28,11 @@ import { Controls } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'hashset';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
+const SORTED_SEED = [12, 25, 37, 44, 58, 70];
+// Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
+const LIST_SEED = [10, 20, 30, 40];
 // Six keys → 8 buckets; one more distinct insert (e.g. 70) trips a rehash → 16.
 const HASH_SEED = [10, 20, 30, 40, 50, 60];
 
@@ -43,6 +51,39 @@ function describeArray(e: ArrayEvent | undefined, m: ArrayModel): string {
     case 'arr.shift': return `shift cell [${e.from}] → [${e.to}]`;
     case 'arr.pop': return 'drop the vacated tail slot';
     case 'arr.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+function describeSortedArray(e: SortedArrayEvent | undefined, m: ArrayModel): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'sarr.compare': {
+      const slot = m.cells[e.index];
+      const shown = slot && !isHole(slot) ? slot.value : '?';
+      const dir = e.matched
+        ? 'match ✓'
+        : typeof shown === 'number' && shown < e.target
+          ? 'too small → search the right half'
+          : 'too big → search the left half';
+      return `binary search [${e.lo},${e.hi}): mid [${e.index}] = ${shown} vs ${e.target} → ${dir}`;
+    }
+    case 'sarr.appendHole': return 'open a slot at the tail to make room';
+    case 'sarr.shift': return `shift cell [${e.from}] → [${e.to}]`;
+    case 'sarr.fill': return `drop ${e.value} into the gap at [${e.index}]`;
+    case 'sarr.removeTarget': return `found at [${e.index}] — now shift the tail left to close the gap`;
+    case 'sarr.pop': return 'drop the vacated tail slot';
+    case 'sarr.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+function describeLinkedList(e: LinkedListEvent | undefined): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'll.visit':
+      return `visit node [${e.index}] (${e.value}) vs ${e.target} → ${e.matched ? 'match ✓' : 'follow next →'}`;
+    case 'll.insertHead': return `insert ${e.value} at the head (O(1), no walk)`;
+    case 'll.unlink': return `unlink node [${e.index}] — reconnect its neighbours`;
+    case 'll.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
 
@@ -138,21 +179,124 @@ function HashPanel() {
   );
 }
 
+// Exported for the render-smoke test (`views.render.test.ts`) — the browser gate
+// only drives the default sweep tab, so mounting these panels is otherwise never
+// exercised. Not part of the public UI surface; `VizPanel` is the entry point.
+export function SortedPanel() {
+  const ref = useRef<SortedArrayF64 | null>(null);
+  if (ref.current === null) ref.current = SortedArrayF64.fromKeys(SORTED_SEED);
+  const [base, setBase] = useState<ArrayModel>(() => arrayModel(SortedArrayF64.fromKeys(SORTED_SEED).keysInOrder()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<SortedArrayEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const a = ref.current!;
+    const snapshot = arrayModel(a.keysInOrder()); // before-state
+    const events: SortedArrayEvent[] = [];
+    const push = (e: SortedArrayEvent) => events.push(e);
+    if (op === 'search') {
+      const r = a.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} comparisons (binary search)`);
+    } else if (op === 'insert') {
+      const r = a.insert(value, push);
+      setSummary(`insert(${value}) → placed in order · ${r.ops} comparisons + shifts`);
+    } else {
+      const r = a.delete(value, push);
+      setSummary(`delete(${value}) → ${r.removed ? 'removed' : 'absent'} · ${r.ops} comparisons + shifts`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldSortedArray(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || 'Sorted array — binary search (O(log n)); insert/delete shift the tail to keep it ordered.'}</p>
+      <SortedArrayView model={model} active={active} />
+      <Controls player={player} onOp={onOp} caption={describeSortedArray(active, model)} />
+    </>
+  );
+}
+
+export function LinkedPanel({ doubly }: { readonly doubly: boolean }) {
+  const List = doubly ? DoublyLinkedListF64 : SinglyLinkedListF64;
+  const ref = useRef<LinkedListF64 | null>(null);
+  if (ref.current === null) ref.current = List.fromKeys(LIST_SEED);
+  const [base, setBase] = useState<LinkedListModel>(() => linkedModel(List.fromKeys(LIST_SEED).keysInOrder()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<LinkedListEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const l = ref.current!;
+    const snapshot = linkedModel(l.keysInOrder()); // before-state
+    const events: LinkedListEvent[] = [];
+    const push = (e: LinkedListEvent) => events.push(e);
+    if (op === 'search') {
+      const r = l.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} node-visits`);
+    } else if (op === 'insert') {
+      l.insert(value, push);
+      setSummary(`insert(${value}) → spliced at the head (O(1), no walk)`);
+    } else {
+      const r = l.delete(value, push);
+      setSummary(`delete(${value}) → ${r.removed ? 'removed' : 'absent'} · ${r.ops} node-visits`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldLinkedList(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+  const kind = doubly ? 'Doubly' : 'Singly';
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || `${kind} linked list — O(1) head insert; search/delete walk the chain (node-visits).`}</p>
+      <LinkedListView model={model} active={active} doubly={doubly} />
+      <Controls player={player} onOp={onOp} caption={describeLinkedList(active)} />
+    </>
+  );
+}
+
 const tab = (selected: boolean): React.CSSProperties => ({
   padding: '6px 14px', fontSize: 14, cursor: 'pointer', borderRadius: 6,
   border: '1px solid ' + (selected ? '#4a90d9' : '#ccc'),
   background: selected ? '#e7f1ff' : '#fff', fontWeight: selected ? 600 : 400,
 });
 
+const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
+  { kind: 'array', label: 'dynamic array' },
+  { kind: 'sorted', label: 'sorted array' },
+  { kind: 'singly', label: 'singly linked list' },
+  { kind: 'doubly', label: 'doubly linked list' },
+  { kind: 'hashset', label: 'hash set' },
+];
+
+function panelFor(kind: Kind) {
+  switch (kind) {
+    case 'array': return <ArrayPanel />;
+    case 'sorted': return <SortedPanel />;
+    // distinct keys force a remount between the two lists so the ref re-seeds.
+    case 'singly': return <LinkedPanel key="singly" doubly={false} />;
+    case 'doubly': return <LinkedPanel key="doubly" doubly />;
+    case 'hashset': return <HashPanel />;
+  }
+}
+
 export function VizPanel() {
   const [kind, setKind] = useState<Kind>('array');
   return (
     <section style={{ marginTop: 8 }}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-        <button style={tab(kind === 'array')} onClick={() => setKind('array')}>dynamic array</button>
-        <button style={tab(kind === 'hashset')} onClick={() => setKind('hashset')}>hash set</button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        {TABS.map((t) => (
+          <button key={t.kind} style={tab(kind === t.kind)} onClick={() => setKind(t.kind)}>
+            {t.label}
+          </button>
+        ))}
       </div>
-      {kind === 'array' ? <ArrayPanel /> : <HashPanel />}
+      {panelFor(kind)}
     </section>
   );
 }
