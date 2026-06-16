@@ -25,6 +25,7 @@ use super::dyn_array::ArrayF64;
 use super::dyn_array_str::ArrayStr;
 use super::hash_set::HashSetF64;
 use super::hash_set_str::HashSetStr;
+use super::linked_list::LinkedListF64;
 use super::sorted_array::SortedArrayF64;
 
 const CORPUS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus.txt");
@@ -36,6 +37,8 @@ const CORPUS_AVL_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-avl.txt");
 const CORPUS_SARR_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-sarr.txt");
+const CORPUS_LL_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-ll.txt");
 
 struct Case {
     name: &'static str,
@@ -599,5 +602,99 @@ fn corpus_sarr_matches_committed() {
         normalize(&serialize_sarr(&sarr_cases())),
         "sorted-array conformance corpus is stale vs the Rust impl; \
          regenerate with: cargo test -- --ignored regen_corpus_sarr",
+    );
+}
+
+// ── Linked-list corpus (docs/PLAN.md §8 Linear, §12) ─────────────────────────
+//
+// The linked list reuses the linear/hash format's `*_order` + `*_search` lines (a list's
+// iteration order — head→tail, the reverse of insertion order — *is* its structure, no
+// separate shape dimension) and adds a **delete sequence** with per-delete `(removed:ops)`.
+// The drift-prone half (risk R1) is the **node-visit** count: one per node examined from the
+// head, short-circuiting on a match (search and the delete *find* phase; head insert visits
+// nothing). The cases pin head-insert reversal, duplicate handling (delete removes the
+// *head-most* occurrence), and head/middle/tail/absent deletes (the visit count to reach
+// each). The *same* corpus pins **both** TS twins — singly and doubly are bench-identical
+// under this metric (the back-pointers are a viz-only distinction). Integer-valued keys
+// round-trip through TS `Number()`.
+
+struct LlCase {
+    name: &'static str,
+    keys: Vec<f64>,
+    probes: Vec<f64>,
+    deletes: Vec<f64>,
+}
+
+/// Linked-list input cases (docs/PLAN.md §12): empty/singleton edges, an ordered case
+/// (head-insert reversal + middle/absent/head deletes), and a duplicates case (multiset;
+/// delete removes the head-most occurrence).
+fn ll_cases() -> Vec<LlCase> {
+    vec![
+        LlCase { name: "empty", keys: vec![], probes: vec![1.0, 2.0], deletes: vec![1.0] },
+        LlCase {
+            name: "singleton", // delete-to-empty
+            keys: vec![42.0],
+            probes: vec![42.0, 7.0],
+            deletes: vec![42.0],
+        },
+        LlCase {
+            name: "ordered", // head-insert reverses; middle / absent / head deletes
+            keys: vec![10.0, 20.0, 30.0],
+            probes: vec![10.0, 20.0, 30.0, 99.0],
+            deletes: vec![20.0, 99.0, 30.0],
+        },
+        LlCase {
+            name: "duplicates", // multiset; delete removes the head-most of a run
+            keys: vec![5.0, 5.0, 5.0, 7.0, 5.0, 9.0],
+            probes: vec![5.0, 7.0, 9.0, 99.0],
+            deletes: vec![5.0],
+        },
+    ]
+}
+
+fn serialize_ll(cases: &[LlCase]) -> String {
+    let mut out = String::new();
+    out.push_str("# Mr Data Structure — linked-list conformance corpus (docs/PLAN.md §8, §12).\n");
+    out.push_str("# Generated from the Rust bench impl; both TS teaching twins must match.\n");
+    out.push_str("# Op-count = node-visits. Regenerate: cargo test -- --ignored regen_corpus_ll\n");
+    for c in cases {
+        let l = LinkedListF64::new(&c.keys, c.keys.len());
+        let search: Vec<(bool, u64)> =
+            c.probes.iter().map(|&p| l.search_one_counted(p)).collect();
+
+        // Deletes mutate, so run them on a fresh list built from the same keys.
+        let mut td = LinkedListF64::new(&c.keys, c.keys.len());
+        let del: Vec<(bool, u64)> =
+            c.deletes.iter().map(|&d| td.delete_one_counted(d)).collect();
+
+        out.push('\n');
+        out.push_str(&format!("case {}\n", c.name));
+        out.push_str(&format!("keys {}\n", fmt_nums(&c.keys)));
+        out.push_str(&format!("probes {}\n", fmt_nums(&c.probes)));
+        out.push_str(&format!("ll_order {}\n", fmt_nums(&l.keys_in_order())));
+        out.push_str(&format!("ll_search {}\n", fmt_search(&search)));
+        out.push_str(&format!("deletes {}\n", fmt_nums(&c.deletes)));
+        out.push_str(&format!("ll_delete {}\n", fmt_search(&del)));
+        out.push_str(&format!("ll_order_after {}\n", fmt_nums(&td.keys_in_order())));
+    }
+    out
+}
+
+#[test]
+#[ignore = "writes the committed linked-list corpus; run deliberately after a behavior change"]
+fn regen_corpus_ll() {
+    std::fs::write(CORPUS_LL_PATH, serialize_ll(&ll_cases())).expect("write ll corpus");
+}
+
+#[test]
+fn corpus_ll_matches_committed() {
+    let committed = std::fs::read_to_string(CORPUS_LL_PATH).expect(
+        "linked-list corpus missing; generate it with: cargo test -- --ignored regen_corpus_ll",
+    );
+    assert_eq!(
+        normalize(&committed),
+        normalize(&serialize_ll(&ll_cases())),
+        "linked-list conformance corpus is stale vs the Rust impl; \
+         regenerate with: cargo test -- --ignored regen_corpus_ll",
     );
 }

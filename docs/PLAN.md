@@ -5,8 +5,9 @@
 > cost on the user's *own real data* — not on textbook formulas.
 
 Status: **Phase 3 complete (animation engine, linear breadth, the BST, plus the AVL
-tree + min-heap — batches 1–4); Phase 4 underway (the BST **and AVL** bench twins
-landed — `bst::BstF64`, an iterative index-arena multiset BST pinned to the TS twin by
+tree + min-heap — batches 1–4); Phase 4 underway (the BST, AVL, sorted-array **and
+linked-list** bench twins landed — the **Linear family is now complete** — leaving the
+min-heap as the last core twin). `bst::BstF64`, an iterative index-arena multiset BST pinned to the TS twin by
 `conformance/corpus-bst.txt`, which also pins tree shape + a Hibbard-delete
 sequence — and now its timed `#[wasm_bindgen]` harness surface
 (`search_n`/churn/build-teardown, with delete-max teardown) + engine/sweep wiring
@@ -30,7 +31,16 @@ shift-based insert/delete (cost = comparisons + shifts), pinned by
 `conformance/corpus-sarr.txt` — the first corpus to pin a shift-inclusive op-count
 cross-language (front/back/middle deletes) — whose churn rides the **front** (`min − 1`)
 so its mutation reads the honest O(n), a fourth churn-vs-finite-difference regime (front
-churn *overshoots* the sum).** The
+churn *overshoots* the sum). The **linked-list bench twin** `linked_list::LinkedListF64`
+then closes the Linear family — one index-arena impl standing in for *both* the singly and
+doubly teaching twins (bench-identical under the **node-visit** metric: O(1) head insert,
+O(n) search/delete), pinned by `conformance/corpus-ll.txt` (both TS twins reproduce it).
+Its **search wires into the sweep as a fourth series** (array O(n) scan vs linked-list O(n)
+pointer-walk — same shape, different mechanism, slope ≈ 1.02 on the real clock), and its
+mutation surface records a **fifth churn-vs-finite-difference regime — a complexity-class
+*disagreement***: churn is honestly O(1) (head insert + delete-of-the-newest) while the
+finite-difference teardown surfaces the canonical O(n) delete-by-value, so churn ≪
+insert_fd + delete_fd.** The
 step-through visualization spine now exists: the array +
 hash-set teaching twins emit a typed step-event stream (cost events == op-count,
 pinned to the Rust corpus), a pure Player drives play/step/step-back, and SVG
@@ -697,6 +707,39 @@ insert/search/delete group on a shared key type.
     TS `BenchEngine` method — the TS sweep + chart wiring waits for Phase 5 (a browser mutation
     curve would also be slow, both build and teardown being O(n²), and overhead-dominated at the
     small n that stays affordable). **No new deps.**
+  - **Done (linked-list bench twin — the Linear family is complete):**
+    `linked_list::LinkedListF64` (`bench-engine/src/structures/linked_list.rs`), the bench twin of
+    *both* `src/structures/linkedList.ts` teaching twins at once. The singly and doubly lists are
+    **bench-identical** under the **node-visit** cost metric (same head→tail order, same
+    search/delete op-counts — the doubly's `prev` only buys an O(1) unlink-with-a-handle, but the
+    unlink is uncounted in both and the find-walk dominates), so a second struct/corpus/sweep would
+    be pure duplication: **one** impl + **one** `conformance/corpus-ll.txt` pin both, and the TS
+    conformance test asserts *both* twins reproduce it. It is an **index arena**
+    (`Vec<Node{value, next: Option<u32>}>`) by the repo's own rule — `Box`/recursion where height
+    is bounded (the AVL), an arena where a deep chain would overflow the stack (the BST, and a
+    linked list *is* that depth-n chain that rule exists for; `Box<Node>` would overflow on its
+    recursive `Drop`). Cost metric **node-visits** behind the zero-overhead `const COUNT: bool`
+    flag: **O(1) head insert** (0 visits) and **O(n) search/delete** (one visit per node from the
+    head, short-circuit on match — the drift-prone R1 half, hand-verified against the TS twin before
+    trusting the corpus). The corpus carries no shape dimension (a list's head→tail order *is* its
+    structure) and pins head-insert reversal, duplicate handling (delete removes the head-most
+    occurrence), and head/middle/tail/absent deletes. Hand-computed Rust unit tests + a **proptest**
+    (random ops vs a `Vec` reference: prepend-insert, head-most delete — correctness only).
+    **Search is wired into `runSweep` as a fourth series** (`StructureId += 'll'`), so the chart
+    now shows array O(n) scan / linked-list O(n) pointer-walk / sorted-array O(log n) / hash-set
+    O(1) — `verify:browser` confirms linked-list search reads **O(n) (slope ≈ 1.02, R² 1.000)** on
+    the real clock, the same shape as the array via a different mechanism (§2.2) and visibly slower
+    in absolute ns. The full `#[wasm_bindgen]` timed mutation surface is built and proven by the
+    clock-free `structures::methodology` self-test, which records a **fifth churn-vs-finite-
+    difference regime — a complexity-class *disagreement***: head-insert structurally places the
+    churn key where deletion is O(1), so there is *no* size-preserving same-key churn that yields
+    O(n) — churn (insert + delete-of-the-newest) is honestly **O(1)**, while the finite-difference
+    teardown (delete the oldest/tail repeatedly, a full walk each) surfaces the canonical **O(n)**
+    delete-by-value, so churn ≪ insert_fd + delete_fd (the two methods in *different classes*,
+    after the array's tight match, the balanced BST's overshoot, the AVL's close agreement, and the
+    sorted array's front-churn overshoot — all same-class). As with the sorted array the mutation
+    side stays Rust-only this slice — a flat O(1) churn curve on the browser clock would look
+    identical to the hash set — so the TS sweep wiring waits for Phase 5. **No new deps.**
 
 - **Phase 5 — Comparison / analysis.** Multi-overlay, log-log, fitter with
   honesty UI, theoretical overlay, export.

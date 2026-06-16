@@ -28,6 +28,10 @@
 //! multiset with **binary-search** lookup (the O(log n) "missing middle" between the
 //! unsorted array's O(n) and the hash set's O(1)) and shift-based insert/delete (cost
 //! metric **comparisons + shifts**), pinned by `conformance/corpus-sarr.txt`.
+//! `linked_list::LinkedListF64` closes the Linear family — the bench twin of *both*
+//! `src/structures/linkedList.ts` teaching twins (singly and doubly are bench-identical
+//! under the **node-visit** cost metric), an index arena with O(1) head insert and O(n)
+//! search/delete, pinned by `conformance/corpus-ll.txt`.
 
 pub mod avl;
 pub mod bst;
@@ -35,6 +39,7 @@ pub mod dyn_array;
 pub mod dyn_array_str;
 pub mod hash_set;
 pub mod hash_set_str;
+pub mod linked_list;
 pub mod sorted_array;
 
 #[cfg(test)]
@@ -146,6 +151,7 @@ mod methodology {
     use super::bst::BstF64;
     use super::dyn_array::ArrayF64;
     use super::hash_set::HashSetF64;
+    use super::linked_list::LinkedListF64;
     use super::sorted_array::SortedArrayF64;
 
     fn keys(n: usize) -> Vec<f64> {
@@ -411,5 +417,53 @@ mod methodology {
         let churn = b.churn_counted();
         assert!(churn > n as f64, "sorted-array front churn {churn} must be O(n) — the shift cost");
         assert!(churn > 100.0 * ops as f64, "mutation {churn} ≫ search {ops}: the signature split");
+    }
+
+    // ── Linked list: a FIFTH churn-vs-finite-difference regime — a complexity-class
+    //    DISAGREEMENT, not just a constant-factor gap.
+    //
+    // Head-insert structurally places the churn key where deletion is O(1), so there is no
+    // size-preserving same-key churn that yields O(n): churn (insert + delete-of-the-newest)
+    // is O(1) regardless of n. But the *canonical* delete-by-value is O(n) — a walk to find
+    // the key — surfaced by the finite-difference teardown (delete the oldest/tail repeatedly,
+    // a full walk each). So churn ≪ insert_fd + delete_fd land in different complexity classes,
+    // because insert and the canonical delete live at opposite cost-ends. Unlike the array
+    // (tight), balanced BST (FD overshoots, same class), AVL (close), and sorted array (front
+    // churn overshoots, same class), here the two methods disagree on the class itself — the
+    // honest finding (docs/PLAN.md §2.3, §6.3). A flat O(1) churn curve on the browser clock
+    // would look identical to the hash set, so the finding lives here, clock-free.
+
+    /// Churn is O(1) (head insert + delete-of-newest) while the finite-difference teardown
+    /// reveals the canonical O(n) delete-by-value — the fifth regime, a class disagreement.
+    /// Deterministic op-counts (insertion order, not values, sets the cost), so the
+    /// wide-margin inequalities never flake.
+    #[test]
+    fn linked_list_churn_is_o1_while_canonical_delete_is_o_n() {
+        let ks = keys(4000); // distinct; the values are irrelevant — insertion order sets the cost
+        let (n1, n2) = (2000usize, 4000usize); // wide span denoises the per-op estimate
+        let insert_fd = (LinkedListF64::build_insert_counted(&ks, n2)
+            - LinkedListF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (LinkedListF64::teardown_counted(&ks, n2)
+            - LinkedListF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut l = LinkedListF64::new(&ks, n2);
+        l.set_churn_key(n2 as f64 + 1.0); // absent; inserted at and deleted from the head
+        let churn = l.churn_counted();
+        let sum = insert_fd + delete_fd;
+
+        // (1) Head insert visits no nodes — the insert side is exactly zero (like the array's append).
+        assert_eq!(insert_fd, 0.0, "head insert is O(1): zero node-visits");
+        // (2) Churn is O(1): exactly one visit, the just-inserted head.
+        assert_eq!(churn, 1.0, "linked-list churn is O(1): delete finds the newest at the head");
+        // (3) The canonical delete is O(n): the FD teardown walks to the receding tail (≈ 3n/4).
+        assert!(delete_fd > n2 as f64 / 2.0, "delete_fd {delete_fd} must be O(n) (≫ n/2)");
+        assert!(delete_fd < n2 as f64, "delete_fd {delete_fd} ≈ 3n/4, bounded by n");
+        // (4) The class DISAGREEMENT: the FD sum overshoots churn by an order of n, not a constant.
+        assert!(
+            sum > churn * 100.0,
+            "fd sum {sum} ≫ churn {churn}: a complexity-class disagreement, the fifth regime"
+        );
     }
 }

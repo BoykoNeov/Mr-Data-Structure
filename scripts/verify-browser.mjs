@@ -44,18 +44,27 @@ try {
 
   if (proof) {
     const array = proof.find((p) => p.structure === 'array');
+    const ll = proof.find((p) => p.structure === 'll');
     const sarrSearch = proof.find((p) => p.structure === 'sarr');
     const hashset = proof.find((p) => p.structure === 'hashset');
 
     want(
-      'three search series measured',
-      proof.length === 3 && array && sarrSearch && hashset,
+      'four search series measured',
+      proof.length === 4 && array && ll && sarrSearch && hashset,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
       want('array search labelled O(n)', array.best === 'O(n)');
       want('array search slope ~1 (0.7..1.4)', array.slope >= 0.7 && array.slope <= 1.4);
       want(`array search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
+    }
+    // Linked list: O(n) like the array but via pointer-walk, not a contiguous scan — the
+    // §2.2 "same shape, different mechanism" contrast. Same slope band + rise assertions.
+    if (ll) {
+      const ratio = ll.lastNanos / ll.firstNanos;
+      want('linked-list search labelled O(n)', ll.best === 'O(n)');
+      want('linked-list search slope ~1 (0.7..1.4)', ll.slope >= 0.7 && ll.slope <= 1.4);
+      want(`linked-list search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
     }
     // Sorted array: the "missing middle" — binary search is sub-linear (O(log n)). Assert
     // the slope *band* (well below the array's ~1), NOT the label: the §7.2 fitter cannot

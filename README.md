@@ -14,8 +14,9 @@ methodology, and the phased roadmap.
 
 ## Status
 
-**Phase 4 — benchmark breadth + methodology hardening (in progress; the BST, AVL, and
-sorted-array bench twins landed).** The first production (Rust→WASM) twin of a Phase 3
+**Phase 4 — benchmark breadth + methodology hardening (in progress; the BST, AVL,
+sorted-array, and linked-list bench twins landed — the Linear family is now complete).**
+The first production (Rust→WASM) twin of a Phase 3
 teaching-only structure is in: `bst::BstF64`, the bench twin of `src/structures/bst.ts`. It is an
 **iterative, index-arena** multiset BST (`key < node` ⇒ left, else right; equal keys
 go right) — a `Vec<Node{value, left, right: Option<u32>}>` arena walked with loops,
@@ -102,6 +103,33 @@ slice — the `#[wasm_bindgen]` timed surface is ready and the self-test proves 
 methodology, but (like the string structures) the TS sweep + chart wiring is deferred to
 Phase 5, and a browser mutation curve would be slow (build *and* teardown are O(n²)). No
 new dependencies.
+
+The **linked-list bench twin** (`linked_list::LinkedListF64`) closes the Linear family —
+the bench twin of *both* `src/structures/linkedList.ts` teaching twins at once, since the
+singly and doubly lists are **bench-identical** under the **node-visit** cost metric (same
+order, same search/delete op-counts; the back-pointers are a viz-only distinction, so one
+impl + one **`conformance/corpus-ll.txt`** pin both, and the TS conformance test asserts
+*both* twins reproduce it). It's an **index arena** (`Vec<Node{value, next: Option<u32>}>`)
+by the repo's own rule — `Box`/recursion where height is bounded (the AVL), an arena where a
+deep chain would overflow the stack (the BST, and a linked list *is* that depth-n chain) —
+with O(1) head insert (0 visits) and O(n) search/delete (one visit per node, short-circuit
+on match — the R1 contract, hand-verified against the TS twin). Its **search is wired into
+the sweep** as a fourth series, so the chart now shows array O(n) scan / linked-list O(n)
+pointer-walk / sorted-array O(log n) / hash-set O(1); `verify:browser` confirms linked-list
+search reads **O(n) (slope ≈ 1.02, R² 1.000)** on the real clock — the same shape as the
+array via a different mechanism (§2.2), and visibly slower in absolute ns (pointer-walk vs
+contiguous scan). The full timed mutation surface is built and proven by a clock-free
+self-test that records a **fifth churn-vs-finite-difference regime — a complexity-class
+*disagreement***: head-insert structurally places the churn key where deletion is O(1), so
+churn (insert + delete-of-the-newest) is honestly **O(1)**, while the finite-difference
+teardown (delete the oldest/tail repeatedly, a full walk each) surfaces the canonical
+**O(n)** delete-by-value — churn ≪ insert_fd + delete_fd, the two methods landing in
+different classes (after the array's tight match, the balanced BST's overshoot, the AVL's
+close agreement, and the sorted array's front-churn overshoot). As with the sorted array, the
+mutation side stays Rust-only this slice (a flat O(1) churn curve would look identical to the
+hash set on the browser clock); the TS sweep wiring is deferred to Phase 5. A **proptest**
+(random ops vs a `Vec` reference — prepend-insert, head-most delete) rounds it out. No new
+dependencies.
 
 **Phase 3 — visualization breadth (complete; animation engine, linear breadth,
 the BST, plus the AVL tree + min-heap landed).** The step-through exploration spine is in for the two proven

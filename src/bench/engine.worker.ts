@@ -7,6 +7,7 @@ import init, {
   BstF64,
   AvlF64,
   SortedArrayF64,
+  LinkedListF64,
 } from '../../bench-engine/pkg/bench_engine.js';
 import {
   measureSweep,
@@ -196,13 +197,18 @@ const api = {
     await ready;
     const now = () => performance.now();
     const array = measureSweep(sizes, searchRunnerFactory(ArrayF64, keys), now, opts);
+    const ll = measureSweep(sizes, searchRunnerFactory(LinkedListF64, keys), now, opts);
     const sarr = measureSweep(sizes, searchRunnerFactory(SortedArrayF64, keys), now, opts);
     const hashset = measureSweep(sizes, searchRunnerFactory(HashSetF64, keys), now, opts);
-    // Ordered array → sorted array → hash set: the "missing middle" of search cost,
-    // O(n) → O(log n) → O(1) (docs/PLAN.md §8). The sorted array satisfies the same
-    // SearchStruct interface, so it drops straight into the existing runner.
+    // Array → linked list → sorted array → hash set: the spread of search cost,
+    // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
+    // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
+    // op-count-vs-mechanism contrast — then the sorted array's binary search is the
+    // "missing middle" and the hash set is flat. All four satisfy the same SearchStruct
+    // interface, so each drops straight into the existing runner.
     return [
       { structure: 'array', op: 'search', points: array },
+      { structure: 'll', op: 'search', points: ll },
       { structure: 'sarr', op: 'search', points: sarr },
       { structure: 'hashset', op: 'search', points: hashset },
     ];

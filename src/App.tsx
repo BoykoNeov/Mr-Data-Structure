@@ -18,9 +18,10 @@ import { generateSorted, generateUniform, marshalKeys } from './data';
 
 const SWEEP_MAX = 100_000;
 const SWEEP_MIN = 10;
-// array (red, rising O(n)), sorted array (green, O(log n)), hashset (blue, flat O(1))
-// — the order runSweep returns them, the "missing middle" of search cost.
-const COLORS = ['#d62728', '#2ca02c', '#1f77b4'];
+// array (red, O(n) scan), linked list (orange, O(n) pointer-walk), sorted array
+// (green, O(log n)), hashset (blue, flat O(1)) — the order runSweep returns them: the
+// spread of search cost, two O(n) mechanisms then the "missing middle" then flat.
+const COLORS = ['#d62728', '#ff7f0e', '#2ca02c', '#1f77b4'];
 
 // The mutation sweep is bounded much lower than search: the array's ordered
 // delete makes a full teardown O(n²), so even a few thousand keys is plenty to

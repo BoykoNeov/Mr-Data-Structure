@@ -1,0 +1,39 @@
+# Mr Data Structure — linked-list conformance corpus (docs/PLAN.md §8, §12).
+# Generated from the Rust bench impl; both TS teaching twins must match.
+# Op-count = node-visits. Regenerate: cargo test -- --ignored regen_corpus_ll
+
+case empty
+keys 
+probes 1 2
+ll_order 
+ll_search 0:0 0:0
+deletes 1
+ll_delete 0:0
+ll_order_after 
+
+case singleton
+keys 42
+probes 42 7
+ll_order 42
+ll_search 1:1 0:1
+deletes 42
+ll_delete 1:1
+ll_order_after 
+
+case ordered
+keys 10 20 30
+probes 10 20 30 99
+ll_order 30 20 10
+ll_search 1:3 1:2 1:1 0:3
+deletes 20 99 30
+ll_delete 1:2 0:2 1:1
+ll_order_after 10
+
+case duplicates
+keys 5 5 5 7 5 9
+probes 5 7 9 99
+ll_order 9 5 7 5 5 5
+ll_search 1:2 1:3 1:1 0:6
+deletes 5
+ll_delete 1:2
+ll_order_after 9 7 5 5 5
