@@ -4,16 +4,18 @@ import type { BenchEngine } from './bench/BenchEngine';
 import { geometricSweep } from './bench/sweep';
 import { fitComplexity } from './bench/fit';
 import { SweepChart, type SeriesView, type Signal } from './ui/SweepChart';
+import { Callout, ChartGuide, ComplexityLadder } from './ui/Explain';
 import { VizPanel } from './viz/VizPanel';
 import { generateSorted, generateUniform, marshalKeys } from './data';
 
 /**
- * Phase 2 thin slice (docs/PLAN.md §10): generate a dataset, run the search
- * measurement sweep on the unsorted array and the hash set through the real
- * WASM engine, and show the two cost curves side by side. The headline result —
- * **array search rises (O(n)) while hash-set search stays flat (O(1))** — is the
- * empirical proof that the whole pipeline (measurement → isolation → fitting →
- * charting) works on real wall-clock timings.
+ * App shell (docs/PLAN.md §10): the two modes side by side — **Explore** (the
+ * step-through animation, Phase 3) and **Compare** (the empirical sweep, Phase 2).
+ * The headline empirical result — **array search rises (O(n)) while hash-set
+ * search stays flat (O(1))** — is the proof that the whole pipeline (measurement →
+ * isolation → fitting → charting) works on real wall-clock timings. The page is
+ * written to *teach*: each section frames what it shows and how to read it (§2.3,
+ * §7.2), with the measurement-honesty caveats kept in `ui/Explain`.
  */
 
 const SWEEP_MAX = 100_000;
@@ -29,10 +31,15 @@ const COLORS = ['#d62728', '#ff7f0e', '#2ca02c', '#1f77b4'];
 const MUT_MAX = 4_000;
 const MUT_MIN = 250;
 const MUT_OPTS = { minBatchMillis: 1, warmupReps: 0, reps: 3 };
+// Mutation-chart colors (tab10): array red, hashset blue, sorted green (unused in
+// the churn chart), and the two balanced trees — bst purple, avl brown — now that
+// their measured churn is charted (it was previously published to `window` only).
 const STRUCTURE_COLOR: Record<string, string> = {
   array: '#d62728',
   hashset: '#1f77b4',
   sarr: '#2ca02c',
+  bst: '#9467bd',
+  avl: '#8c564b',
 };
 
 /** Shape mirrored onto `window` for the headless runtime check (scripts/verify-browser.mjs). */
@@ -55,6 +62,10 @@ export function App() {
   const [version, setVersion] = useState('');
   const [views, setViews] = useState<SeriesView[]>([]);
   const [mutViews, setMutViews] = useState<SeriesView[]>([]);
+  // BST + AVL churn series — measured all along (published to `window` for the gate)
+  // but now also charted, so the mutation comparison shows the O(log n) trees beside
+  // the array's O(n) and the hash set's O(1).
+  const [treeChurnViews, setTreeChurnViews] = useState<SeriesView[]>([]);
   const [signal, setSignal] = useState<Signal>('nanos');
 
   useEffect(() => {
@@ -65,7 +76,7 @@ export function App() {
         await engine.ready();
         setVersion(await engine.version());
 
-        setStatus('running sweep…');
+        setStatus('running search sweep…');
         const dataset = generateSorted(SWEEP_MAX);
         const marshalled = marshalKeys(dataset);
         if (marshalled.keyType !== 'number') throw new Error('expected numeric keys');
@@ -193,6 +204,23 @@ export function App() {
         (window as unknown as { __avlMutationProof?: MutationProof[] }).__avlMutationProof =
           avlProof;
 
+        // Surface the (already-measured) balanced-tree churn on the mutation chart: bst
+        // (purple) + avl (brown) churn beside the array's O(n) and the hash set's O(1).
+        // Read for shape, not cross-structure ns — the trees ran on a shuffled dataset,
+        // the array/hash set on a sorted one (§2.3).
+        setTreeChurnViews(
+          [...bstSeries, ...avlSeries]
+            .filter((s) => s.op === 'churn')
+            .map((s) => ({
+              series: s,
+              fit: fitComplexity(
+                s.points.map((p) => p.n),
+                s.points.map((p) => p.nanosPerOp),
+              ),
+              color: STRUCTURE_COLOR[s.structure] ?? '#888',
+            })),
+        );
+
         // Sorted array — search only here (its O(log n) "missing middle" is in __sweepProof
         // above). Its *mutation* twin is the Rust `#[wasm_bindgen]` timed surface on
         // `SortedArrayF64` (front-churn, build/teardown), proven by the deterministic
@@ -210,15 +238,37 @@ export function App() {
     return () => engine?.dispose();
   }, []);
 
+  const searchReady = views.length > 0;
+  const churnChartViews = [...mutViews.filter((v) => v.series.op === 'churn'), ...treeChurnViews];
+  const mutationReady = churnChartViews.length > 0;
+
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', padding: 24, lineHeight: 1.6 }}>
-      <h1>Mr Data Structure</h1>
-      <p style={{ color: '#666' }}>
-        Phase 3 — explore (step-through animation) · Phase 2 — empirical
-        complexity (sweep below)
+    <main style={{ fontFamily: 'system-ui, sans-serif', padding: 24, lineHeight: 1.6, maxWidth: 880 }}>
+      <h1 style={{ marginBottom: 4 }}>Mr Data Structure</h1>
+      <p style={{ color: '#444', marginTop: 0, fontSize: 15 }}>
+        An interactive way to <strong>see</strong> data structures work and{' '}
+        <strong>measure</strong> how their cost grows — on the same algorithms, side by side.
+      </p>
+      <ol style={{ color: '#444', fontSize: 14, marginTop: 0 }}>
+        <li>
+          <strong>Explore</strong> — run one <code>insert</code> / <code>search</code> /{' '}
+          <code>delete</code> on a small structure and step through it, watching every
+          comparison, shift, pointer-hop, rehash, and rotation the algorithm performs.
+        </li>
+        <li>
+          <strong>Compare</strong> — run those same operations across a sweep of input sizes on
+          several structures at once and read their <em>measured</em> cost curves against each
+          other. Nothing here is asserted from a textbook — the cost is measured and you read the
+          growth off the chart.
+        </li>
+      </ol>
+      <p style={{ color: '#666', fontSize: 13, marginTop: 0 }}>
+        Each structure has two implementations kept in lock-step: a TypeScript{' '}
+        <em>teaching twin</em> drives the animation, and a Rust→WASM <em>bench twin</em> drives
+        the measurements (docs/PLAN.md §2.1).
       </p>
 
-      <ul>
+      <ul style={{ fontSize: 13, color: '#666' }}>
         <li>
           status: <strong>{status}</strong>
         </li>
@@ -228,72 +278,194 @@ export function App() {
       </ul>
 
       <section style={{ marginTop: 8 }}>
-        <h2 style={{ fontSize: 18, marginBottom: 4 }}>Explore</h2>
-        <p style={{ color: '#666', marginTop: 0 }}>
-          Run <code>insert</code> / <code>search</code> / <code>delete</code> and
-          step through the comparisons, probes, shifts, and rehashes — the same
-          algorithm the benchmark measures (docs/PLAN.md §2.1, §5).
+        <h2 style={{ fontSize: 20, marginBottom: 4, borderBottom: '2px solid #eee', paddingBottom: 4 }}>
+          1 · Explore — watch one operation, step by step
+        </h2>
+        <p style={{ color: '#555', marginTop: 8 }}>
+          Pick a structure, type a key, and run <code>insert</code> / <code>search</code> /{' '}
+          <code>delete</code>. Then step through the comparisons, probes, shifts, rehashes, and
+          rotations — the <em>same</em> work the benchmark counts below (docs/PLAN.md §2.1, §5).
         </p>
+        <Callout title="What to watch while you step" tone="tip">
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            <li>
+              The <strong>highlighted</strong> cell or node is the element the algorithm is
+              touching <em>right now</em> — comparing, moving, or probing it.
+            </li>
+            <li>
+              The caption under the controls narrates each step in plain English; the line above
+              the picture summarizes the whole operation and its cost.
+            </li>
+            <li>
+              Use <code>▶</code>/<code>⏸</code>, <code>step&nbsp;▶</code> / <code>◀&nbsp;step</code>,
+              and the speed slider to go at your own pace; <code>⏮</code>/<code>⏭</code> jump to the
+              start / end.
+            </li>
+            <li>
+              Each structure counts its own unit of work — its <em>cost metric</em>: comparisons
+              (arrays, trees), probes (hash set), node-visits (lists), swaps (heap), rotations
+              (AVL). These measure <strong>shape</strong>, so don’t compare their raw counts across
+              structures (§2.3).
+            </li>
+            <li>
+              This runs on a small seeded structure so every step is visible. The <em>same</em>{' '}
+              algorithm at full scale is exactly what <strong>Compare</strong> measures below.
+            </li>
+          </ul>
+        </Callout>
         <VizPanel />
       </section>
 
-      {views.length > 0 && (
-        <section style={{ marginTop: 16 }}>
-          <label style={{ color: '#666', fontSize: 14 }}>
-            signal:{' '}
-            <select value={signal} onChange={(e) => setSignal(e.target.value as Signal)}>
-              <option value="nanos">wall-clock (ns/op)</option>
-              <option value="opcount">op-count (shape)</option>
-            </select>
-          </label>
+      <section style={{ marginTop: 40 }}>
+        <h2 style={{ fontSize: 20, marginBottom: 4, borderBottom: '2px solid #eee', paddingBottom: 4 }}>
+          2 · Compare — measured cost curves
+        </h2>
+        <p style={{ color: '#555', marginTop: 8 }}>
+          The same <code>search</code> and <code>insert</code>/<code>delete</code> operations, now
+          run across a geometric sweep of input sizes (≈10 up to ≈100,000 keys) on a generated
+          dataset, with each structure’s <em>per-operation</em> cost plotted against the size n.
+          This is where the different growth rates separate: an O(n) scan visibly pulls away from
+          an O(1) lookup as n grows.
+        </p>
 
-          <ul style={{ marginTop: 8 }}>
-            {views.map((v) => (
-              <li key={v.series.structure}>
-                <strong style={{ color: v.color }}>{v.series.structure}</strong> search:{' '}
-                <strong>{v.fit.best}</strong> (slope {v.fit.logLogSlope.toFixed(2)}, R²{' '}
-                {v.fit.r2.toFixed(3)}) — <span style={{ color: '#666' }}>{v.fit.note}</span>
-              </li>
-            ))}
-          </ul>
+        <ChartGuide />
+        <p style={{ color: '#555', marginBottom: 0 }}>
+          Quick reference for the shapes you’ll read off the charts:
+        </p>
+        <ComplexityLadder />
 
-          <SweepChart views={views} signal={signal} />
-        </section>
-      )}
-
-      {mutViews.length > 0 && (
-        <section style={{ marginTop: 32 }}>
-          <p style={{ color: '#666' }}>
-            Phase 2 — size-mutating ops (§6.3): <code>churn</code> (combined
-            insert+delete) plus the finite-difference <code>insert</code> /{' '}
-            <code>delete</code> split. Fits follow the <strong>signal</strong>{' '}
-            selector above — the deterministic <em>op-count</em> resolves what the
-            wall-clock leaves ambiguous (e.g. insert is a clean O(1) by op-count).
+        {searchReady ? (
+          <p style={{ fontSize: 14, color: '#444', margin: '16px 0 0' }}>
+            <label>
+              <strong>Signal</strong> (applies to both charts):{' '}
+              <select
+                value={signal}
+                onChange={(e) => setSignal(e.target.value as Signal)}
+                style={{ fontSize: 14 }}
+              >
+                <option value="nanos">wall-clock (ns/op) — the real time on this machine</option>
+                <option value="opcount">op-count (shape) — the clean, hardware-free curve</option>
+              </select>
+            </label>
           </p>
-          <ul>
-            {mutViews.map((v) => {
-              // Fit the *selected* signal (§2.2): op-count is the clean curve,
-              // wall-clock the real one — toggling shows where they disagree.
-              const fit = fitComplexity(
-                v.series.points.map((p) => p.n),
-                v.series.points.map((p) => (signal === 'nanos' ? p.nanosPerOp : p.opCount)),
-              );
-              return (
-                <li key={`${v.series.structure}-${v.series.op}`}>
-                  <strong style={{ color: v.color }}>{v.series.structure}</strong>{' '}
-                  {v.series.op}: <strong>{fit.best}</strong> (slope{' '}
-                  {fit.logLogSlope.toFixed(2)}, R² {fit.r2.toFixed(3)})
-                </li>
-              );
-            })}
-          </ul>
+        ) : (
+          <Callout title="Measuring…" tone="info">
+            The sweeps run real timed work in a background worker, so this takes a few seconds.
+            Current step: <strong>{status}</strong>. The charts will appear below as each sweep
+            finishes.
+          </Callout>
+        )}
 
-          <SweepChart
-            views={mutViews.filter((v) => v.series.op === 'churn')}
-            signal={signal}
-          />
-        </section>
-      )}
+        <h3 style={{ fontSize: 16, marginTop: 28, marginBottom: 4 }}>
+          Search — the cost of finding a key
+        </h3>
+        <p style={{ color: '#555', marginTop: 0 }}>
+          Four structures look up a key four different ways: the unsorted array scans from the
+          front, the linked list walks node by node, the sorted array binary-searches, and the
+          hash set jumps straight to a bucket.
+        </p>
+        {searchReady && (
+          <>
+            <ul style={{ marginTop: 8 }}>
+              {views.map((v) => {
+                // Re-fit the *selected* signal for display (§2.2) — op-count is the clean
+                // curve, wall-clock the real one. (The `__sweepProof` mirror above stays on
+                // the wall-clock fit, which the browser gate asserts.)
+                const fit = fitComplexity(
+                  v.series.points.map((p) => p.n),
+                  v.series.points.map((p) => (signal === 'nanos' ? p.nanosPerOp : p.opCount)),
+                );
+                return (
+                  <li key={v.series.structure}>
+                    <strong style={{ color: v.color }}>{v.series.structure}</strong> search:{' '}
+                    <strong>{fit.best}</strong> (slope {fit.logLogSlope.toFixed(2)}, R²{' '}
+                    {fit.r2.toFixed(3)}) — <span style={{ color: '#666' }}>{fit.note}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <SweepChart views={views} signal={signal} />
+            <Callout title="What to notice" tone="tip">
+              The array (red) and the linked list (orange) both touch every element, so their
+              cost rises ~linearly (<strong>O(n)</strong>, slope ≈ 1) — the <em>same shape by a
+              different mechanism</em> (a contiguous scan vs following pointers), which shows up as
+              different absolute speed. The sorted array (green) halves the search space each step,
+              so it barely rises (sub-linear, <strong>O(log n)</strong> — the fitter may even call
+              it O(1), since a shallow rise is hard to distinguish from flat). The hash set (blue)
+              goes straight to the right bucket and stays flat (<strong>O(1)</strong>).
+            </Callout>
+          </>
+        )}
+
+        <h3 style={{ fontSize: 16, marginTop: 28, marginBottom: 4 }}>
+          Mutation — the cost of changing the structure (churn)
+        </h3>
+        <p style={{ color: '#555', marginTop: 0 }}>
+          You can’t cleanly time “inserts at size n” — each insert changes n. So we <em>churn</em>:
+          at a fixed size n, repeatedly insert one key and delete one, so the size stays put and the
+          per-operation cost is isolated (docs/PLAN.md §6.3).
+        </p>
+        {mutationReady && (
+          <>
+            <ul style={{ marginTop: 8 }}>
+              {churnChartViews.map((v) => {
+                const fit = fitComplexity(
+                  v.series.points.map((p) => p.n),
+                  v.series.points.map((p) => (signal === 'nanos' ? p.nanosPerOp : p.opCount)),
+                );
+                return (
+                  <li key={`${v.series.structure}-${v.series.op}`}>
+                    <strong style={{ color: v.color }}>{v.series.structure}</strong> churn:{' '}
+                    <strong>{fit.best}</strong> (slope {fit.logLogSlope.toFixed(2)}, R²{' '}
+                    {fit.r2.toFixed(3)})
+                  </li>
+                );
+              })}
+            </ul>
+            <SweepChart views={churnChartViews} signal={signal} />
+            <Callout title="What to notice" tone="tip">
+              The unsorted array (red) shifts elements to keep its order, so its churn rises{' '}
+              <strong>O(n)</strong>. The hash set (blue) stays <strong>O(1)</strong>. The balanced
+              trees — BST (purple) and AVL (brown) — stay sub-linear (<strong>O(log n)</strong>),
+              nearly flat. The trees are measured on a <em>shuffled</em> dataset (so the BST stays
+              balanced) and the array / hash set on a sorted one — that’s fine, because each curve
+              is read for its <strong>shape</strong>, not for cross-structure absolute ns (§2.3).
+            </Callout>
+
+            {mutViews.some((v) => v.series.op !== 'churn' && v.series.structure === 'array') && (
+              <>
+                <p style={{ color: '#555', marginBottom: 4 }}>
+                  <strong>Cross-check — the per-operation split.</strong> Churn measures the{' '}
+                  <em>combined</em> insert+delete cost. A second method differences the cumulative
+                  build and teardown times to recover each operation separately (§6.3) — for the
+                  array it exposes the asymmetry churn hides: delete is O(n) (shift to close the
+                  gap), while insert is an O(1) append. That O(1) is clean on the{' '}
+                  <em>op-count</em> signal; on <em>wall-clock</em> a single append is so cheap the
+                  timing is mostly noise (watch the low R²) — a live reminder of <em>why</em> there
+                  are two signals.
+                </p>
+                <ul style={{ marginTop: 4 }}>
+                  {mutViews
+                    .filter((v) => v.series.op !== 'churn' && v.series.structure === 'array')
+                    .map((v) => {
+                      const fit = fitComplexity(
+                        v.series.points.map((p) => p.n),
+                        v.series.points.map((p) => (signal === 'nanos' ? p.nanosPerOp : p.opCount)),
+                      );
+                      return (
+                        <li key={`${v.series.structure}-${v.series.op}`}>
+                          <strong style={{ color: v.color }}>{v.series.structure}</strong>{' '}
+                          {v.series.op}: <strong>{fit.best}</strong> (slope{' '}
+                          {fit.logLogSlope.toFixed(2)}, R² {fit.r2.toFixed(3)})
+                        </li>
+                      );
+                    })}
+                </ul>
+              </>
+            )}
+          </>
+        )}
+      </section>
     </main>
   );
 }
