@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Interactive exploration and empirical complexity comparison of data structures on real data.",
+  "license": "LicenseRef-BNCL-1.0",
   "scripts": {
     "wasm": "wasm-pack build bench-engine --target web --out-dir pkg",
     "wasm:dev": "wasm-pack build bench-engine --dev --target web --out-dir pkg",
