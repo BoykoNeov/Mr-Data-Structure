@@ -636,8 +636,9 @@ insert/search/delete group on a shared key type.
     tree, like the array), but on a **balanced** tree the finite-difference sum *overshoots*
     churn (churn rides the cheap right spine ≈ 2 ln n while the build pays average depth
     ≈ 2 ln n per insert), so the methods agree only in complexity class — the honesty point
-    is reported, not buried (§2.3, §6.3). No chart wiring (deferred breadth, like the
-    string structures). **No new deps.**
+    is reported, not buried (§2.3, §6.3). Its **churn** series is now charted on the
+    mutation comparison beside the array O(n) / hash-set O(1) (commit 53a5756); the FD
+    insert/delete split stays published to `window` only (deferred breadth). **No new deps.**
   - **Done (AVL bench twin):** `avl::AvlF64` (`bench-engine/src/structures/avl.rs`) — the
     bench twin of the `src/structures/avl.ts` teaching impl, the balanced tree. Same ordering
     and **Hibbard (value-copy) delete** as the BST, but the cost metric is **comparisons +
@@ -667,7 +668,9 @@ insert/search/delete group on a shared key type.
     churn-vs-finite-difference question: unlike the array (tight) and the balanced BST (FD sum
     overshoots), here the two methods **agree closely** (~6%), with churn marginally the larger
     because it rides the full-height right spine while `insert_fd` reflects the shallower
-    average depth. No chart wiring (deferred breadth). **No new deps.**
+    average depth. Its **churn** series is now charted on the mutation comparison alongside
+    the BST (commit 53a5756); the FD insert/delete split stays published to `window` only
+    (deferred breadth). **No new deps.**
   - **Done (sorted-array bench twin):** `sorted_array::SortedArrayF64`
     (`bench-engine/src/structures/sorted_array.rs`) — the bench twin of
     `src/structures/sortedArray.ts`, the first **Linear**-family teaching-only structure to

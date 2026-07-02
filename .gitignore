@@ -7,3 +7,6 @@ dist/
 # Rust / WASM build artifacts (CI rebuilds these)
 bench-engine/target/
 bench-engine/pkg/
+
+# Claude Code harness state (lock files only — settings/agents stay trackable)
+.claude/*.lock

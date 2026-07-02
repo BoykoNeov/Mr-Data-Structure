@@ -3,10 +3,10 @@
 // headline result — array search rises (O(n)) while hash-set search stays flat
 // (O(1)). build-green does not prove this; only the browser clock does (R2),
 // which is why this lives here rather than in Vitest. Run against a `vite
-// preview` server:  node scripts/verify-browser.mjs http://localhost:4317
+// preview` server:  node scripts/verify-browser.mjs http://localhost:4173
 import { chromium } from 'playwright';
 
-const url = process.argv[2] || 'http://localhost:4317';
+const url = process.argv[2] || 'http://localhost:4173';
 const browser = await chromium.launch();
 const page = await browser.newPage();
 

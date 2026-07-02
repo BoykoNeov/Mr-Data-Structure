@@ -30,7 +30,11 @@ const COLORS = ['#d62728', '#ff7f0e', '#2ca02c', '#1f77b4'];
 // read the slope (docs/PLAN.md §6.3). Light options keep the page snappy.
 const MUT_MAX = 4_000;
 const MUT_MIN = 250;
-const MUT_OPTS = { minBatchMillis: 1, warmupReps: 0, reps: 3 };
+// baseBatch: 1 — the build/teardown FD runners do a *full* O(n²) build+teardown per
+// run(1), so the default baseBatch of 1024 would fire ~1024 of them just to clear the
+// clamp on the first probe. Start at 1 and let auto-grow climb only where a single op is
+// sub-clamp (the cheap churn runners); accuracy is unchanged, wall time drops sharply.
+const MUT_OPTS = { minBatchMillis: 1, warmupReps: 0, reps: 3, baseBatch: 1 };
 // Mutation-chart colors (tab10): array red, hashset blue, sorted green (unused in
 // the churn chart), and the two balanced trees — bst purple, avl brown — now that
 // their measured churn is charted (it was previously published to `window` only).
