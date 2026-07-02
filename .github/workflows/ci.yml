@@ -40,3 +40,38 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+      # Runtime gate: the ONLY proof the worker→WASM→Comlink path resolves at
+      # runtime — a green `npm run build` does not (see CLAUDE.md, docs/PLAN.md R2).
+      # Reuses the dist/ built above. NON-BLOCKING for now (continue-on-error): the
+      # sweep asserts timing slope bands, which can flake on contended shared runners,
+      # so we observe stability before making it required. Remove continue-on-error to
+      # promote it to a hard gate once it proves stable.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Runtime browser gate (verify:browser)
+        continue-on-error: true
+        run: |
+          npm run preview &
+          PREVIEW_PID=$!
+          # Wait (dependency-free) for the preview server to accept connections.
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4173 >/dev/null; then break; fi
+            sleep 1
+          done
+          # Retry the whole check up to 3× to absorb timing-band flake on shared runners.
+          ok=0
+          for attempt in 1 2 3; do
+            echo "::group::verify:browser attempt $attempt"
+            if node scripts/verify-browser.mjs http://localhost:4173; then
+              ok=1; echo "::endgroup::"; break
+            fi
+            echo "::endgroup::"
+            echo "attempt $attempt failed"
+          done
+          kill "$PREVIEW_PID" 2>/dev/null || true
+          if [ "$ok" -ne 1 ]; then
+            echo "browser gate failed after 3 attempts"
+            exit 1
+          fi
