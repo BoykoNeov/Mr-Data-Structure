@@ -17,9 +17,13 @@ measurements, held to identical behaviour by a cross-language conformance
 corpus. See [`docs/PLAN.md`](docs/PLAN.md) for the full design, the measurement
 methodology, and the phased roadmap.
 
-**Status:** Phases 0–3 complete; Phase 4 (Rust bench twins) in progress — the
-Linear family and the BST/AVL trees have landed. Full phase-by-phase status is
-in [`docs/PLAN.md`](docs/PLAN.md) (top Status block and §10).
+**Status:** Phases 0–3 complete; Phase 4 (Rust bench twins) has the Linear
+family and the BST/AVL trees (min-heap outstanding); Phase 5 (comparison /
+analysis) has its first slice — the sweeps run on a **user-chosen dataset**
+(generators or pasted CSV/JSON), with a theoretical overlay, error bars, slope
+uncertainty, a local-slope panel and export. The phase table is at the top of
+[`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
+are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 
 ## Prerequisites
 
@@ -49,11 +53,22 @@ The page has two parts, matching the two modes above:
   use the play / pause / step / step-back / speed controls to walk through the
   animation one cost event at a time (the same comparisons, probes, shifts, and
   rotations the benchmark counts).
-- **Compare** — below the explorer, the sweep charts plot measured search and
-  mutation cost across a range of input sizes. The **signal** selector toggles
-  between *wall-clock* (ns/op, the real timing) and *op-count* (the clean
-  algorithmic shape); each series is labelled with its fitted complexity class
-  (e.g. array search O(n) vs hash-set search O(1)).
+- **Compare** — below the explorer, pick a **dataset** (a generator such as
+  `uniform`, `sorted`, `reverse-sorted`, `near-sorted`, `gaussian`, `zipfian`,
+  or paste your own CSV/JSON and name the key field) and run the sweeps. Every
+  structure is measured on order-preserving prefixes of that one dataset, so
+  its real distribution and order reach all of them — pick `sorted` to watch
+  the naive BST degenerate to O(n) while the AVL holds O(log n). The charts plot
+  measured search and mutation cost against n on log-log axes, with:
+  - the **signal** toggle — *wall-clock* (ns/op, real timing on this machine)
+    vs *op-count* (the clean algorithmic shape);
+  - each series labelled with its fitted class and **slope ± standard error**;
+  - **error bars** (min→max across timed reps) and a dashed **theoretical
+    overlay** of the textbook class scaled onto the data;
+  - a **local-slope panel** showing the empirical exponent on each interval
+    (a falling trend is the logarithm's signature; a rising one means a fixed
+    overhead is masking growth);
+  - **export** of the results as CSV or JSON with provenance columns.
 
 ## Build / test / verify
 
@@ -72,6 +87,8 @@ npx playwright install chromium   # one-time
 npm run build
 npm run preview &                 # serves dist on :4173 (or pass --port)
 npm run verify:browser http://localhost:4173
+# In a sandbox with a pre-installed Chromium, point the gate at it:
+#   VERIFY_CHROMIUM=/path/to/chrome npm run verify:browser http://localhost:4173
 ```
 
 ## Layout
@@ -80,12 +97,18 @@ npm run verify:browser http://localhost:4173
 bench-engine/        Rust crate -> WASM benchmark engine (the "production" impls)
   src/lib.rs
 src/
-  bench/             BenchEngine interface, Comlink worker, WASM-backed engine
+  bench/             BenchEngine interface, Comlink worker, WASM-backed engine,
+                     measurement loop (measure.ts), fitter (fit.ts), sweep sizes
+  compare/           Compare orchestration: dataset -> every sweep -> fits -> proofs
   data/              data layer: import, type detection, generators, marshalling
+  registry.ts        structure registry: labels, colours, cost metric, theoretical classes
   structures/        TypeScript teaching twins (drive the animations)
+  ui/                Compare section, dataset picker, charts (sweep + local slope),
+                     export, pedagogical copy
   viz/               step-event model, Player, SVG renderers, exploration UI
-  App.tsx            app shell: explorer + comparison sweep
+  App.tsx            app shell (layout only): explorer + Compare section
 conformance/         cross-language conformance corpora
 docs/PLAN.md         design + roadmap
+docs/METHODOLOGY.md  measurement science, known hurdles, proof map
 .github/workflows/   CI
 ```

@@ -4,86 +4,26 @@
 > visualization, and for **empirically comparing** their add / remove / search
 > cost on the user's *own real data* — not on textbook formulas.
 
-Status: **Phase 3 complete (animation engine, linear breadth, the BST, plus the AVL
-tree + min-heap — batches 1–4); Phase 4 underway (the BST, AVL, sorted-array **and
-linked-list** bench twins landed — the **Linear family is now complete** — leaving the
-min-heap as the last core twin). `bst::BstF64`, an iterative index-arena multiset BST pinned to the TS twin by
-`conformance/corpus-bst.txt`, which also pins tree shape + a Hibbard-delete
-sequence — and now its timed `#[wasm_bindgen]` harness surface
-(`search_n`/churn/build-teardown, with delete-max teardown) + engine/sweep wiring
-(`runBstMutationSweep`), which answered the open question: `churn ≈ insert_fd +
-delete_fd` holds tight only for the degenerate **chain**; on a **balanced** tree
-the finite-difference sum *overshoots* churn, so the two methods agree in
-complexity class only — proven clock-free in `structures::methodology`, with
-balanced-tree churn measuring sub-linear on the real browser clock. The balanced
-twin `avl::AvlF64` follows — a **recursive `Box<Node>`** AVL (the invariant bounds
-height, so the BST's arena workaround isn't needed) with cost = **comparisons +
-rotations**, pinned by `conformance/corpus-avl.txt` (cases force every rotation
-kind incl. a delete-triggered one) + a balance-invariant proptest, wired through
-`runAvlMutationSweep`; its self-test proves the AVL stays **O(log n) on the exact
-sorted input that degenerates the BST to a chain**, and that here churn and the
-finite-difference sum **agree closely** — the third regime after the array's tight
-match and the balanced BST's overshoot). The first **Linear**-family bench twin lands
-too: `sorted_array::SortedArrayF64` — a sorted multiset with **binary-search** lookup
-(the O(log n) **"missing middle"** between the unsorted array's O(n) and the hash set's
-O(1), now wired into the search sweep and proven on the real clock at slope ≈ 0.23) and
-shift-based insert/delete (cost = comparisons + shifts), pinned by
-`conformance/corpus-sarr.txt` — the first corpus to pin a shift-inclusive op-count
-cross-language (front/back/middle deletes) — whose churn rides the **front** (`min − 1`)
-so its mutation reads the honest O(n), a fourth churn-vs-finite-difference regime (front
-churn *overshoots* the sum). The **linked-list bench twin** `linked_list::LinkedListF64`
-then closes the Linear family — one index-arena impl standing in for *both* the singly and
-doubly teaching twins (bench-identical under the **node-visit** metric: O(1) head insert,
-O(n) search/delete), pinned by `conformance/corpus-ll.txt` (both TS twins reproduce it).
-Its **search wires into the sweep as a fourth series** (array O(n) scan vs linked-list O(n)
-pointer-walk — same shape, different mechanism, slope ≈ 1.02 on the real clock), and its
-mutation surface records a **fifth churn-vs-finite-difference regime — a complexity-class
-*disagreement***: churn is honestly O(1) (head insert + delete-of-the-newest) while the
-finite-difference teardown surfaces the canonical O(n) delete-by-value, so churn ≪
-insert_fd + delete_fd.** The
-step-through visualization spine now exists: the array +
-hash-set teaching twins emit a typed step-event stream (cost events == op-count,
-pinned to the Rust corpus), a pure Player drives play/step/step-back, and SVG
-renderers animate the comparisons, shifts, chain probes, and rehash
-redistribution — wired into the app beside the Phase 2 sweep (which is untouched).
-Batch 2 adds the rest of the **Linear** family as teaching twins + viz (Rust twins
-are Phase 4): a **sorted array** (binary search with an animated lo/hi window;
-shift-right insert / shift-left delete) and the **singly + doubly linked lists**
-(O(1) head insert; node-visit search/delete; the doubly view adds back-pointers).
-Batch 3 adds the unbalanced **binary search tree** (`BstF64`) as a teaching twin +
-viz: a multiset BST (equal keys go right) whose only cost event is the key
-comparison, with value-copy (Hibbard) delete; the tree view lays nodes out by
-in-order rank × depth and animates compares, the successor walk, and the
-sorted-data degeneration to O(n). Its Rust twin is Phase 4. Batch 4 adds the two
-remaining tree-family teaching twins + viz: the balanced **AVL tree** (`AvlF64`) —
-same ordering and value-copy delete as the BST but it retraces and **rotates** to
-stay O(log n) where the BST tab degenerates (cost = comparisons + rotations, both
-cost events; the view derives each node's balance factor from the drawn shape) —
-and the array-backed **binary min-heap** (`MinHeapF64`) with the §8 different op
-set (insert / peek / extract-min, search a deliberate O(n) contrast; cost =
-comparisons + swaps), drawn as **both an array and the implicit tree**. Details in §10. The thin slice's
-*headline* (Phase 2) has landed. An
-unsorted dynamic array and a separate-chaining hash set now run through the
-Rust/WASM engine, the §6.3 search-measurement methodology (pure, testable
-orchestration + batched WASM primitives), the §7.2 complexity-class fitter, and
-a log-log comparison chart. The §10 success criterion is proven in headless
-Chromium on the real browser clock: **array search → O(n) (slope ≈ 1), hash-set
-search → O(1) (slope ≈ 0)**. The dual-impl spine (§2.1) is now closed for both
-structures: TypeScript teaching twins run the same algorithm, and a
-cross-language conformance corpus (§12, R1) holds the two languages to identical
-iteration order and per-search op-count. The **size-mutating methodology (§6.3)
-has landed**: insert/delete via churn (the combined-cost primary) plus the
-finite-difference cross-check (per-insert from cumulative build, per-delete from
-cumulative teardown), with the §12 self-test proving the two methods agree. On
-the real browser clock the headline holds — **array churn → O(n) (slope ≈ 1),
-hash-set churn → O(1)**; the finite-difference split reads array delete O(n) /
-insert flat. The final exit slice — the **string-key bench structures** — has
-landed too: Rust `ArrayStr`/`HashSetStr` built from the offsets+UTF-8 marshal
-layout (§4.2, R7), the portable `mix_str` string hash with a bit-exact TS twin,
-the string teaching twins, and a second conformance corpus (`corpus-str.txt`,
-multi-byte UTF-8 included). Wiring the string structures into the sweep/chart is
-deferred to Phase 3/4 breadth. (Phase 1 — data layer — is complete: CSV/JSON +
-generators → normalized `Dataset` + marshalling.) See §10.
+Status — one line per phase; the full per-batch log is in §10, the measurement
+science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
+
+| phase | scope | state |
+|---|---|---|
+| 0 | scaffold, WASM round-trip, `BenchEngine`, CI | ✅ done |
+| 1 | data layer: import, type detection, generators, marshalling | ✅ done |
+| 2 | thin slice: array + hash set through both twins, §6.3 methodology, fitter, chart; string-key bench structures | ✅ done |
+| 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
+| 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete); churn-vs-FD regimes pinned clock-free | 🟡 min-heap bench twin outstanding; string structures + sorted-array/linked-list *mutation* not wired into the browser sweep |
+| 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; CSV/JSON export | 🟡 first slice landed (see §10); string-key sweep, presets, PNG export open |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | ⬜ not started |
+
+Headline results, all on the real browser clock unless noted: array search O(n)
+vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
+and linked-list search O(n) by a different mechanism; array churn O(n) vs
+hash-set O(1); BST and AVL churn sub-linear on shuffled input; and — clock-free,
+on exact op-counts — the AVL stays O(log n) on the sorted input that turns the
+BST into an O(n) chain, plus seven distinct churn-vs-finite-difference regimes
+(METHODOLOGY §2.3).
 
 ---
 
@@ -346,6 +286,15 @@ This sub-design is implemented and validated **first** (see §10, Phase 2).
 - Variance/error bars always shown.
 - The methodology (batch size, reps, isolation method) is inspectable.
 
+### 6.6 Uncertainty, regimes, and limits
+The per-point rep spread (min → max) is drawn as error bars; reps are adaptive
+(continue until the coefficient of variation meets a target, bounded); every
+fitted slope carries a standard error and a 95 % CI; the local (per-interval)
+slope is plotted so regime changes are visible; and the churn-vs-finite-
+difference relationship is *structure-specific* (seven pinned regimes). All of
+it, with the open hurdles (churn-key position bias, small-n overhead, cache
+regimes, sequential ordering), is in [`METHODOLOGY.md`](METHODOLOGY.md).
+
 ---
 
 ## 7. Comparison & analysis
@@ -367,7 +316,14 @@ This sub-design is implemented and validated **first** (see §10, Phase 2).
   log n / n / n·log n are often empirically ambiguous.
 - Shows inferred empirical class *next to* the registry's theoretical class, so
   divergence (e.g. sorted-data → naive BST → measured ~O(n) vs theoretical
-  O(log n)) is visible and explainable.
+  O(log n)) is visible and explainable — the registry (`src/registry.ts`) is
+  the single source of the theoretical classes, and the overlay picks the
+  *worst case* for a shape-sensitive structure on sorted input.
+- Reports the slope **with its uncertainty** (OLS standard error, 95 % CI), the
+  **local slope** per interval, the **tail slope**, and the local-slope
+  **trend** — *falling* is the logarithm's signature, *rising* means a fixed
+  overhead is masking growth. This is what lets the tool tell "O(log n)" from
+  "O(1) + noise" honestly (METHODOLOGY §3).
 
 ---
 
@@ -746,6 +702,39 @@ insert/search/delete group on a shared key type.
 
 - **Phase 5 — Comparison / analysis.** Multi-overlay, log-log, fitter with
   honesty UI, theoretical overlay, export.
+  - **Done (first slice — one dataset, every structure; honesty instruments):**
+    - **Compare runs on a user-chosen dataset.** `src/compare/runSweeps.ts` is the
+      pure orchestration (dataset → sweep sizes capped by the dataset → every
+      engine sweep → fits → the `window.__*Proof` mirrors), unit-tested against a
+      fake `BenchEngine`; `ui/DatasetPicker` offers the §4.3 generators (uniform,
+      sorted, reverse-sorted, near-sorted, gaussian, zipfian) or pasted CSV/JSON
+      with a key field; `ui/CompareSection` renders. Every sweep point is an
+      order-preserving *prefix* of the dataset, so the same distribution and order
+      reach the array, lists, hash set and both trees — "sorted data kills a naive
+      BST" is now something the user *does* (pick `sorted`, watch the BST churn
+      leave the AVL). The default auto-run (the runtime gate's input) is one
+      uniform dataset for every structure, replacing the previous sorted-for-linear
+      / uniform-for-trees split. `App.tsx` is layout only.
+    - **Structure registry** (`src/registry.ts`, §3 layer 2): label, family,
+      colour, cost metric, mechanism, average + worst theoretical classes per op,
+      shape-sensitivity; `theoreticalClass(structure, op, shape)` picks the worst
+      case for a shape-sensitive structure on sorted input. Colours and labels now
+      come from one place.
+    - **Fitter uncertainty** (`fit.ts`): slope ± OLS standard error and a 95 % CI;
+      per-interval local slopes; tail slope; local-slope trend (t-tested) — the
+      falling trend is how O(log n) is told from flat (METHODOLOGY §3).
+    - **Measurement hardening** (`measure.ts`): min/max rep spread per point;
+      adaptive reps to a coefficient-of-variation target, bounded by `maxReps`;
+      conservative spread propagation through the finite-difference split.
+    - **Charts**: rep-spread error bars (canvas hook), dashed theoretical overlay
+      least-squares-scaled onto each series, legend with slope ± stderr,
+      responsive width; a **local-slope panel** (`ui/SlopeChart`) with O(1)/O(n)/
+      O(n²) guides; CSV/JSON export with provenance columns (`ui/export.ts`).
+    - The browser gate additionally asserts the published compare meta and that
+      every fit carries finite uncertainty fields. **No new deps.**
+  - **Open:** string-key sweep wiring; presets ("sorted data kills a naive BST"
+    as one click); PNG export; two-key churn to remove the right-spine bias
+    (METHODOLOGY §4.1); interleaved structure order per sweep point.
 
 - **Phase 6 — Specialized + polish.** Trie, skip list, graph; presets/demos
   (e.g. "sorted data kills a naive BST"); persistence of sessions; docs;
@@ -794,10 +783,20 @@ insert/search/delete group on a shared key type.
 - Session persistence: local-only (IndexedDB) vs shareable URLs/exported files?
 - How far to push absolute-time comparability across machines (probably: don't —
   keep it explicitly relative).
+- Churn-key position bias: add a second churn key (`min − 1`) and alternate, so a
+  tree's measured mutation isn't a right-spine reading (METHODOLOGY §4.1)?
+- Interleave structures per sweep point to cancel frequency/thermal drift
+  between sequential sweeps (METHODOLOGY §4.4)?
+- Configurable present/absent probe mix (§6.3), and reporting *stored* size next
+  to *input* size for de-duplicating structures (METHODOLOGY §4.7–4.8).
 
 ---
 
-## 14. Immediate next step (needs approval)
+## 14. Next steps
 
-Begin **Phase 0** (scaffold + WASM round-trip + `BenchEngine` interface + CI).
-Nothing is built until this plan is approved.
+1. Finish Phase 4: the min-heap bench twin (its own op set, §8), then wire the
+   sorted-array and linked-list *mutation* surfaces into the browser sweep.
+2. Phase 5 remainder: string-key sweep; one-click presets; PNG export; the
+   two-key churn and interleaving experiments from §13.
+3. Promote `verify:browser` to a blocking CI gate once its slope bands prove
+   stable on shared runners.

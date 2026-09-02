@@ -49,13 +49,31 @@ tool call does not survive into the next (each call is a fresh process).
   never dedupe** (it would corrupt benchmark inputs).
 - **Shell is PowerShell** on this Windows box; a Bash tool is also available for
   POSIX scripts. They take different syntax.
+- `verify:browser` needs Playwright's pinned Chromium; in a sandbox with a
+  pre-installed one, set `VERIFY_CHROMIUM=/path/to/chrome`.
+- The Compare default auto-run (what the browser gate measures) is **one uniform
+  dataset for every structure**. Don't switch it to `sorted` — the gate asserts
+  sub-linear BST churn, which only holds on shuffled input.
 - `dist/` and `bench-engine/pkg/` are gitignored build artifacts (CI rebuilds
   them) — leave them untracked.
 
 ## Architecture map
 
-- `bench-engine/` — Rust crate → WASM, the "production" benchmark impls.
-- `src/bench/` — `BenchEngine` interface, Comlink Web Worker, WASM-backed engine.
+- `bench-engine/` — Rust crate → WASM, the "production" benchmark impls; its
+  `structures/mod.rs` `mod methodology` pins the churn-vs-finite-difference
+  regimes clock-free.
+- `src/bench/` — `BenchEngine` interface, Comlink Web Worker, WASM-backed engine;
+  `measure.ts` (batching, adaptive reps, spread), `fit.ts` (classes, slope ± SE,
+  local slopes, trend), `sweep.ts`.
+- `src/compare/` — Compare orchestration (`runSweeps.ts`): one dataset → every
+  sweep → fits → the `window.__*Proof` mirrors the browser gate reads. Tested
+  against a fake engine.
+- `src/registry.ts` — the structure registry: labels, colours, cost metric,
+  theoretical (average/worst) classes; the only source of "theory" in the UI.
 - `src/data/` — Phase 1 data layer: import (CSV/JSON), conservative type
   detection, KV key-field picker, seeded generators, typed-array marshalling.
-- `src/App.tsx` — phase demo / smoke screen.
+- `src/ui/` — `CompareSection`, `DatasetPicker`, `SweepChart` (error bars +
+  theory overlay), `SlopeChart`, `export.ts`, `Explain` (honesty copy).
+- `src/App.tsx` — layout only.
+- `docs/METHODOLOGY.md` — the measurement science, its open hurdles, and the
+  proof map. Update it whenever a measurement claim or a gate changes.

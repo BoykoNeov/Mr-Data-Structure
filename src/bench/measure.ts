@@ -43,6 +43,10 @@ export interface SweepPoint {
   readonly reps: number;
   /** Sample standard deviation of the per-op timing across reps, in ns. */
   readonly stddevNanos: number;
+  /** Fastest rep's per-op timing, in ns — the lower end of the spread the chart draws. */
+  readonly minNanos: number;
+  /** Slowest rep's per-op timing, in ns — the upper end of the spread. */
+  readonly maxNanos: number;
 }
 
 /** A full series: one structure × one operation across the size sweep. */
@@ -84,6 +88,15 @@ export interface MeasureOptions {
   readonly baseBatch?: number;
   /** Ceiling on batch size, so tiny per-op costs can't loop forever. */
   readonly maxBatch?: number;
+  /**
+   * Adaptive repetition (docs/METHODOLOGY.md §2): after the first `reps` timed
+   * runs, keep adding runs — up to `maxReps` — until the sample coefficient of
+   * variation (stddev / mean) falls to this target. Unset ⇒ exactly `reps` runs.
+   * Turns "5 reps" into "as many reps as *this* point needs to be stable".
+   */
+  readonly targetRelStddev?: number;
+  /** Ceiling on adaptive repetitions (only read with {@link targetRelStddev}). */
+  readonly maxReps?: number;
 }
 
 const DEFAULTS = {
@@ -127,6 +140,8 @@ export function measurePoint(
     ...DEFAULTS,
     ...opts,
   };
+  const targetRelStddev = opts.targetRelStddev;
+  const maxReps = Math.max(reps, opts.maxReps ?? reps);
 
   const runner = makeRunner(n);
   try {
@@ -142,23 +157,38 @@ export function measurePoint(
     }
 
     const perOpNanos: number[] = [];
-    for (let r = 0; r < reps; r++) {
+    const timeOne = () => {
       const t0 = now();
       runner.run(batch);
       const elapsedMs = now() - t0;
       perOpNanos.push((elapsedMs * 1e6) / batch);
+    };
+    const meanOf = (v: number[]) => v.reduce((a, b) => a + b, 0) / v.length;
+
+    for (let r = 0; r < reps; r++) timeOne();
+    // Adaptive reps: keep sampling while the spread is above target (§6.1's
+    // "r repetitions" made data-driven), bounded by maxReps so a noisy point
+    // can't stall the sweep.
+    if (targetRelStddev !== undefined) {
+      while (perOpNanos.length < maxReps) {
+        const m = meanOf(perOpNanos);
+        if (m > 0 && sampleStddev(perOpNanos, m) / m <= targetRelStddev) break;
+        timeOne();
+      }
     }
 
-    const mean = perOpNanos.reduce((a, b) => a + b, 0) / perOpNanos.length;
-    const nanosPerOp = median([...perOpNanos].sort((a, b) => a - b));
+    const mean = meanOf(perOpNanos);
+    const sorted = [...perOpNanos].sort((a, b) => a - b);
 
     return {
       n,
-      nanosPerOp,
+      nanosPerOp: median(sorted),
       opCount: runner.opCountPerOp(),
       batch,
-      reps,
+      reps: perOpNanos.length,
       stddevNanos: sampleStddev(perOpNanos, mean),
+      minNanos: sorted[0],
+      maxNanos: sorted[sorted.length - 1],
     };
   } finally {
     runner.dispose?.();
@@ -245,6 +275,16 @@ export function measureMutationFd(
   const deleteNanos = finiteDifference(sizes, teardownNanos);
   const deleteOps = finiteDifference(sizes, teardownOps);
 
+  // A differenced point inherits the spread of the two cumulative points it is
+  // built from, divided by the same Δn — a conservative (worst-case additive)
+  // propagation, since the two cumulative runs are independent samples.
+  const spread = (cum: SweepPoint[], i: number): number => {
+    const dn = i === 0 ? sizes[0] : sizes[i] - sizes[i - 1];
+    const own = cum[i].maxNanos - cum[i].minNanos;
+    const prev = i === 0 ? 0 : cum[i - 1].maxNanos - cum[i - 1].minNanos;
+    return dn > 0 ? (own + prev) / dn : 0;
+  };
+
   const series = (
     op: SweepOp,
     nanos: number[],
@@ -253,14 +293,19 @@ export function measureMutationFd(
   ): SweepSeries => ({
     structure,
     op,
-    points: sizes.map((n, i) => ({
-      n,
-      nanosPerOp: nanos[i],
-      opCount: ops[i],
-      batch: cum[i].batch,
-      reps: cum[i].reps,
-      stddevNanos: cum[i].stddevNanos,
-    })),
+    points: sizes.map((n, i) => {
+      const half = spread(cum, i) / 2;
+      return {
+        n,
+        nanosPerOp: nanos[i],
+        opCount: ops[i],
+        batch: cum[i].batch,
+        reps: cum[i].reps,
+        stddevNanos: cum[i].stddevNanos,
+        minNanos: Math.max(0, nanos[i] - half),
+        maxNanos: nanos[i] + half,
+      };
+    }),
   });
 
   return {

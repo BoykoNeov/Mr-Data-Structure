@@ -130,3 +130,60 @@ describe('measurePoint variance', () => {
     expect(point.stddevNanos).toBeGreaterThan(0);
   });
 });
+
+describe('measurePoint spread + adaptive reps (docs/METHODOLOGY.md §2)', () => {
+  /** A runner whose successive timed calls cycle through `multipliers` (×base). */
+  function jitter(clock: { advance: (ms: number) => void }, multipliers: number[]): OpRunnerFactory {
+    let call = 0;
+    return () => ({
+      run: (k) => {
+        clock.advance(k * 1e-6 * multipliers[call++ % multipliers.length]);
+        return k;
+      },
+      opCountPerOp: () => 1,
+    });
+  }
+
+  it('reports the min and max per-op timing across reps', () => {
+    const clock = virtualClock();
+    const point = measurePoint(1, jitter(clock, [1, 4, 2, 3]), clock.now, {
+      minBatchMillis: 0, warmupReps: 0, reps: 4, baseBatch: 1000,
+    });
+    // grow-loop consumes multiplier 1; the 4 reps see 4,2,3,1 → min 1, max 4, median 2.5.
+    expect(point.minNanos).toBeCloseTo(1, 6);
+    expect(point.maxNanos).toBeCloseTo(4, 6);
+    expect(point.nanosPerOp).toBeCloseTo(2.5, 6);
+    expect(point.reps).toBe(4);
+  });
+
+  it('keeps sampling until the relative stddev hits the target', () => {
+    const clock = virtualClock();
+    // Noisy first, then perfectly steady: the CV only drops below target once
+    // enough steady reps dilute the early scatter.
+    const point = measurePoint(1, jitter(clock, [1, 1, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]), clock.now, {
+      minBatchMillis: 0, warmupReps: 0, reps: 3, baseBatch: 1000,
+      targetRelStddev: 0.2, maxReps: 20,
+    });
+    expect(point.reps).toBeGreaterThan(3);
+    expect(point.reps).toBeLessThanOrEqual(20);
+    const mean = 2; // the steady value dominates
+    expect(point.stddevNanos / mean).toBeLessThanOrEqual(0.2 + 1e-9);
+  });
+
+  it('stops at maxReps when the target is unreachable', () => {
+    const clock = virtualClock();
+    const point = measurePoint(1, jitter(clock, [1, 10]), clock.now, {
+      minBatchMillis: 0, warmupReps: 0, reps: 2, baseBatch: 1000,
+      targetRelStddev: 0.01, maxReps: 7,
+    });
+    expect(point.reps).toBe(7);
+  });
+
+  it('takes exactly `reps` runs when no target is set (the default contract)', () => {
+    const clock = virtualClock();
+    const point = measurePoint(1, jitter(clock, [1, 10]), clock.now, {
+      minBatchMillis: 0, warmupReps: 0, reps: 3, baseBatch: 1000, maxReps: 50,
+    });
+    expect(point.reps).toBe(3);
+  });
+});

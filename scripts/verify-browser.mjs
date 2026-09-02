@@ -7,7 +7,11 @@
 import { chromium } from 'playwright';
 
 const url = process.argv[2] || 'http://localhost:4173';
-const browser = await chromium.launch();
+// VERIFY_CHROMIUM lets a sandbox point at a pre-installed Chromium instead of
+// the version-pinned download Playwright would otherwise insist on.
+const browser = await chromium.launch(
+  process.env.VERIFY_CHROMIUM ? { executablePath: process.env.VERIFY_CHROMIUM } : {},
+);
 const page = await browser.newPage();
 
 const logs = [];
@@ -19,6 +23,7 @@ let proof = null;
 let mutation = null;
 let bst = null;
 let avl = null;
+let meta = null;
 let text = '(no text captured)';
 const checks = [];
 
@@ -39,10 +44,21 @@ try {
   mutation = await page.evaluate(() => window.__mutationProof ?? null);
   bst = await page.evaluate(() => window.__bstMutationProof ?? null);
   avl = await page.evaluate(() => window.__avlMutationProof ?? null);
+  meta = await page.evaluate(() => window.__compareMeta ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
 
+  // Phase 5: the default Compare run is one *uniform* dataset driving every structure
+  // (docs/PLAN.md §10), and every fit carries its uncertainty (docs/METHODOLOGY.md §3).
+  if (meta) {
+    want('compare meta published (uniform default dataset)', meta.order && meta.order.kind === 'uniform');
+    want('default dataset reads as the random shape', meta.shape === 'random');
+  }
   if (proof) {
+    want(
+      'every search fit carries a finite slope stderr + tail slope',
+      proof.every((p) => Number.isFinite(p.slopeStderr) && Number.isFinite(p.tailSlope) && typeof p.trend === 'string'),
+    );
     const array = proof.find((p) => p.structure === 'array');
     const ll = proof.find((p) => p.structure === 'll');
     const sarrSearch = proof.find((p) => p.structure === 'sarr');
@@ -175,6 +191,10 @@ if (bst) {
 if (avl) {
   console.log('--- avl mutation proof ---');
   console.log(JSON.stringify(avl, null, 2));
+}
+if (meta) {
+  console.log('--- compare meta ---');
+  console.log(JSON.stringify(meta));
 }
 if (checks.length) {
   console.log('--- checks ---');
