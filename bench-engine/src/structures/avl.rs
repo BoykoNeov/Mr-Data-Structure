@@ -43,10 +43,14 @@
 //! the `#[wasm_bindgen]` impl exposes the batched primitives the TS `measure.ts` times:
 //! `search_n`/`search_counted` (size-preserving), the `churn_n`/`churn_counted` primary
 //! (insert+delete pairs at fixed n), and the `build_insert_*`/`teardown_*` cumulative
-//! cross-check. **Teardown deletes the current maximum repeatedly** — the rightmost node
-//! (no right child), reached down the right spine exactly as the churn key (`max + 1`) is.
-//! Unlike the BST, this teardown's op-count includes the **rotations** the retrace fires
-//! while rebalancing the shrinking spine.
+//! cross-check. **Churn and teardown are two-keyed**, exactly as `BstF64`: pairs alternate
+//! `min − 1` (the left spine) and `max + 1` (the right spine), `churn_counted` reports the
+//! two pairs' **mean**, and teardown removes the current maximum and minimum in turn. For
+//! the AVL this is not a correctness fix — balance bounds *both* spines at O(log n) on any
+//! input — but keeping the two trees on one measurement recipe is what makes their curves
+//! comparable, and it is the BST that needs it (docs/METHODOLOGY.md §4.1). Unlike the BST,
+//! this teardown's op-count includes the **rotations** the retrace fires while rebalancing
+//! the shrinking spines.
 
 use wasm_bindgen::prelude::*;
 
@@ -213,10 +217,15 @@ pub struct AvlF64 {
     /// Query workload, stored once (untimed) so the timed search call carries no
     /// argument-marshalling overhead per invocation (docs/PLAN.md §6.2). Mirrors `BstF64`.
     probes: Vec<f64>,
-    /// The spare key cycled in/out by `churn_n` (docs/PLAN.md §6.3). The caller sets it to
-    /// a value absent from the tree (the engine uses `max + 1`, so it descends the right
-    /// spine) — each insert is real and the matching delete restores size, holding n stable.
-    churn_key: f64,
+    /// The two spare keys cycled in/out by `churn_n` (docs/PLAN.md §6.3), one per spine.
+    /// The caller sets values absent from the tree (the engine uses `min − 1` and
+    /// `max + 1`) — each insert is real and the matching delete restores size, holding n
+    /// stable.
+    churn_lo: f64,
+    churn_hi: f64,
+    /// Which end the next churn pair uses; persisted across `churn_n` calls so a run of
+    /// one-pair batches alternates rather than pinning one spine.
+    churn_hi_next: bool,
 }
 
 #[wasm_bindgen]
@@ -277,22 +286,27 @@ impl AvlF64 {
 
     // ── Mutation: churn at fixed size (docs/PLAN.md §6.3, primary method) ──
 
-    /// Set the spare key cycled by `churn_n` — must be absent from the tree so each insert
-    /// is real and the matching delete restores size. The engine passes `max + 1`, which
-    /// descends the right spine. Untimed.
-    pub fn set_churn_key(&mut self, key: f64) {
-        self.churn_key = key;
+    /// Set the two spare keys cycled by `churn_n` — **both** must be absent from the tree
+    /// so each insert is real and the matching delete restores size. The engine passes
+    /// `lo = min − 1` (the left spine) and `hi = max + 1` (the right spine); pairs
+    /// alternate between them, matching `BstF64`'s recipe (docs/METHODOLOGY.md §4.1).
+    /// Untimed.
+    pub fn set_churn_keys(&mut self, lo: f64, hi: f64) {
+        self.churn_lo = lo;
+        self.churn_hi = hi;
     }
 
-    /// Timed hot path: `k` insert+delete *pairs* of the churn key, holding size stable at
-    /// ≈ n (docs/PLAN.md §6.3). Isolates per-op mutation cost at a fixed n. Each pair walks
-    /// the right spine and rebalances on the way back. Returns the delete-hit count to
-    /// defeat dead-code elimination. No op-counting overhead (`COUNT=false`).
+    /// Timed hot path: `k` insert+delete *pairs*, holding size stable at ≈ n
+    /// (docs/PLAN.md §6.3). Isolates per-op mutation cost at a fixed n. Successive pairs
+    /// **alternate** the two churn keys, so each measured unit walks one spine down and
+    /// rebalances on the way back. Returns the delete-hit count to defeat dead-code
+    /// elimination. No op-counting overhead (`COUNT=false`).
     pub fn churn_n(&mut self, k: u32) -> u32 {
-        let key = self.churn_key;
         let mut ops = 0u64;
         let mut hits = 0u32;
         for _ in 0..k {
+            let key = if self.churn_hi_next { self.churn_hi } else { self.churn_lo };
+            self.churn_hi_next = !self.churn_hi_next;
             self.insert::<false>(key, &mut ops);
             if self.delete::<false>(key, &mut ops) {
                 hits += 1;
@@ -301,16 +315,21 @@ impl AvlF64 {
         hits
     }
 
-    /// Op-count signal (§6.4) for *one* churn pair: comparisons + rotations of a counted
-    /// insert+delete of the churn key. The pair nets zero size change, so `len` and the
-    /// in-order traversal are unchanged afterwards (the *shape* may differ — rotations can
-    /// leave a differently-shaped but still-valid tree).
+    /// Op-count signal (§6.4) for *one* churn pair — the **mean** of the two alternating
+    /// pairs' comparisons + rotations, matching what `churn_n` amortises per unit (and
+    /// keeping the series on the same per-pair y-axis as every other structure). Each pair
+    /// nets zero size change, so `len` and the in-order traversal are unchanged afterwards
+    /// (the *shape* may differ — rotations can leave a differently-shaped but still-valid
+    /// tree).
     pub fn churn_counted(&mut self) -> f64 {
-        let key = self.churn_key;
-        let mut ops = 0u64;
-        self.insert::<true>(key, &mut ops);
-        let _ = self.delete::<true>(key, &mut ops);
-        ops as f64
+        let (lo, hi) = (self.churn_lo, self.churn_hi);
+        let mut lo_ops = 0u64;
+        self.insert::<true>(lo, &mut lo_ops);
+        let _ = self.delete::<true>(lo, &mut lo_ops);
+        let mut hi_ops = 0u64;
+        self.insert::<true>(hi, &mut hi_ops);
+        let _ = self.delete::<true>(hi, &mut hi_ops);
+        (lo_ops + hi_ops) as f64 / 2.0
     }
 
     // ── Mutation: cumulative build / teardown (docs/PLAN.md §6.3, cross-check) ──
@@ -335,35 +354,52 @@ impl AvlF64 {
         ops as f64
     }
 
-    /// Timed: delete every stored key by repeatedly removing the current maximum, leaving
-    /// the tree empty (docs/PLAN.md §6.3 teardown). The max is the rightmost node — reached
-    /// down the right spine, the same path the churn key probes — always a leaf-or-one-child
-    /// (no two-child Hibbard copy). Returns the delete count to defeat DCE. No op-counting
+    /// Timed: delete every stored key by removing the current **maximum and minimum in
+    /// turn**, leaving the tree empty (docs/PLAN.md §6.3 teardown). The two extremes are
+    /// the rightmost and leftmost nodes — reached down exactly the two spines the churn
+    /// keys probe (docs/METHODOLOGY.md §4.1) — and each is a leaf-or-one-child (no
+    /// two-child Hibbard copy). Returns the delete count to defeat DCE. No op-counting
     /// overhead (`COUNT=false`).
     pub fn teardown_all(&mut self) -> u32 {
         let mut ops = 0u64;
         let mut count = 0u32;
-        while let Some(max) = self.max_value() {
-            self.delete::<false>(max, &mut ops);
-            count += 1;
+        let mut take_hi = true;
+        loop {
+            let end = if take_hi { self.max_value() } else { self.min_value() };
+            match end {
+                Some(v) => {
+                    take_hi = !take_hi;
+                    self.delete::<false>(v, &mut ops);
+                    count += 1;
+                }
+                None => break,
+            }
         }
         count
     }
 
     /// Op-count for a full size-`n` teardown: total comparisons **plus rotations** to delete
-    /// every key by repeatedly removing the current maximum (each delete-max retraces and may
-    /// rebalance the shrinking right spine). Built untimed via `new`, then counted.
+    /// every key by removing the current maximum and minimum in turn (each delete retraces
+    /// and may rebalance the shrinking spine). Built untimed via `new`, then counted.
     pub fn teardown_counted(keys: &[f64], n: usize) -> f64 {
         let mut t = AvlF64::new(keys, n);
         let mut ops = 0u64;
-        while let Some(max) = t.max_value() {
-            t.delete::<true>(max, &mut ops);
+        let mut take_hi = true;
+        loop {
+            let end = if take_hi { t.max_value() } else { t.min_value() };
+            match end {
+                Some(v) => {
+                    take_hi = !take_hi;
+                    t.delete::<true>(v, &mut ops);
+                }
+                None => break,
+            }
         }
         ops as f64
     }
 
-    /// Timed: build a fresh size-`n` tree via inserts, then tear it all down by delete-max,
-    /// in one self-contained call. Subtracting the `build_insert_n` time isolates the
+    /// Timed: build a fresh size-`n` tree via inserts, then tear it all down by alternating
+    /// delete-max / delete-min, in one self-contained call. Subtracting the `build_insert_n` time isolates the
     /// teardown — the delete side of the finite-difference method (docs/PLAN.md §6.3); the
     /// identical insert build path cancels in the subtraction.
     pub fn build_then_teardown_n(keys: &[f64], n: usize) -> u32 {
@@ -374,7 +410,14 @@ impl AvlF64 {
 impl AvlF64 {
     /// An empty tree.
     pub fn new_empty() -> AvlF64 {
-        AvlF64 { root: None, count: 0, probes: Vec::new(), churn_key: 0.0 }
+        AvlF64 {
+            root: None,
+            count: 0,
+            probes: Vec::new(),
+            churn_lo: 0.0,
+            churn_hi: 0.0,
+            churn_hi_next: true,
+        }
     }
 
     /// Whether the tree holds no keys.
@@ -394,6 +437,21 @@ impl AvlF64 {
         loop {
             match &cur.right {
                 Some(r) => cur = r,
+                None => return Some(cur.value),
+            }
+        }
+    }
+
+    /// Value of the current minimum — the leftmost node, followed down left links (no key
+    /// comparison, so not a cost event; the same pointer-walk rule as `max_value`, risk R1).
+    /// `None` for an empty tree. Deleting this value never takes the two-child Hibbard path:
+    /// nothing sorts left of the minimum, so its node has no left child — the invariant the
+    /// two-key teardown rests on (docs/METHODOLOGY.md §4.1).
+    fn min_value(&self) -> Option<f64> {
+        let mut cur = self.root.as_ref()?;
+        loop {
+            match &cur.left {
+                Some(l) => cur = l,
                 None => return Some(cur.value),
             }
         }
@@ -691,9 +749,9 @@ mod tests {
     #[test]
     fn churn_holds_size_and_in_order_but_not_necessarily_shape() {
         let mut t = avl(&[10.0, 20.0, 30.0, 40.0, 50.0]);
-        t.set_churn_key(99.0); // > max ⇒ descends the right spine
+        t.set_churn_keys(9.0, 99.0); // < min and > max ⇒ the two spines
         let before = t.keys_in_order();
-        t.churn_n(5);
+        t.churn_n(5); // odd batch ⇒ exercises both keys
         assert_eq!(t.len(), 5);
         assert_eq!(t.keys_in_order(), before); // size + in-order restored
         assert!(t.check_balanced());
@@ -701,6 +759,13 @@ mod tests {
         assert!(t.churn_counted() > 0.0);
         assert_eq!(t.len(), 5);
         assert!(t.check_balanced());
+    }
+
+    #[test]
+    fn min_value_follows_the_left_spine() {
+        assert_eq!(avl(&[50.0, 30.0, 70.0, 60.0, 80.0]).min_value(), Some(30.0));
+        assert_eq!(avl(&[30.0, 20.0, 10.0]).min_value(), Some(10.0));
+        assert_eq!(avl(&[]).min_value(), None);
     }
 
     #[test]

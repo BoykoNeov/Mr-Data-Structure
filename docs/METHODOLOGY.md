@@ -68,9 +68,14 @@ hash set's at O(1). (Configurable mixes are a PLAN §6.3 item not yet exposed.)
 You cannot time "inserts at size n" because each insert changes n. Two methods,
 each on the same structure (PLAN §6.3):
 
-- **Churn (primary).** Build to n, then time `k` insert+delete *pairs* of one
+- **Churn (primary).** Build to n, then time `k` insert+delete *pairs* of a
   spare key (absent by construction: `max + 1`, or `min − 1` for the sorted
-  array). Size stays at n; the pair cost is the combined mutation cost.
+  array). Size stays at n; the pair cost is the combined mutation cost. **The
+  trees use two spare keys**, `min − 1` and `max + 1`, alternating pair by
+  pair, and average them — one key can only ever walk one spine, which on a
+  degenerate input reports the wrong *class* (§4.1). Their teardown alternates
+  delete-max / delete-min for the same reason, keeping churn's deletes and the
+  finite-difference delete on the same two paths.
 - **Finite differences (cross-check).** Time a full build to each sweep size
   (cumulative insert cost) and a full build+teardown (build cancels on
   subtraction ⇒ cumulative delete cost); difference consecutive sizes to get
@@ -79,8 +84,8 @@ each on the same structure (PLAN §6.3):
   spreads / Δn).
 
 The agreement claim `churn(n) ≈ insert_fd(n) + delete_fd(n)` turned out to be
-**structure-specific**, because the churn key is placed at one *position*
-(the right spine / the front) while the build inserts at the *average*
+**structure-specific**, because the churn key is placed at a chosen *position*
+(a tree's spines, an array's front) while the build inserts at the *average*
 position. Every regime is pinned clock-free on exact op-counts in
 `bench-engine/src/structures/mod.rs` (`mod methodology`):
 
@@ -88,11 +93,17 @@ position. Every regime is pinned clock-free on exact op-counts in
 |---|---|---|---|
 | unsorted array | **tight** (< 2 %) | costs are position-uniform: insert is a free append, any delete is O(n) | yes, O(n) |
 | hash set | **loose** (< 50 %) | both sides are tiny O(1) counts; the churn key's chain vs the swept average | yes, O(1) |
-| BST, sorted input (chain) | **tight** (< 5 %) | the right spine *is* the whole tree, so churn's probe = the marginal insert/delete | yes, O(n) |
-| BST, shuffled (balanced) | **FD sum overshoots churn** | churn rides the cheap right spine (≈ 2 ln n round trip) while `insert_fd` already reflects the average depth (≈ 2 ln n) and `delete_fd` (≈ ln n) is added on top | class only, O(log n) |
-| AVL | **close** (< 15 %), churn ≥ sum | height and average depth differ by only ~1.44×, so the spine probe and the average insert nearly coincide | yes, O(log n) |
+| BST, sorted input (chain) | **FD sum overshoots churn** on the insert side (1500 vs 1002) | the *delete* halves match exactly (both alternate the two ends), but churn's insert averages a full-chain descent with a root-adjacent one (≈ n/2) while the build drops every key at the chain's bottom (≈ n) | class only, O(n) |
+| BST, shuffled (balanced) | **FD sum overshoots churn** (~32 %: 23.7 vs 18) | churn rides the two cheap spines (≈ ln n each) while `insert_fd` reflects the average depth (≈ 2 ln n) and `delete_fd` is added on top | class only, O(log n) |
+| AVL | **close** (~10 %), churn ≥ sum | height and average depth differ by only ~1.44×, so the spine probes and the average insert nearly coincide | yes, O(log n) |
 | sorted array (front churn) | **churn overshoots sum** (≈ 2n vs ≈ 3n/2) | front churn shifts the whole array twice; the shuffled build inserts at average position n/2 | yes, O(n) — and *tail* churn would have read O(log n): the key position sets the class |
 | linked list | **class disagreement** (churn O(1), FD delete O(n)) | head insert puts the churn key where deletion is O(1); the canonical delete-by-value (teardown of the oldest) walks the list | **no** — reported, not hidden |
+
+Both BST rows moved with the two-key change (they were "tight" and
+"overshoot"): alternating the ends is what fixes the *class* on reverse-sorted
+input, and the price is that the chain's constants no longer coincide. The
+direction of every tree row is now the same — the finite-difference sum sits at
+or above churn, because a build inserts at average depth and churn rides spines.
 
 Consequence for the UI: churn is shown as *the* mutation curve, the FD split as
 the cross-check, and both are read for **shape** (PLAN §2.3). Where the churn
@@ -147,12 +158,25 @@ slope above the overall slope, and graceful degradation at two points.
 
 Ordered by how much they can mislead a reader today.
 
-1. **Churn-key position bias (trees).** The churn key `max + 1` and the
-   delete-max teardown ride the *right spine*. On a **reverse-sorted** input the
-   BST is a *left* chain whose right spine is a single node, so the BST's
-   measured mutation reads O(1) while its search is O(n). The UI states this
-   when it detects the case; the fix is a two-key churn alternating `min − 1` /
-   `max + 1` (needs a second key on the Rust churn surface). Tracked in PLAN §13.
+1. **Churn-key position bias (trees) — the class is fixed, the constant is
+   not.** A tree's churn cost depends on *where* in the key range the spare key
+   lands. Until this was fixed, churn used one key (`max + 1`) and the teardown
+   deleted the maximum, so both rode the *right spine* only — and on
+   **reverse-sorted** input, where the BST is a *left* chain whose right spine
+   is a single node, the measured mutation read **O(1)** while search read
+   **O(n)**: a wrong complexity class. Both trees now churn on **two** keys,
+   `min − 1` and `max + 1`, alternating pair by pair and reporting their mean,
+   and tear down by alternating delete-max / delete-min. Whichever way a
+   degenerate input leans, one of the two keys walks the whole chain, so the
+   class is right either way (pinned by
+   `bst_reverse_sorted_two_key_churn_recovers_the_linear_class`).
+
+   What this does **not** fix: both spines are still cheaper than a random key
+   (≈ ln n against an average depth of ≈ 2 ln n), so a tree's measured mutation
+   *magnitude* still runs low. Read a tree's churn curve for its **shape**, not
+   its absolute nanoseconds. Averaging two ends also costs the chain regime its
+   tight churn-vs-FD match (§2.3) — an honest trade: a constant that no longer
+   lines up, in exchange for a class that is never wrong.
 2. **Fixed per-op overhead at small n.** The batch loop, probe cycling, and the
    WASM call itself add a constant that flattens the low-n end of every
    wall-clock curve. Mitigated by the tail slope and the rising-trend flag,
@@ -198,6 +222,9 @@ Ordered by how much they can mislead a reader today.
 |---|---|---|
 | auto-grow, median/stddev/min/max, adaptive reps | `src/bench/measure.test.ts` | virtual |
 | `churn ≈ insert_fd + delete_fd` for array / hash-set cost shapes; both methods infer the same class | `src/bench/methodology.test.ts` | virtual |
+| two-key churn recovers the O(n) class on a reverse-sorted BST (a one-keyed churn read O(1)) | `structures::methodology::bst_reverse_sorted_two_key_churn_recovers_the_linear_class` | none (op-counts) |
+| delete-min never takes the two-child path, so the alternating teardown is safe | `structures::bst::tests::delete_min_never_hits_the_two_child_path` | none (op-counts) |
+| the churn unit stays *one* pair — the two keys are averaged, not summed | `structures::bst::tests::churn_holds_size_and_averages_the_two_spine_round_trips` | none (op-counts) |
 | the seven churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` | none (exact op-counts) |
 | AVL stays O(log n) on the sorted input that makes the BST an O(n) chain | same | none |
 | sorted array: O(log n) search vs O(n) mutation on the same structure | same | none |

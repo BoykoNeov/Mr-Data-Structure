@@ -212,10 +212,12 @@ export function CompareSection() {
                 {reverse && (
                   <>
                     {' '}
-                    (Reverse-sorted is a <em>left</em> chain: the churn key and the delete-max teardown ride
-                    the right spine, which is a single node here, so the BST’s <em>measured</em> mutation reads
-                    O(1) while its search is O(n) — a documented limit of the churn probe, docs/METHODOLOGY.md
-                    §4.)
+                    (Reverse-sorted builds a <em>left</em> chain, so the tree leans the other way. The
+                    add/remove probe alternates <em>both</em> ends of the key range — one below the smallest
+                    key, one above the largest — so whichever way the chain leans, one of the two walks it:
+                    the BST’s mutation still reads O(n) here, matching its search. Probing only the top end,
+                    as this tool used to, would have reported a misleading flat O(1) line — docs/METHODOLOGY.md
+                    §4.1.)
                   </>
                 )}
               </>

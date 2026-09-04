@@ -22,8 +22,10 @@ vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
 and linked-list search O(n) by a different mechanism; array churn O(n) vs
 hash-set O(1); BST and AVL churn sub-linear on shuffled input; and — clock-free,
 on exact op-counts — the AVL stays O(log n) on the sorted input that turns the
-BST into an O(n) chain, plus seven distinct churn-vs-finite-difference regimes
-(METHODOLOGY §2.3).
+BST into an O(n) chain, plus seven churn-vs-finite-difference regimes across the
+structures (METHODOLOGY §2.3). Tree mutation is probed at **both ends** of the
+key range, so a reverse-sorted chain can no longer report a flat O(1) curve
+(METHODOLOGY §4.1).
 
 ---
 
@@ -255,23 +257,28 @@ This section is the technical crux. The value proposition lives or dies here.
     `churn(n) ≈ insert_fd(n) + delete_fd(n)`, validated by the §12 self-test.
   - **The identity is structure-specific, not universal.** It holds *tightly* for the
     array because its costs are **position-uniform** (insert is a free append; any delete
-    is O(n)). A **tree** breaks that symmetry: churn's spare key (`max + 1`) rides the
-    **right spine** (depth ≈ ln n balanced / n sorted), while the build inserts dataset
-    keys at their **average depth** (≈ 2 ln n / n). So for a BST the identity holds tight
-    only on the **degenerate chain** (sorted input — the right spine *is* the whole tree);
-    on a **balanced** tree `insert_fd + delete_fd` *overshoots* churn (insert_fd alone ≈
-    churn), and the two methods agree only in **complexity class**, not constant. Teardown
-    there deletes the current **maximum** repeatedly — the same right-spine path churn
-    probes, always leaf-or-one-child (no two-child Hibbard copy); deleting the *root*
-    instead would be O(1)/op on a chain and break even that agreement. Both regimes are
-    pinned clock-free in the §12 self-test (`structures::methodology`).
-  - **Consequence for the BST mutation curve:** because both churn and the FD-delete ride
-    the cheap right spine (≈ ln n), the BST's *measured mutation magnitude* is right-spine-
-    biased — churn ≈ 2 ln n where a *representative* balanced-tree insert+delete pair, at a
-    random key's average depth, would be ≈ 4 ln n. This is the deliberate price of a
-    robustly-absent churn key and a Hibbard-free teardown, and it is harmless because both
-    are the **same shape** (O(log n)): per §2.3 the BST mutation curve is read for its
-    *shape*, never its absolute ns, exactly as op-count magnitude already is.
+    is O(n)). A **tree** breaks that symmetry: churn's spare keys ride the tree's
+    **spines**, while the build inserts dataset keys at their **average depth**. So for
+    both trees `insert_fd + delete_fd` sits at or above churn, and the two methods agree
+    in **complexity class**, not constant. Every regime is pinned clock-free in the §12
+    self-test (`structures::methodology`).
+  - **Tree churn uses two keys, and the teardown alternates** (METHODOLOGY §4.1). A single
+    key at `max + 1` walks only the *right* spine — which on **reverse-sorted** input (a
+    *left* chain) is one node, so the BST's mutation measured **O(1)** while its search
+    measured **O(n)**: a wrong class, not just a wrong constant. Churn therefore alternates
+    `min − 1` and `max + 1` pair by pair and reports their **mean** (one pair stays one
+    unit, keeping the tree series on the same per-pair axis as every other structure), and
+    teardown removes the current **maximum and minimum in turn** so churn's deletes and the
+    finite-difference delete stay on the same two paths. Both extremes are always
+    leaf-or-one-child, so no teardown delete takes the two-child Hibbard path — delete-min
+    provably so, even with duplicate keys, since nothing sorts left of the minimum;
+    deleting the *root* instead would be O(1)/op on a chain and break the cross-check.
+  - **Consequence for the BST mutation curve:** both spines are still cheaper than a random
+    key (≈ ln n against an average depth of ≈ 2 ln n), so the BST's *measured mutation
+    magnitude* stays low even with two keys. That is the deliberate price of a
+    robustly-absent churn key and a Hibbard-free teardown, and it is harmless because the
+    **shape** is right (O(log n)): per §2.3 a tree's mutation curve is read for its shape,
+    never its absolute ns, exactly as op-count magnitude already is.
 - Op-count signal uses the same isolation (counters read at the same points).
 
 This sub-design is implemented and validated **first** (see §10, Phase 2).
@@ -732,9 +739,35 @@ insert/search/delete group on a shared key type.
       O(n²) guides; CSV/JSON export with provenance columns (`ui/export.ts`).
     - The browser gate additionally asserts the published compare meta and that
       every fit carries finite uncertainty fields. **No new deps.**
+  - **Done (two-key tree churn — the honesty fix, METHODOLOGY §4.1):** a tree's
+    add/remove cost was probed with one spare key, `max + 1`, and torn down by
+    repeatedly deleting the maximum — both of which walk only the **right** spine. On
+    **reverse-sorted** input the naive BST is a *left* chain whose right spine is a single
+    node, so the chart reported a flat **O(1)** mutation curve for a structure whose search
+    on the same data is **O(n)**: a wrong complexity *class*, the worst thing this tool can
+    say. `BstF64`/`AvlF64` now take **two** churn keys (`set_churn_keys(min − 1, max + 1)`),
+    alternate them pair by pair — the flag persists across calls, so even the measurer's
+    one-pair warm-up batches see both ends — and `churn_counted` returns the two pairs'
+    **mean**, so one measured unit is still one insert+delete pair and the tree series stays
+    on the same axis as every other structure (and comparable with the per-marginal-op
+    `insert_fd + delete_fd`). **Teardown alternates delete-max / delete-min**, without which
+    churn's deletes and the finite-difference delete would no longer measure the same paths
+    — the precondition the whole cross-check rests on. Both extremes stay leaf-or-one-child,
+    so no Hibbard two-child copy enters the teardown; delete-min is provably safe even with
+    duplicate minima (nothing sorts left of the minimum), pinned by its own Rust test. The
+    flat structures are deliberately **untouched** — the sorted array's *front* churn and the
+    linked list's *head* churn are documented findings (§2.3 regimes 6 and 7), so the worker
+    keeps a separate single-key runner for them and adds a `treeChurnRunnerFactory` used only
+    by the two tree sweeps. Two self-test findings moved and are re-derived, not predicted:
+    the sorted-input **chain** is no longer a tight churn-vs-FD match (churn 1002 vs sum
+    1500) — its *delete* halves still agree exactly, which is what alternating the teardown
+    buys, while the insert halves cannot, since the build drops every key at the chain's
+    bottom; and the AVL's close agreement widened from ~6 % to ~10 %. A new self-test pins
+    the fix itself: on reverse-sorted input the old one-keyed recipe reads ≤ 3 ops while the
+    two-key recipe reads > n/4. UI copy on the reverse-sorted callout, METHODOLOGY §2.3/§4.1/§5
+    and this section updated to match. **No new deps.**
   - **Open:** string-key sweep wiring; presets ("sorted data kills a naive BST"
-    as one click); PNG export; two-key churn to remove the right-spine bias
-    (METHODOLOGY §4.1); interleaved structure order per sweep point.
+    as one click); PNG export; interleaved structure order per sweep point.
 
 - **Phase 6 — Specialized + polish.** Trie, skip list, graph; presets/demos
   (e.g. "sorted data kills a naive BST"); persistence of sessions; docs;
@@ -783,8 +816,12 @@ insert/search/delete group on a shared key type.
 - Session persistence: local-only (IndexedDB) vs shareable URLs/exported files?
 - How far to push absolute-time comparability across machines (probably: don't —
   keep it explicitly relative).
-- Churn-key position bias: add a second churn key (`min − 1`) and alternate, so a
-  tree's measured mutation isn't a right-spine reading (METHODOLOGY §4.1)?
+- ~~Churn-key position bias: add a second churn key (`min − 1`) and alternate, so a
+  tree's measured mutation isn't a right-spine reading?~~ **Done** (Phase 5,
+  METHODOLOGY §4.1). The remaining, narrower question: both spines are still cheaper
+  than a random key, so should churn also offer a *representative* mode that inserts
+  and deletes at an average-depth key (at the cost of a key that is only probably
+  absent)?
 - Interleave structures per sweep point to cancel frequency/thermal drift
   between sequential sweeps (METHODOLOGY §4.4)?
 - Configurable present/absent probe mix (§6.3), and reporting *stored* size next
@@ -797,6 +834,6 @@ insert/search/delete group on a shared key type.
 1. Finish Phase 4: the min-heap bench twin (its own op set, §8), then wire the
    sorted-array and linked-list *mutation* surfaces into the browser sweep.
 2. Phase 5 remainder: string-key sweep; one-click presets; PNG export; the
-   two-key churn and interleaving experiments from §13.
+   interleaving experiment from §13.
 3. Promote `verify:browser` to a blocking CI gate once its slope bands prove
    stable on shared runners.

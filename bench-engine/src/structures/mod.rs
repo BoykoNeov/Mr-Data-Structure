@@ -222,17 +222,24 @@ mod methodology {
     // ── BST: the open question — does `churn ≈ insert_fd + delete_fd` hold for a tree?
     //
     // For the array the identity is tight because its costs are position-uniform (insert
-    // is a free append; any delete is O(n)). A tree breaks that symmetry: churn's key
-    // (`max + 1`) rides the **right spine** (depth ≈ ln n random / n sorted), while the
-    // build inserts dataset keys at their **average depth** (≈ 2 ln n random / n sorted).
-    // So the answer is regime-dependent, and the slice owns reporting *both* halves.
+    // is a free append; any delete is O(n)). A tree breaks that symmetry: churn's keys ride
+    // the two **spines** — `min − 1` down the left, `max + 1` down the right, alternating
+    // (docs/METHODOLOGY.md §4.1) — while the build inserts dataset keys at their **average
+    // depth**. So the answer is regime-dependent, and the slice owns reporting *both*
+    // halves. The teardown alternates delete-max / delete-min to stay on the same two
+    // paths as churn's deletes, which is what keeps the *delete* sides comparable at all.
 
     /// Sorted input ⇒ the degenerate right **chain** (the headline demo, and a stack-safety
-    /// exercise). On a chain the right spine *is* the whole tree, so churn's probe costs the
-    /// same as the marginal insert/delete — the array-like regime where the identity holds
-    /// **tight**, exactly like `array_churn_matches_finite_differences`.
+    /// exercise). Under the two-key recipe (docs/METHODOLOGY.md §4.1) this is no longer the
+    /// tight match it was when churn probed the right spine alone. The **delete** sides
+    /// still line up exactly — that is precisely what alternating the teardown buys — but
+    /// the **insert** sides cannot: churn averages a full-chain insert with a root-adjacent
+    /// one (≈ n/2), while the build drops every dataset key at the bottom of the chain
+    /// (≈ n). So the finite-difference sum overshoots churn by that asymmetry, and the two
+    /// methods agree on the **class** (both unmistakably O(n)) rather than the constant.
+    /// Measured: churn 1002, insert_fd 999, delete_fd 501, sum 1500.
     #[test]
-    fn bst_chain_churn_matches_finite_differences() {
+    fn bst_chain_finite_difference_sum_overshoots_churn_on_the_insert_side() {
         let ks = keys(1001); // 0..1000, ascending ⇒ right chain
         let (n1, n2) = (999usize, 1000usize);
         let insert_fd = (BstF64::build_insert_counted(&ks, n2)
@@ -242,13 +249,63 @@ mod methodology {
             / (n2 - n1) as f64;
 
         let mut t = BstF64::new(&ks, n2);
-        t.set_churn_key(n2 as f64 + 1.0); // absent, > all keys ⇒ descends the full chain
+        t.set_churn_keys(-1.0, n2 as f64 + 1.0); // absent at both ends
         let churn = t.churn_counted();
+        let sum = insert_fd + delete_fd;
 
-        // insert_fd = 999 (depth of the 1000th key), delete_fd = 1000 (delete-max find),
-        // churn = 2001 — agreement to within ~0.1%.
-        let rel = (churn - (insert_fd + delete_fd)).abs() / churn;
-        assert!(rel < 0.05, "chain churn {churn} vs fd sum {} (rel {rel})", insert_fd + delete_fd);
+        // (1) The delete sides agree: churn's two deletes average ≈ churn/2, and the
+        //     alternating teardown's marginal delete matches it. This is the property the
+        //     two-key teardown exists to preserve.
+        assert!(
+            (delete_fd - churn / 2.0).abs() / churn < 0.02,
+            "chain delete_fd {delete_fd} should track churn/2 {} (churn {churn})",
+            churn / 2.0
+        );
+        // (2) The insert sides cannot agree: the build's marginal insert is a *full*-chain
+        //     descent, about twice churn's averaged one — the whole of the overshoot.
+        assert!(
+            insert_fd > 1.8 * (churn / 2.0),
+            "chain insert_fd {insert_fd} should be ≈ 2× churn's averaged insert {}",
+            churn / 2.0
+        );
+        assert!(sum > churn, "chain: expected fd sum {sum} > churn {churn} (the overshoot)");
+        // (3) Both stay unmistakably O(n) — the class agreement that still holds.
+        let quarter = n2 as f64 / 4.0;
+        assert!(churn > quarter && sum > quarter, "chain churn {churn} / sum {sum} must read O(n)");
+    }
+
+    /// **The dishonesty the two-key churn removes** (docs/METHODOLOGY.md §4.1).
+    /// Reverse-sorted input builds a *left* chain, whose **right** spine is a single node.
+    /// The old one-keyed recipe churned at `max + 1` only, inserting and deleting just off
+    /// the root — O(1) — so the chart reported a **flat** mutation curve for a structure
+    /// whose search on the same data is O(n): a wrong complexity *class*, not merely a
+    /// wrong constant. Alternating `min − 1` in makes the chain visible again. Simulating
+    /// the old recipe by setting both churn keys to `max + 1` keeps the contrast in one
+    /// deterministic test.
+    #[test]
+    fn bst_reverse_sorted_two_key_churn_recovers_the_linear_class() {
+        let n = 1000usize;
+        let ks: Vec<f64> = (0..n).map(|i| (n - 1 - i) as f64).collect(); // descending
+        let mut t = BstF64::new(&ks, n);
+        let max = (n - 1) as f64;
+
+        // The old recipe: right spine only — one comparison down, two back.
+        t.set_churn_keys(max + 1.0, max + 1.0);
+        let hi_only = t.churn_counted();
+        // The recipe the engine now uses: both ends, averaged.
+        t.set_churn_keys(-1.0, max + 1.0);
+        let two_key = t.churn_counted();
+
+        assert!(
+            hi_only <= 3.0,
+            "a right-spine-only churn on a left chain reads O(1): {hi_only}"
+        );
+        assert!(
+            two_key > n as f64 / 4.0,
+            "two-key churn must walk the chain: {two_key} (n = {n})"
+        );
+        // Size and contents are restored by every churn pair.
+        assert_eq!(t.len(), n);
     }
 
     /// Shuffled input ⇒ a **balanced** random tree. Here the array identity **fails**: the
@@ -256,8 +313,9 @@ mod methodology {
     /// spine (≈ 2 ln n round-trip) while insert_fd alone already reflects the average key
     /// depth (≈ 2 ln n) and delete_fd (≈ ln n) is added on top. The two methods agree only
     /// in **complexity class** (both O(log n) ≪ n), not in constant — the honest finding
-    /// (docs/PLAN.md §2.3, §6.3). Op-counts are deterministic (fixed-seed `shuffled`), so
-    /// the wide-margin inequalities below never flake.
+    /// (docs/PLAN.md §2.3, §6.3). Measured under the two-key recipe: churn 18, insert_fd
+    /// 15.0, delete_fd 8.7, sum 23.7 (~32% over). Op-counts are deterministic (fixed-seed
+    /// `shuffled`), so the wide-margin inequalities below never flake.
     #[test]
     fn bst_balanced_finite_difference_sum_overshoots_churn() {
         let ks = shuffled(4000);
@@ -269,7 +327,7 @@ mod methodology {
             / (n2 - n1) as f64;
 
         let mut t = BstF64::new(&ks, n2);
-        t.set_churn_key(n2 as f64 + 1.0); // 4000.0: absent and the new maximum
+        t.set_churn_keys(-1.0, n2 as f64 + 1.0); // absent at both ends
         let churn = t.churn_counted();
         let sum = insert_fd + delete_fd;
 
@@ -324,9 +382,10 @@ mod methodology {
     }
 
     /// On a balanced (shuffled) tree the churn primary and the finite-difference sum agree
-    /// closely — both O(log n), within ~15% — with churn marginally the larger (its insert
-    /// rides the full-height spine, vs the shallower average `insert_fd`). The *opposite*
-    /// direction from the balanced BST's overshoot, reported rather than buried.
+    /// closely — both O(log n), within ~15% (measured ~10%: churn 26, sum 23.3) — with churn
+    /// the larger, because its pairs ride full-height spines while `insert_fd` reflects the
+    /// shallower average depth. The *opposite* direction from the balanced BST's overshoot,
+    /// reported rather than buried.
     #[test]
     fn avl_churn_and_finite_differences_agree_closely() {
         let ks = shuffled(4000);
@@ -338,7 +397,7 @@ mod methodology {
             / (n2 - n1) as f64;
 
         let mut t = AvlF64::new(&ks, n2);
-        t.set_churn_key(n2 as f64 + 1.0); // 4000.0: absent and the new maximum
+        t.set_churn_keys(-1.0, n2 as f64 + 1.0); // absent at both ends
         let churn = t.churn_counted();
         let sum = insert_fd + delete_fd;
 

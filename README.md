@@ -21,7 +21,9 @@ methodology, and the phased roadmap.
 family and the BST/AVL trees (min-heap outstanding); Phase 5 (comparison /
 analysis) has its first slice — the sweeps run on a **user-chosen dataset**
 (generators or pasted CSV/JSON), with a theoretical overlay, error bars, slope
-uncertainty, a local-slope panel and export. The phase table is at the top of
+uncertainty, a local-slope panel and export, and tree add/remove is now probed
+at **both ends** of the key range so a reverse-sorted chain can no longer report
+a misleading flat curve. The phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 

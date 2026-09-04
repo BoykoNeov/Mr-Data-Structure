@@ -28,19 +28,31 @@
 //! `#[wasm_bindgen]` impl exposes the batched primitives the TS `measure.ts` times:
 //! `search_n`/`search_counted` (size-preserving), the `churn_n`/`churn_counted` primary
 //! (insert+delete pairs at fixed n), and the `build_insert_*`/`teardown_*` cumulative
-//! cross-check. **Teardown deletes the current maximum repeatedly** — the rightmost node,
-//! always a leaf-or-one-child (never the two-child Hibbard path), reached down the right
-//! spine exactly as the churn key (`max + 1`) is. Deleting the *root* instead would be
-//! O(1)/op on a chain and break the cross-check. This makes churn's probe and the
-//! finite-difference delete measure the *same* path, the precondition for
-//! `churn ≈ insert_fd + delete_fd` — which (unlike the array) holds tightly only for the
-//! degenerate **chain**; for a balanced tree the FD sum *overshoots* churn (the methods
-//! agree in complexity class only). See the `methodology` self-test in `mod.rs`.
+//! cross-check.
 //!
-//! One honest consequence: because churn (and the delete-max teardown) ride the *cheap*
-//! right spine (≈ ln n) rather than a random key's average depth (≈ 2 ln n), the measured
-//! BST mutation *magnitude* runs low — read the curve for its O(log n) **shape**, not its
-//! absolute ns (docs/PLAN.md §2.3, §6.3).
+//! **Churn and teardown are two-keyed: they alternate both ends of the tree**
+//! (docs/METHODOLOGY.md §4.1). A one-keyed churn at `max + 1` rides only the *right*
+//! spine, so on **reverse-sorted** input — a left chain whose right spine is a single
+//! node — the measured mutation read O(1) while search reads O(n): a wrong complexity
+//! *class*, the worst thing this tool can report. So `churn_n` alternates `min − 1` and
+//! `max + 1` pair by pair (one pair is still **one unit**; `churn_counted` returns the two
+//! pairs' **mean**), and **teardown alternates delete-max / delete-min**. Whichever
+//! handedness a degenerate input builds, one of the two ends now walks the whole chain,
+//! and churn's probe and the finite-difference delete still measure the *same* paths —
+//! the precondition for `churn ≈ insert_fd + delete_fd`. Both extremes are always
+//! leaf-or-one-child, so no teardown delete takes the two-child Hibbard path (delete-min
+//! provably so even with duplicate keys: nothing sorts left of the minimum). Deleting the
+//! *root* instead would be O(1)/op on a chain and break the cross-check.
+//!
+//! The identity itself (unlike the array) holds tightly only for the degenerate **chain**;
+//! for a balanced tree the FD sum *overshoots* churn (the methods agree in complexity
+//! class only). See the `methodology` self-test in `mod.rs`.
+//!
+//! One honest consequence survives, narrowed: *both* spines are still cheaper than a
+//! random key (≈ ln n vs an average depth of ≈ 2 ln n), so alternating fixes the reported
+//! **class** but not the constant — the measured BST mutation *magnitude* still runs low.
+//! Read the curve for its O(log n) **shape**, not its absolute ns (docs/PLAN.md §2.3,
+//! §6.3).
 
 use wasm_bindgen::prelude::*;
 
@@ -68,7 +80,11 @@ pub struct BstF64 {
     /// The spare key cycled in/out by `churn_n` (docs/PLAN.md §6.3). The caller sets it to
     /// a value absent from the tree (the engine uses `max + 1`, so it descends the right
     /// spine) — each insert is real and the matching delete restores size, holding n stable.
-    churn_key: f64,
+    churn_lo: f64,
+    churn_hi: f64,
+    /// Which end the next churn pair uses. Persisted across `churn_n` calls so that even a
+    /// run of one-pair batches alternates instead of pinning one spine.
+    churn_hi_next: bool,
 }
 
 #[wasm_bindgen]
@@ -128,23 +144,29 @@ impl BstF64 {
 
     // ── Mutation: churn at fixed size (docs/PLAN.md §6.3, primary method) ──
 
-    /// Set the spare key cycled by `churn_n` — must be absent from the tree so each
-    /// insert is real and the matching delete restores size. The engine passes `max + 1`,
-    /// which descends the right spine. Untimed.
-    pub fn set_churn_key(&mut self, key: f64) {
-        self.churn_key = key;
+    /// Set the two spare keys cycled by `churn_n` — **both** must be absent from the tree
+    /// so each insert is real and the matching delete restores size. The engine passes
+    /// `lo = min − 1` (descends the **left** spine) and `hi = max + 1` (the **right**
+    /// spine); pairs alternate between them, so a degenerate chain of either handedness is
+    /// measured honestly (docs/METHODOLOGY.md §4.1). Untimed.
+    pub fn set_churn_keys(&mut self, lo: f64, hi: f64) {
+        self.churn_lo = lo;
+        self.churn_hi = hi;
     }
 
-    /// Timed hot path: `k` insert+delete *pairs* of the churn key, holding size stable at
-    /// ≈ n (docs/PLAN.md §6.3). Isolates the per-op mutation cost at a fixed n — you cannot
-    /// time a batch of plain inserts because each one changes n. The combined insert+delete
-    /// of `max + 1` walks the right spine down and back up. Returns the delete-hit count to
-    /// defeat dead-code elimination. No op-counting overhead (`COUNT=false`).
+    /// Timed hot path: `k` insert+delete *pairs*, holding size stable at ≈ n
+    /// (docs/PLAN.md §6.3). Isolates the per-op mutation cost at a fixed n — you cannot
+    /// time a batch of plain inserts because each one changes n. Successive pairs
+    /// **alternate** the two churn keys, so each measured unit is one pair down-and-up
+    /// either the left or the right spine (docs/METHODOLOGY.md §4.1). Returns the
+    /// delete-hit count to defeat dead-code elimination. No op-counting overhead
+    /// (`COUNT=false`).
     pub fn churn_n(&mut self, k: u32) -> u32 {
-        let key = self.churn_key;
         let mut ops = 0u64;
         let mut hits = 0u32;
         for _ in 0..k {
+            let key = if self.churn_hi_next { self.churn_hi } else { self.churn_lo };
+            self.churn_hi_next = !self.churn_hi_next;
             self.insert::<false>(key, &mut ops);
             if self.delete::<false>(key, &mut ops) {
                 hits += 1;
@@ -153,16 +175,22 @@ impl BstF64 {
         hits
     }
 
-    /// Op-count signal (§6.4) for *one* churn pair: the comparisons of a counted
-    /// insert+delete of the churn key. The pair nets zero size change, so state is
-    /// unchanged afterwards. Cost = insert find-path + delete find-path comparisons
-    /// (≈ 2 × right-spine depth) — the delete's successor walk carries none (risk R1).
+    /// Op-count signal (§6.4) for *one* churn pair — the **mean** of the two alternating
+    /// pairs, matching what `churn_n` amortises per unit. Averaging (not summing) is what
+    /// keeps the tree series on the same per-pair y-axis as every other structure, and
+    /// comparable with the per-marginal-op `insert_fd + delete_fd`. Each pair nets zero
+    /// size change, so state is unchanged afterwards. Cost = insert find-path + delete
+    /// find-path comparisons (≈ 2 × that spine's depth) — the delete's successor walk
+    /// carries none (risk R1).
     pub fn churn_counted(&mut self) -> f64 {
-        let key = self.churn_key;
-        let mut ops = 0u64;
-        self.insert::<true>(key, &mut ops);
-        let _ = self.delete::<true>(key, &mut ops);
-        ops as f64
+        let (lo, hi) = (self.churn_lo, self.churn_hi);
+        let mut lo_ops = 0u64;
+        self.insert::<true>(lo, &mut lo_ops);
+        let _ = self.delete::<true>(lo, &mut lo_ops);
+        let mut hi_ops = 0u64;
+        self.insert::<true>(hi, &mut hi_ops);
+        let _ = self.delete::<true>(hi, &mut hi_ops);
+        (lo_ops + hi_ops) as f64 / 2.0
     }
 
     // ── Mutation: cumulative build / teardown (docs/PLAN.md §6.3, cross-check) ──
@@ -187,35 +215,53 @@ impl BstF64 {
         ops as f64
     }
 
-    /// Timed: delete every stored key by repeatedly removing the current maximum, leaving
-    /// the tree empty (docs/PLAN.md §6.3 teardown). The max is the rightmost node — reached
-    /// down the right spine, the same path the churn key probes — and is always a
-    /// leaf-or-one-child, so no two-child Hibbard copy occurs. Returns the delete count to
-    /// defeat DCE. No op-counting overhead (`COUNT=false`).
+    /// Timed: delete every stored key by removing the current **maximum and minimum in
+    /// turn**, leaving the tree empty (docs/PLAN.md §6.3 teardown). The two extremes are
+    /// the rightmost and leftmost nodes — reached down exactly the two spines the churn
+    /// keys probe, which is what keeps churn and the finite-difference delete on the same
+    /// paths (docs/METHODOLOGY.md §4.1) — and each is a leaf-or-one-child, so no two-child
+    /// Hibbard copy occurs. Returns the delete count to defeat DCE. No op-counting overhead
+    /// (`COUNT=false`).
     pub fn teardown_all(&mut self) -> u32 {
         let mut ops = 0u64;
         let mut count = 0u32;
-        while let Some(max) = self.max_value() {
-            self.delete::<false>(max, &mut ops);
-            count += 1;
+        let mut take_hi = true;
+        loop {
+            let end = if take_hi { self.max_value() } else { self.min_value() };
+            match end {
+                Some(v) => {
+                    take_hi = !take_hi;
+                    self.delete::<false>(v, &mut ops);
+                    count += 1;
+                }
+                None => break,
+            }
         }
         count
     }
 
     /// Op-count for a full size-`n` teardown: total comparisons to delete every key by
-    /// repeatedly removing the current maximum (Σ over the shrinking tree of each max's
-    /// find-path depth). Built untimed via `new`, then counted.
+    /// removing the current maximum and minimum in turn (Σ over the shrinking tree of each
+    /// extreme's find-path depth). Built untimed via `new`, then counted.
     pub fn teardown_counted(keys: &[f64], n: usize) -> f64 {
         let mut t = BstF64::new(keys, n);
         let mut ops = 0u64;
-        while let Some(max) = t.max_value() {
-            t.delete::<true>(max, &mut ops);
+        let mut take_hi = true;
+        loop {
+            let end = if take_hi { t.max_value() } else { t.min_value() };
+            match end {
+                Some(v) => {
+                    take_hi = !take_hi;
+                    t.delete::<true>(v, &mut ops);
+                }
+                None => break,
+            }
         }
         ops as f64
     }
 
     /// Timed: build a fresh size-`n` tree via inserts, then tear it all down by
-    /// delete-max, in one self-contained call. Subtracting the `build_insert_n` time
+    /// alternating delete-max / delete-min, in one self-contained call. Subtracting the `build_insert_n` time
     /// isolates the teardown — the delete side of the finite-difference method (docs/PLAN.md
     /// §6.3); the identical insert build path cancels in the subtraction.
     pub fn build_then_teardown_n(keys: &[f64], n: usize) -> u32 {
@@ -232,7 +278,9 @@ impl BstF64 {
             free: Vec::new(),
             count: 0,
             probes: Vec::new(),
-            churn_key: 0.0,
+            churn_lo: 0.0,
+            churn_hi: 0.0,
+            churn_hi_next: true,
         }
     }
 
@@ -249,6 +297,22 @@ impl BstF64 {
         loop {
             match self.nodes[cur as usize].right {
                 Some(r) => cur = r,
+                None => return Some(self.nodes[cur as usize].value),
+            }
+        }
+    }
+
+    /// Value of the current minimum — the leftmost node, found by following left links
+    /// from the root (no key comparison, so it is not a cost event — the same pointer-walk
+    /// rule as `max_value`, risk R1). `None` for an empty tree. The node a `delete` of this
+    /// value lands on can never have a *left* child (nothing sorts left of the minimum), so
+    /// delete-min never takes the two-child Hibbard path — the invariant the two-key
+    /// teardown rests on (docs/METHODOLOGY.md §4.1).
+    fn min_value(&self) -> Option<f64> {
+        let mut cur = self.root?;
+        loop {
+            match self.nodes[cur as usize].left {
+                Some(l) => cur = l,
                 None => return Some(self.nodes[cur as usize].value),
             }
         }
@@ -627,17 +691,71 @@ mod tests {
     }
 
     #[test]
-    fn churn_holds_size_and_counts_the_right_spine_round_trip() {
-        // Chain 10→20→30: max = 30 at depth 2. churn key 99 (> max) descends the right
-        // spine: insert walks 10,20,30 (3 comparisons) → leaf at depth 3; delete finds it
-        // in 4 comparisons. churn = 3 + 4 = 7. The pair nets zero, so size is restored.
+    fn churn_holds_size_and_averages_the_two_spine_round_trips() {
+        // Chain 10→20→30 (a *right* chain). hi = 99 (> max) descends the right spine:
+        // insert walks 10,20,30 (3 comparisons) → leaf at depth 3; delete finds it in 4.
+        // hi pair = 3 + 4 = 7. lo = 9 (< min) hangs off the root: insert 1 comparison,
+        // delete 2 ⇒ lo pair = 3. `churn_counted` reports their **mean**, (7 + 3) / 2 = 5.
+        // Each pair nets zero, so size is restored.
         let mut t = bst(&[10.0, 20.0, 30.0]);
-        t.set_churn_key(99.0);
+        t.set_churn_keys(9.0, 99.0);
         t.churn_n(5);
         assert_eq!(t.len(), 3);
         assert_eq!(t.keys_in_order(), vec![10.0, 20.0, 30.0]);
-        assert_eq!(t.churn_counted(), 7.0);
+        assert_eq!(t.churn_counted(), 5.0);
         assert_eq!(t.len(), 3); // churn_counted nets zero
+    }
+
+    #[test]
+    fn churn_alternates_the_two_keys_across_calls() {
+        // The alternation flag persists between `churn_n` calls, so a run of one-pair
+        // batches (what the measurer's auto-grow starts with) still sees both spines
+        // rather than pinning the cheap one — the whole point of §4.1.
+        let mut t = bst(&[10.0, 20.0, 30.0]);
+        t.set_churn_keys(9.0, 99.0);
+        assert!(t.churn_hi_next);
+        t.churn_n(1);
+        assert!(!t.churn_hi_next);
+        t.churn_n(1);
+        assert!(t.churn_hi_next);
+        t.churn_n(3); // odd batch: hi, lo, hi ⇒ next is lo
+        assert!(!t.churn_hi_next);
+        assert_eq!(t.keys_in_order(), vec![10.0, 20.0, 30.0]);
+    }
+
+    /// The two-key teardown's safety invariant (docs/METHODOLOGY.md §4.1): the node a
+    /// delete-min lands on never has a *left* child, so it can never take the two-child
+    /// Hibbard path — provably, since nothing sorts left of the minimum. This holds even
+    /// with duplicate minima (equal keys go right). Checked at every step of a full
+    /// delete-min teardown.
+    #[test]
+    fn delete_min_never_hits_the_two_child_path() {
+        let mut t = bst(&[50.0, 30.0, 70.0, 30.0, 10.0, 10.0, 90.0, 20.0, 10.0]);
+        while let Some(min) = t.min_value() {
+            // Walk to the node `delete(min)` would stop at and assert it has no left child.
+            let mut cur = t.root;
+            let mut checked = false;
+            while let Some(i) = cur {
+                let v = t.nodes[i as usize].value;
+                if min == v {
+                    assert!(
+                        t.nodes[i as usize].left.is_none(),
+                        "the minimum's node has a left child"
+                    );
+                    checked = true;
+                    break;
+                }
+                cur = if min < v {
+                    t.nodes[i as usize].left
+                } else {
+                    t.nodes[i as usize].right
+                };
+            }
+            assert!(checked, "min_value returned a key delete cannot find");
+            let mut ops = 0u64;
+            assert!(t.delete::<false>(min, &mut ops));
+        }
+        assert!(t.is_empty());
     }
 
     #[test]
@@ -650,14 +768,16 @@ mod tests {
     }
 
     #[test]
-    fn teardown_empties_by_delete_max_and_counts_each_find_path() {
-        let keys = [10.0, 20.0, 30.0]; // chain; max depths 2,1,0 ⇒ finds 3,2,1
+    fn teardown_empties_by_alternating_the_extremes_and_counts_each_find_path() {
+        // Chain 10→20→30, alternating max/min: delete 30 (find 10,20,30 = 3), then the
+        // new min 10 (root, find 1), then the max 20 (root, find 1) ⇒ 5.
+        let keys = [10.0, 20.0, 30.0];
         let mut t = BstF64::new(&keys, 3);
         assert_eq!(t.teardown_all(), 3);
         assert!(t.is_empty());
-        assert_eq!(BstF64::teardown_counted(&keys, 3), 6.0); // 3 + 2 + 1
-        // Balanced 50 {30,70}: delete 70 (find 2), then 50 (root, find 1), then 30 (find 1).
-        assert_eq!(BstF64::teardown_counted(&[50.0, 30.0, 70.0], 3), 4.0);
+        assert_eq!(BstF64::teardown_counted(&keys, 3), 5.0);
+        // Balanced 50 {30,70}: delete max 70 (find 2), min 30 (find 2), then 50 (find 1).
+        assert_eq!(BstF64::teardown_counted(&[50.0, 30.0, 70.0], 3), 5.0);
     }
 
     #[test]

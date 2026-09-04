@@ -111,11 +111,36 @@ interface MutationStructStatics {
 type MutationStructCtor = (new (keys: Float64Array, n: number) => MutationStruct) &
   MutationStructStatics;
 
+/**
+ * The **tree** mutation surface. Identical to {@link MutationStruct} except that churn
+ * takes *two* spare keys instead of one: a tree's mutation cost depends on which end of
+ * the key range the churn key lands in, so a single key can report the wrong complexity
+ * class (docs/METHODOLOGY.md §4.1). `BstF64` and `AvlF64` satisfy it structurally.
+ */
+interface TreeMutationStruct {
+  set_churn_keys(lo: number, hi: number): void;
+  churn_n(k: number): number;
+  churn_counted(): number;
+  free(): void;
+}
+type TreeMutationStructCtor = (new (
+  keys: Float64Array,
+  n: number,
+) => TreeMutationStruct) &
+  MutationStructStatics;
+
 /** Largest of the first `n` keys (n > 0 assumed by callers), or 0 if none. */
 function maxOfFirst(keys: Float64Array, n: number): number {
   let max = -Infinity;
   for (let i = 0; i < n; i++) if (keys[i] > max) max = keys[i];
   return Number.isFinite(max) ? max : 0;
+}
+
+/** Smallest of the first `n` keys (n > 0 assumed by callers), or 0 if none. */
+function minOfFirst(keys: Float64Array, n: number): number {
+  let min = Infinity;
+  for (let i = 0; i < n; i++) if (keys[i] < min) min = keys[i];
+  return Number.isFinite(min) ? min : 0;
 }
 
 /**
@@ -135,8 +160,36 @@ function churnRunnerFactory(Ctor: MutationStructCtor, keys: Float64Array): OpRun
   };
 }
 
+/**
+ * Tree churn runner (docs/PLAN.md §6.3 primary, docs/METHODOLOGY.md §4.1): as
+ * {@link churnRunnerFactory}, but sets **two** spare keys — `min − 1` and `max + 1` — and
+ * the engine alternates them pair by pair.
+ *
+ * Why trees need this and the flat structures do not: a one-keyed churn at `max + 1` only
+ * ever walks the tree's *right* spine. On **reverse-sorted** input a naive BST is a left
+ * chain whose right spine is a single node, so its mutation measured O(1) while its search
+ * measured O(n) — a wrong complexity *class* on the chart. Alternating both ends means
+ * whichever way a degenerate input leans, one of the two keys walks the whole chain. The
+ * array / sorted array / linked list keep the single-key runner: their churn-key position
+ * is a deliberate, documented choice (the sorted array's *front*, the list's *head*).
+ */
+function treeChurnRunnerFactory(
+  Ctor: TreeMutationStructCtor,
+  keys: Float64Array,
+): OpRunnerFactory {
+  return (n) => {
+    const s = new Ctor(keys.subarray(0, n), n);
+    s.set_churn_keys(minOfFirst(keys, n) - 1, maxOfFirst(keys, n) + 1);
+    return {
+      run: (k) => s.churn_n(k),
+      opCountPerOp: () => s.churn_counted(),
+      dispose: () => s.free(),
+    };
+  };
+}
+
 /** Build runner (insert side): `run(k)` does `k` builds-from-empty to size n. */
-function buildRunnerFactory(Ctor: MutationStructCtor, keys: Float64Array): OpRunnerFactory {
+function buildRunnerFactory(Ctor: MutationStructStatics, keys: Float64Array): OpRunnerFactory {
   return (n) => {
     const view = keys.subarray(0, n);
     const cumulativeOps = Ctor.build_insert_counted(view, n);
@@ -157,7 +210,7 @@ function buildRunnerFactory(Ctor: MutationStructCtor, keys: Float64Array): OpRun
  * isolating the teardown — the same insert build path cancels.
  */
 function buildTeardownRunnerFactory(
-  Ctor: MutationStructCtor,
+  Ctor: MutationStructStatics,
   keys: Float64Array,
 ): OpRunnerFactory {
   return (n) => {
@@ -259,7 +312,9 @@ const api = {
    * this reuses the exact runner factories the array/hash set use. The open question
    * this slice owns — whether `churn ≈ insert_fd + delete_fd` holds for a tree — is
    * proven clock-free in Rust (`structures::methodology`); here it runs on the real
-   * browser clock. `keys` is transferred in by the caller.
+   * browser clock. Churn uses the **two-key** runner (docs/METHODOLOGY.md §4.1) so a
+   * left-leaning chain cannot report a flat mutation curve. `keys` is transferred in by
+   * the caller.
    */
   async runBstMutationSweep(
     keys: Float64Array,
@@ -268,8 +323,8 @@ const api = {
   ): Promise<SweepSeries[]> {
     await ready;
     const now = () => performance.now();
-    const Ctor = BstF64 as unknown as MutationStructCtor;
-    const churn = measureSweep(sizes, churnRunnerFactory(Ctor, keys), now, opts);
+    const Ctor = BstF64 as unknown as TreeMutationStructCtor;
+    const churn = measureSweep(sizes, treeChurnRunnerFactory(Ctor, keys), now, opts);
     const fd = measureMutationFd(
       'bst',
       sizes,
@@ -289,7 +344,10 @@ const api = {
    * of input order, so unlike the BST it is safe on sorted input too. The AVL satisfies
    * the same churn/build/teardown surface, so this reuses the exact runner factories the
    * array/hash set/BST use. On the real browser clock the headline is that AVL mutation
-   * stays **sub-linear** (O(log n)) — the balanced contrast to the array's O(n). The
+   * stays **sub-linear** (O(log n)) — the balanced contrast to the array's O(n). It shares
+   * the BST's **two-key** churn runner: balance already bounds both spines, so this is not
+   * a correctness fix for the AVL, but one measurement recipe keeps the two tree curves
+   * comparable (docs/METHODOLOGY.md §4.1). The
    * deterministic op-count finding (AVL stays O(log n) where the BST degenerates on
    * sorted input; churn ≈ the finite-difference sum) is proven clock-free in Rust
    * (`structures::methodology`). `keys` is transferred in by the caller.
@@ -301,8 +359,8 @@ const api = {
   ): Promise<SweepSeries[]> {
     await ready;
     const now = () => performance.now();
-    const Ctor = AvlF64 as unknown as MutationStructCtor;
-    const churn = measureSweep(sizes, churnRunnerFactory(Ctor, keys), now, opts);
+    const Ctor = AvlF64 as unknown as TreeMutationStructCtor;
+    const churn = measureSweep(sizes, treeChurnRunnerFactory(Ctor, keys), now, opts);
     const fd = measureMutationFd(
       'avl',
       sizes,
