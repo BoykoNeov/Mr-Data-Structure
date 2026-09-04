@@ -764,8 +764,12 @@ insert/search/delete group on a shared key type.
     buys, while the insert halves cannot, since the build drops every key at the chain's
     bottom; and the AVL's close agreement widened from ~6 % to ~10 %. A new self-test pins
     the fix itself: on reverse-sorted input the old one-keyed recipe reads ≤ 3 ops while the
-    two-key recipe reads > n/4. UI copy on the reverse-sorted callout, METHODOLOGY §2.3/§4.1/§5
-    and this section updated to match. **No new deps.**
+    two-key recipe reads > n/4, and `verify:browser` gained a **second pass**: it drives the
+    picker to reverse-sorted and asserts on the *real clock* that BST churn now reads O(n)
+    (measured slope 1.00, R² 1.000, ratio 8× across the sweep) while the AVL stays sub-linear
+    (0.16) on the same input — the curve the user actually sees, which no op-count test can
+    prove. UI copy on the reverse-sorted callout, METHODOLOGY §2.3/§4.1/§5 and this section
+    updated to match. **No new deps.**
   - **Open:** string-key sweep wiring; presets ("sorted data kills a naive BST"
     as one click); PNG export; interleaved structure order per sweep point.
 

@@ -51,9 +51,12 @@ tool call does not survive into the next (each call is a fresh process).
   POSIX scripts. They take different syntax.
 - `verify:browser` needs Playwright's pinned Chromium; in a sandbox with a
   pre-installed one, set `VERIFY_CHROMIUM=/path/to/chrome`.
-- The Compare default auto-run (what the browser gate measures) is **one uniform
-  dataset for every structure**. Don't switch it to `sorted` — the gate asserts
-  sub-linear BST churn, which only holds on shuffled input.
+- The Compare default auto-run (what the browser gate measures first) is **one
+  uniform dataset for every structure**. Don't switch it to `sorted` — the gate
+  asserts sub-linear BST churn, which only holds on shuffled input. The gate then
+  drives the picker to **reverse-sorted** for a second pass and asserts the
+  opposite there (BST churn O(n), AVL still sub-linear) — the regression guard for
+  the two-key churn probe, METHODOLOGY §4.1. Keep both passes.
 - `dist/` and `bench-engine/pkg/` are gitignored build artifacts (CI rebuilds
   them) — leave them untracked.
 
