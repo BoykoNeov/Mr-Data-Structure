@@ -101,6 +101,7 @@ position. Every regime is pinned clock-free on exact op-counts in
 | sorted array (front churn) | **churn overshoots sum** (≈ 2n vs ≈ 3n/2) | front churn shifts the whole array twice; the shuffled build inserts at average position n/2 | yes, O(n) — and *tail* churn would have read O(log n): the key position sets the class |
 | linked list | **class disagreement** (churn O(1), FD delete O(n)) | head insert puts the churn key where deletion is O(1); the canonical delete-by-value (teardown of the oldest) walks the list | **no** — reported, not hidden |
 | min-heap | **churn overshoots sum** (~1.5×: 53 vs 34.9), but the *insert halves* are in different classes | churn's insert is a new global minimum climbing the full height (Θ(log n), forced — see §4.2); a shuffled build's marginal insert is O(1), since most of a heap is leaves | totals yes, Θ(log n); **insert halves no** |
+| skip list | **FD sum overshoots churn** (~56 %: 35.2 vs 22.5) | the two churn keys sit just off either end, where a descent is cheap — running off the *right*-hand end costs no comparison at all — while `insert_fd` reflects the average key's full search path and `delete_fd` is added on top. Nothing to do with balance: this structure never rebalances (§2.6) | class only, O(log n) |
 
 Both BST rows moved with the two-key change (they were "tight" and
 "overshoot"): alternating the ends is what fixes the *class* on reverse-sorted
@@ -112,6 +113,11 @@ Consequence for the UI: churn is shown as *the* mutation curve, the FD split as
 the cross-check, and both are read for **shape** (PLAN §2.3). Where the churn
 key's position biases the constant (trees, sorted array) or even the class
 (linked list), the bias is stated next to the chart and in §4 below.
+
+Nine regimes, and the skip list's is the balanced BST's story told by a
+structure with no tree in it: both probe the cheap edges of a shape whose average
+is dearer. What differs is *why* the shape is safe — the tree rebalances, the
+skip list was never unbalanced (§2.6).
 
 All four flat structures now run this pair of methods **on the browser clock**,
 not only on op-counts, and regimes 6 and 7 are where that matters most:
@@ -251,6 +257,56 @@ bend beside the chart. It deliberately does *not* try to separate this curve fro
 a genuinely logarithmic one by slope — a log-log slope is not comparable across
 two different size ladders, and the separation that matters is the clock-free one
 above.
+
+### 2.6 A probabilistic structure with no random numbers (the skip list)
+
+A skip list is the one structure in the catalogue whose textbook complexity is
+*expected* rather than worst-case: each node is given a random height, tall
+nodes form sparse express lanes, and a search drops through them. Ours gives
+each node a height too — but derives it from the key rather than flipping a
+coin:
+
+```text
+height(key) = 1 + min(23, trailing_zeros(splitmix64(to_bits(key) ^ SALT)))
+```
+
+`trailing_zeros` of a well-mixed 64-bit hash is geometric with p = ½, which is
+exactly the distribution the coin flips produce, so the *shape* is the textbook
+one. What changes is that the structure becomes a **pure function of its key
+set**. Three things in this project need that:
+
+1. **The op-count signal must not depend on the clock.** The counted code path
+   performs real inserts (`churn_counted`, `build_insert_counted`), and
+   `measure.ts` interleaves timed and counted calls under adaptive batching. A
+   shared RNG stream would make node heights — and therefore the op-count — a
+   function of how many timed batches happened to run first. The op-count is
+   meant to be the deterministic half of the two signals (§1).
+2. **Cross-language conformance stays exact.** The TypeScript teaching twin
+   reproduces `conformance/corpus-skip.txt` bit for bit, using primitives that
+   already had bit-exact ports (`splitMix64`, `toBits`). The alternative —
+   recording heights in the corpus for the twin to replay — would leave the
+   teaching impl unable to insert a key the corpus never saw, which is the whole
+   job of an animation.
+3. **The finding gets stronger.** Heights are insertion-order-independent by
+   construction, so "the skip list keeps O(log n) on the reverse-sorted input
+   that turns a naive BST into an O(n) chain" holds with no RNG caveat — and it
+   holds for a structure that never rotates. That is what earns it a line beside
+   the AVL: same outcome, opposite mechanism.
+
+**The honest caveat.** The probabilistic guarantee has moved from the coin to
+the data. A key set adversarially chosen to collide in
+`trailing_zeros(splitmix64(...))` would build a degenerate list — the same class
+of statement as "sorted input kills a naive BST", and on-theme for a tool whose
+premise is measuring the user's own data. No *ordering* of keys can do it, which
+is why `src/registry.ts` leaves `shapeSensitive` false: that flag is about input
+order, and cannot carry a claim about distribution.
+
+One knock-on worth stating: the salt exists because `splitmix64(0) == 0` and
+`trailing_zeros(0)` is 64, so hashing the raw bits would hand the key `0` a
+full-height tower. `0` is one of the commonest keys real data contains, and a
+stray 24-level express lane costs every later descent an extra inspection per
+level — a doubled constant on every measured operation, from one key. Salting
+moves the fixed point onto a key nobody has.
 
 ## 3. Reading a curve — the fitter (`src/bench/fit.ts`)
 
@@ -423,6 +479,12 @@ Ordered by how much they can mislead a reader today.
    absent case (§2.5). That keeps the chart a comparison, at the cost of a
    constant no real workload would pay in full. It moves the line up, never its
    slope.
+12. **The skip list's guarantee is over the key distribution, not a coin.** Its
+   node heights are derived from each key's hash (§2.6), which buys determinism
+   and order-independence and costs the classical "expected over the algorithm's
+   own randomness" guarantee. For any *fixed* key set the structure is fixed;
+   there is no re-roll. A distribution engineered against the hash would
+   degenerate it, exactly as sorted input degenerates a naive BST.
 
 ## 5. Proof map — which test pins which claim
 
@@ -433,13 +495,17 @@ Ordered by how much they can mislead a reader today.
 | two-key churn recovers the O(n) class on a reverse-sorted BST (a one-keyed churn read O(1)) | `structures::methodology::bst_reverse_sorted_two_key_churn_recovers_the_linear_class` | none (op-counts) |
 | delete-min never takes the two-child path, so the alternating teardown is safe | `structures::bst::tests::delete_min_never_hits_the_two_child_path` | none (op-counts) |
 | the churn unit stays *one* pair — the two keys are averaged, not summed | `structures::bst::tests::churn_holds_size_and_averages_the_two_spine_round_trips` | none (op-counts) |
-| the eight churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` | none (exact op-counts) |
+| the nine churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` | none (exact op-counts) |
 | AVL stays O(log n) on the sorted input that makes the BST an O(n) chain | same | none |
 | sorted array: O(log n) search vs O(n) mutation on the same structure | same | none |
 | min-heap: O(n) search vs Θ(log n) extract-min on the same structure (the sorted array's split inverted) | `structures::methodology::heap_search_is_linear_while_extract_min_is_log_n` | none |
 | a heap's build is order-sensitive (Θ(n) ascending, Θ(n log n) descending) while its churn is not | `structures::methodology::heap_build_is_order_sensitive_but_churn_is_not` | none |
 | a `max + 1` churn key would drain a heap instead of holding its size — why the low key is forced | `structures::heap::tests::a_high_churn_key_would_drain_the_heap` | none |
 | the heap's six op-counting rules match the TS twin (layout, tie-breaks, the 0-op emptying extract) | `conformance/corpus-heap.txt` + `src/structures/conformance-heap.test.ts` | none |
+| the skip list keeps O(log n) on the reverse-sorted input that makes the BST an O(n) chain — with no rotations, because its heights come from the keys | `structures::methodology::skip_list_keeps_its_class_on_the_input_that_degenerates_a_bst` | none |
+| the same key set builds the same skip list however the keys arrive (the claim §2.6 rests on) | `structures::skip_list::tests::the_list_is_a_function_of_the_key_set_not_the_insertion_order` | none |
+| *both* skip-list churn ends stay in the same class — the check the sorted array fails, and the reason its key position is a documented decision | `structures::skip_list::tests::neither_churn_end_changes_the_reported_class` | none |
+| a mis-linked express lane cannot pass conformance: the corpus pins the keys visible at *each* level, before and after a delete sequence | `conformance/corpus-skip.txt` + `src/structures/conformance-skip.test.ts` | none |
 | fitter: classes, slope ± SE, CI, local slopes, tail slope, trend | `src/bench/fit.test.ts` | — |
 | TS twin ≡ Rust twin (iteration order, shape, per-op counts) | `conformance/*.txt` + `src/structures/conformance-*.test.ts` + Rust `conformance.rs` | — |
 | animation shows exactly what the benchmark counts | `src/viz/trace*.test.ts` | — |
@@ -449,6 +515,7 @@ Ordered by how much they can mislead a reader today.
 | **linked list on the real clock — the class disagreement of regime 7:** churn reads flat O(1) while the finite-difference delete-by-value reads O(n) (slope ≈ 1.15, ratio ≈ 11.5×) on the *same* run, the two costs 562× apart at the top of the sweep. The only place in this project where the two methods land in different classes, now visible on the clock and not just in op-counts | `scripts/verify-browser.mjs` | real |
 | **partly resolution-limited, and labelled as such:** the *flat* half of that pair is a ~9 ns/op series sitting on the timer's quantization floor — one run reported `firstNanos === lastNanos` to sixteen digits (R² 1.0, slope stderr 5.7e-9), and across five runs the fitted slope wandered over 0.00 / −0.35 / −0.05 / −0.05 / 0.00 on a curve whose true slope is 0. So the gate asserts it two-sided and loose (`\|slope\| < 0.6`, the same threshold the tree/heap churn checks use) and the UI says the wall-clock reading is at the clock's floor. §4 hurdle 2 again — the O(1) class itself is carried by the op-counts, where a churn pair is exactly one node visit at every n. The *rising* half needs no such hedge: it is the robust check, and the 500×+ cost gap is what actually pins the disagreement | `scripts/verify-browser.mjs`, `structures::methodology` | real + none |
 | on **reverse-sorted** input the BST's *measured* churn curve reads O(n) (slope ≈ 1.00, R² 1.000) while the AVL stays sub-linear (≈ 0.16) — the wall-clock half of §4.1, which a right-spine-only probe read as flat | `scripts/verify-browser.mjs`, second pass (drives the picker to reverse-sorted) | real |
+| **the skip list on the real clock:** search sub-linear *and* churn sub-linear on the same run (slopes 0.23 and 0.02) — the sorted array's read cost (0.25) without its write cost (0.82) — and churn stays sub-linear on the reverse-sorted pass (0.09) where the BST's reads O(n) (1.02) | `scripts/verify-browser.mjs`, both passes | real |
 | the min-heap on the real clock: search reads **O(n)** (slope ≈ 0.97, ratio ≈ 6400×) with no lookup shortcut, and churn stays **sub-linear** (≈ 0.13 uniform, ≈ 0.11 reverse-sorted — a heap cannot degenerate) | `scripts/verify-browser.mjs`, both passes | real |
 | extract-min costs **more per operation** than insert at the top of the sweep (asserted > 1.3×; measured 7.5× and 10.6×) — a *cost* claim, not a growth claim, for the reason in §4 hurdle 2 | `scripts/verify-browser.mjs` | real |
 | the absent probe/churn key is genuinely absent, **length-preserving**, and takes its length from a median key rather than from `keys[0]` — the guard against reintroducing the sentinel bias of §2.5 | `src/bench/stringWorkload.test.ts` | none |

@@ -31,6 +31,10 @@
  * `triestr` joins them in Phase 6: a prefix tree, on the same three operations and
  * the same key type, and the first structure here whose textbook cost does not
  * mention `n` at all (docs/PLAN.md §8 "Specialized").
+ *
+ * `skiplist` is Phase 6's numeric addition: the ordered structure that reaches
+ * O(log n) with no balancing at all, its node heights derived from each key's hash
+ * rather than a coin (docs/PLAN.md §8 "Specialized").
  */
 export type StructureId =
   | 'array'
@@ -40,6 +44,7 @@ export type StructureId =
   | 'sarr'
   | 'll'
   | 'heap'
+  | 'skiplist'
   | 'arraystr'
   | 'hashsetstr'
   | 'triestr';

@@ -15,7 +15,7 @@ import type { StructureId } from './bench/measure';
  */
 describe('structure registry', () => {
   it('covers every StructureId exactly once, with a distinct colour each', () => {
-    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap'];
+    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist'];
     for (const id of ids) expect(REGISTRY[id].id).toBe(id);
     // STRUCTURES is the *numeric* catalogue — the one the shared charts draw from.
     expect(STRUCTURES.map((s) => s.id).sort()).toEqual([...ids].sort());
@@ -61,6 +61,23 @@ describe('structure registry', () => {
     // its own rather than a deliberate duplicate.
     const numericHues = new Set(STRUCTURES.map((s) => s.color));
     expect(numericHues.has(REGISTRY.triestr.color)).toBe(false);
+  });
+
+  it('pins the skip list at O(log n) average, O(n) worst, and order-insensitive', () => {
+    // The point of putting it next to the AVL: both keep O(log n) on any input order, by
+    // opposite mechanisms. The AVL rotates; the skip list's express lanes come from the
+    // keys' hashes, so there is no order that can unbalance them — which is why the flag
+    // below is false even though the structure is nominally probabilistic. What could
+    // still degrade it is the key *distribution*, which a flag about input order cannot
+    // express, so that lives in docs/METHODOLOGY.md §2.6 instead.
+    expect(theoreticalClass('skiplist', 'search')).toBe('O(log n)');
+    expect(theoreticalClass('skiplist', 'churn')).toBe('O(log n)');
+    expect(theoreticalClass('skiplist', 'churn', 'sorted')).toBe('O(log n)');
+    expect(REGISTRY.skiplist.worst.search).toBe('O(n)');
+    expect(REGISTRY.skiplist.shapeSensitive).toBe(false);
+    // Same three operations as the array and the trees, so it shares their charts.
+    expect(isCanonical('skiplist')).toBe(true);
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('skiplist');
   });
 
   it('pins the §8 search classes: O(n) scan/walk, O(log n) binary search, O(1) hash', () => {

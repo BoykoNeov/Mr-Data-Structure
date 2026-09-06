@@ -93,6 +93,13 @@ export interface CompareResult {
   /** churn + finite-difference insert/delete for the BST and the AVL. */
   readonly trees: readonly SeriesView[];
   /**
+   * churn + finite-difference insert/delete for the **skip list**. Its own field rather
+   * than a member of {@link trees} because it is not a tree — it is a tower of linked
+   * lists — but it lands on the *same* shared charts, since it does the same three
+   * operations on the same key type. The separation is bookkeeping, not a risk-R6 split.
+   */
+  readonly skiplist: readonly SeriesView[];
+  /**
    * churn + finite-difference insert/extract-min for the **min-heap**. Kept apart from
    * {@link trees} because the op set differs: `churn` here is insert + extract-min, so
    * these curves compare only against each other (docs/PLAN.md §4.1, §8, risk R6).
@@ -168,6 +175,7 @@ interface ProofWindow {
   __mutationProof?: SweepProof[];
   __bstMutationProof?: SweepProof[];
   __avlMutationProof?: SweepProof[];
+  __skipMutationProof?: SweepProof[];
   __heapMutationProof?: SweepProof[];
   /** The string run's mirrors; `__stringMutationProof` is set last (see {@link runStringSweeps}). */
   __stringSweepProof?: SweepProof[];
@@ -270,6 +278,10 @@ export async function runAllSweeps(
   const avl = (await engine.runAvlMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
   if (win) win.__avlMutationProof = toProof(avl);
 
+  onStatus('running skip-list mutation sweep…');
+  const skiplist = (await engine.runSkipMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
+  if (win) win.__skipMutationProof = toProof(skiplist);
+
   onStatus('running min-heap mutation sweep…');
   const heap = (await engine.runHeapMutationSweep(keyBuffer(data), mutationSizes, HEAP_OPTS)).map((s) => toView(s));
   if (win) {
@@ -284,7 +296,16 @@ export async function runAllSweeps(
     win.__heapMutationProof = toProof(heap);
   }
 
-  return { search, mutation, trees: [...bst, ...avl], heap, shape, searchSizes, mutationSizes };
+  return {
+    search,
+    mutation,
+    trees: [...bst, ...avl],
+    skiplist,
+    heap,
+    shape,
+    searchSizes,
+    mutationSizes,
+  };
 }
 
 /** What one full **string-key** Compare run produces (see {@link runStringSweeps}). */

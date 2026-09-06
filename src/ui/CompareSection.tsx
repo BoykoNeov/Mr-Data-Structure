@@ -127,14 +127,14 @@ export function CompareSection() {
   const arrayScan = useMemo(() => search.filter((v) => v.series.structure === 'array'), [search]);
   const churn = useMemo(
     () =>
-      [...(result?.mutation ?? []), ...(result?.trees ?? [])]
+      [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? [])]
         .filter((v) => v.series.op === 'churn')
         .map((v) => toView(v.series, signal)),
     [result, signal],
   );
   const split = useMemo(
     () =>
-      [...(result?.mutation ?? []), ...(result?.trees ?? [])]
+      [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? [])]
         .filter((v) => v.series.op !== 'churn')
         .map((v) => toView(v.series, signal)),
     [result, signal],
@@ -348,10 +348,10 @@ export function CompareSection() {
         <>
       <h3 style={h3}>Search — the cost of finding a key</h3>
       <p style={{ color: '#555', marginTop: 0 }}>
-        Four structures look up a key four different ways: the unsorted array scans from the front, the
-        linked list walks node by node, the sorted array binary-searches, and the hash set jumps straight to
-        a bucket. (The min-heap is measured too, but it answers a different question and gets its own
-        section below.)
+        Five structures look up a key five different ways: the unsorted array scans from the front, the
+        linked list walks node by node, the sorted array binary-searches, the skip list drops down a tower of
+        ever-sparser express lanes, and the hash set jumps straight to a bucket. (The min-heap is measured
+        too, but it answers a different question and gets its own section below.)
       </p>
       {search.length > 0 && (
         <>
@@ -365,7 +365,10 @@ export function CompareSection() {
             sorted array (green) halves the search space each step, so it barely rises (<strong>O(log n)</strong>{' '}
             — watch its <em>local</em> slope fall toward 0 in the panel above: that falling trend is the
             logarithm’s signature, which the fitter now uses to tell it from flat). The hash set (blue) goes
-            straight to the right bucket and stays flat (<strong>O(1)</strong>). The dashed lines are each
+            straight to the right bucket and stays flat (<strong>O(1)</strong>). The skip list (olive) lands
+            in the sorted array’s class by an unrelated route — it never sorts anything, it just keeps a few
+            sparse lanes over the same keys and drops through them — which is why the two lines are worth
+            reading together on the add/remove chart below. The dashed lines are each
             structure’s textbook class scaled onto its points — where a solid line peels away from its dashed
             twin, the machine (cache, memory traffic) or the data is doing something the textbook doesn’t say.
           </Callout>
@@ -392,7 +395,12 @@ export function CompareSection() {
             saw above: <em>the same structure, cheap to read and expensive to write</em>. The hash set (blue)
             stays <strong>O(1)</strong>. The linked list (orange) is flat too, but not for the hash set's reason —
             see the note below the chart before you read anything into it. On shuffled data both trees — BST
-            (purple) and AVL (brown) — stay sub-linear (<strong>O(log n)</strong>), nearly flat.{' '}
+            (purple) and AVL (brown) — stay sub-linear (<strong>O(log n)</strong>), nearly flat. So does the
+            skip list (olive), and that is the pairing to look at next to the sorted array: the two of them
+            agreed on the search chart above, and here they part company. Keeping an array in order costs a
+            shift of everything after the change; splicing a node into a handful of express lanes costs the
+            same <strong>O(log n)</strong> the lookup did. <em>Same read cost, different write cost, same
+            data.</em>{' '}
             {sortedNote ? (
               <>
                 <strong>This dataset is sorted</strong>, so the naive BST built into a chain and its dashed

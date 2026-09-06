@@ -20,4 +20,5 @@ export { LinkedListF64, SinglyLinkedListF64, DoublyLinkedListF64 } from './linke
 export { BstF64, type BstShape } from './bst';
 export { AvlF64, type AvlShape } from './avl';
 export { MinHeapF64 } from './heap';
+export { SkipListF64, towerHeight, MAX_LEVEL as SKIP_MAX_LEVEL } from './skipList';
 export { mixF64, mixStr } from './mix';

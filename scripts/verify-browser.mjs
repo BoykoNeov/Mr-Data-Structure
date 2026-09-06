@@ -24,9 +24,11 @@ let mutation = null;
 let bst = null;
 let avl = null;
 let heap = null;
+let skip = null;
 let revBst = null;
 let revAvl = null;
 let revHeap = null;
+let revSkip = null;
 let strSearch = null;
 let strMutation = null;
 let strMeta = null;
@@ -37,9 +39,9 @@ const checks = [];
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
-  // is set last, after the search sweep and the array/hashset, BST and AVL mutation
-  // sweeps — or until the app reports an error. Generous timeout: the sweeps do real timed
-  // work, and the heap adds a fifth search series plus a sixth mutation sweep.
+  // is set last, after the search sweep and the array/hashset, BST, AVL and skip-list
+  // mutation sweeps — or until the app reports an error. Generous timeout: the sweeps do
+  // real timed work, and there are six search series and seven mutation sweeps.
   await page.waitForFunction(
     () =>
       window.__heapMutationProof !== undefined ||
@@ -52,6 +54,7 @@ try {
   bst = await page.evaluate(() => window.__bstMutationProof ?? null);
   avl = await page.evaluate(() => window.__avlMutationProof ?? null);
   heap = await page.evaluate(() => window.__heapMutationProof ?? null);
+  skip = await page.evaluate(() => window.__skipMutationProof ?? null);
   meta = await page.evaluate(() => window.__compareMeta ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
@@ -72,10 +75,11 @@ try {
     const sarrSearch = proof.find((p) => p.structure === 'sarr');
     const hashset = proof.find((p) => p.structure === 'hashset');
     const heapSearch = proof.find((p) => p.structure === 'heap');
+    const skipSearch = proof.find((p) => p.structure === 'skiplist');
 
     want(
-      'five search series measured',
-      proof.length === 5 && array && ll && sarrSearch && hashset && heapSearch,
+      'six search series measured',
+      proof.length === 6 && array && ll && sarrSearch && hashset && heapSearch && skipSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -120,6 +124,22 @@ try {
       want('heap search labelled O(n) — no lookup shortcut', heapSearch.best === 'O(n)');
       want(`heap search slope ~1 (0.7..1.4)`, heapSearch.slope >= 0.7 && heapSearch.slope <= 1.4);
       want(`heap search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
+    }
+    // Skip list (docs/PLAN.md §8 "Specialized"): the *second* sub-linear search on this
+    // chart. Same band and the same reason as the sorted array's — the §7.2 fitter cannot
+    // separate log n from constant, so the slope band is asserted and the label is not.
+    // What makes the second line worth drawing is what the churn chart adds below: this
+    // one is sub-linear to read *and* sub-linear to change, where the sorted array is
+    // sub-linear to read and O(n) to change.
+    if (skipSearch && array) {
+      want(
+        `skip-list search sub-linear (slope ${skipSearch.slope.toFixed(2)} < 0.4)`,
+        skipSearch.slope < 0.4,
+      );
+      want(
+        `skip-list search flatter than array (${skipSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
+        skipSearch.slope < array.slope,
+      );
     }
   }
 
@@ -273,6 +293,39 @@ try {
     }
   }
 
+  // Skip-list mutation (docs/PLAN.md §6.3, §8 "Specialized"): the structure that is cheap
+  // to read *and* cheap to change. Its churn uses the trees' two-key recipe, and both ends
+  // are honest here (checked in Rust:
+  // `skip_list::tests::neither_churn_end_changes_the_reported_class`) — unlike the sorted
+  // array, where the choice of end sets the reported class.
+  if (skip) {
+    const kChurn = skip.find((m) => m.structure === 'skiplist' && m.op === 'churn');
+    want('three skip-list mutation series measured', skip.length === 3);
+    if (kChurn) {
+      const ratio = kChurn.lastNanos / kChurn.firstNanos;
+      want(
+        `skip-list churn sub-linear (slope ${kChurn.slope.toFixed(2)} < 0.6)`,
+        kChurn.slope < 0.6,
+      );
+      want(`skip-list churn stays near-flat (ratio ${ratio.toFixed(1)} < 6)`, ratio < 6);
+    }
+    // **The contrast the skip list is on the chart for.** The sorted array and the skip
+    // list agree on search — both sub-linear, both getting there by halving the space to
+    // look in — and disagree on everything that follows: keeping a sorted array in order
+    // costs an O(n) shift on every change, while splicing a node into a few express lanes
+    // costs O(log n). One picture, two structures with the same read cost and different
+    // write costs, on the same data (docs/PLAN.md §8).
+    if (kChurn && mutation) {
+      const sChurn = mutation.find((m) => m.structure === 'sarr' && m.op === 'churn');
+      if (sChurn) {
+        want(
+          `skip list beats sorted array on churn class (${kChurn.slope.toFixed(2)} < 0.6 vs ${sChurn.slope.toFixed(2)} > 0.6)`,
+          kChurn.slope < 0.6 && sChurn.slope > 0.6,
+        );
+      }
+    }
+  }
+
   // Min-heap mutation (docs/PLAN.md §6.3, §8 trees/heaps): the churn primary here is
   // insert + **extract-min**, so it is read only against the heap's own split, never
   // against the structures above (risk R6). Two things the real clock can show that the
@@ -337,6 +390,7 @@ try {
   await page.evaluate(() => {
     window.__bstMutationProof = undefined;
     window.__avlMutationProof = undefined;
+    window.__skipMutationProof = undefined;
     window.__heapMutationProof = undefined;
   });
   await page.locator('select').first().selectOption('reverse-sorted');
@@ -352,6 +406,7 @@ try {
   revBst = await page.evaluate(() => window.__bstMutationProof ?? null);
   revAvl = await page.evaluate(() => window.__avlMutationProof ?? null);
   revHeap = await page.evaluate(() => window.__heapMutationProof ?? null);
+  revSkip = await page.evaluate(() => window.__skipMutationProof ?? null);
   const revMeta = await page.evaluate(() => window.__compareMeta ?? null);
 
   want('reverse-sorted run measured', revMeta && revMeta.order.kind === 'reverse-sorted');
@@ -375,6 +430,23 @@ try {
     if (c) {
       want(
         `reverse-sorted AVL churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
+        c.slope < 0.6,
+      );
+    }
+  }
+
+  // The skip list on the same reverse-sorted input — the pass this structure was added
+  // for. The BST above reads O(n) on exactly these keys; the AVL survives by *rotating*;
+  // the skip list survives by never having had a shape to lose, since its node heights
+  // come from the keys' hashes rather than from the order they arrived in. Same input,
+  // same outcome, opposite mechanisms. Pinned clock-free in Rust by
+  // `structures::methodology::skip_list_keeps_its_class_on_the_input_that_degenerates_a_bst`;
+  // here the browser clock confirms the curve the user actually sees.
+  if (revSkip) {
+    const c = revSkip.find((m) => m.op === 'churn');
+    if (c) {
+      want(
+        `reverse-sorted skip-list churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
         c.slope < 0.6,
       );
     }

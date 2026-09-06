@@ -134,6 +134,22 @@ tool call does not survive into the next (each call is a fresh process).
   corpus's* keys and probes, so the animation's counts are chained to the bench twin)
   and the multi-byte label assertion in `views.render.test.ts`.
 
+- **The skip list's node heights come from the key's hash, and that is not a
+  simplification of the textbook — it is load-bearing.**
+  `height(key) = 1 + min(23, trailing_zeros(splitmix64(to_bits(key) ^ SALT)))` is
+  geometric with p = ½ like the coin it replaces, but it makes the list a *pure function
+  of its key set*. Swap in an RNG and three things break at once: the counted path does
+  real inserts, so heights (and therefore the op-count signal) would start depending on
+  how `measure.ts` happened to interleave timed and counted batches; the TS twin could no
+  longer reproduce `conformance/corpus-skip.txt`; and the teaching twin could only insert
+  keys the corpus already recorded, which kills the animation slice. The **salt** matters
+  too — `splitmix64(0) == 0`, so without it the key `0` gets a 24-level tower and doubles
+  the constant on every descent in any dataset containing zero. Pinned by
+  `skip_list::tests::height_anchors_are_pinned` and its TS mirror; the honest caveat (the
+  guarantee is now over the key *distribution*, not a coin) is METHODOLOGY §2.6 and
+  hurdle 12. Related: the skip-list corpus pins the **keys visible at each level**, not
+  just the order — level 0 alone is a sorted linked list, so a mis-linked express lane
+  answers every membership query correctly while being O(n).
 - **The heap's churn key must stay `min − 1`** (`belowMin`). A heap has no
   delete-by-value, so the pair is insert + extract-min, and only a key below every
   stored key is the one the extract takes back; `max + 1` silently *drains* the

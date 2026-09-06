@@ -18,8 +18,8 @@ corpus. See [`docs/PLAN.md`](docs/PLAN.md) for the full design, the measurement
 methodology, and the phased roadmap.
 
 **Status:** Phases 0–5 complete, Phase 6 begun — every Rust bench twin (the Linear
-family, the BST/AVL trees, the **min-heap**, and the **string-key** array, hash set
-and **trie**) is
+family, the BST/AVL trees, the **min-heap**, the **skip list**, and the **string-key**
+array, hash set and **trie**) is
 wired into the browser sweep for **both** search and add/remove, and the
 comparison layer is done: the sweeps run on a **user-chosen dataset** (generators
 or pasted CSV/JSON, or one of six **one-click presets**), with a theoretical
@@ -44,7 +44,22 @@ levels deep, and the two bytes of the `é` are two nodes labelled `C3` and `A9`,
 because that is what the benchmark actually walks. A ringed node marks where a stored
 key ends, which is the whole difference between reaching a node and finding a key:
 search `car` after deleting it and the walk still goes all the way down, and still
-comes back empty. Skip list, graph and session persistence are still to come. The
+comes back empty.
+
+Phase 6's numeric addition is the **skip list**, and it changes what the main charts
+say twice over. On the search chart it is a second sub-linear line beside the sorted
+array — and then on the add/remove chart the two part company, because keeping an
+array in order costs a shift of everything after the change while splicing a node into
+a few express lanes costs the same O(log n) the lookup did: *same read cost, different
+write cost, same data*. And it is a third answer to the input that kills a naive binary
+search tree. The AVL survives reverse-sorted keys by **rotating**; the skip list
+survives by never having had a shape to lose, because a node's height comes from its
+key's hash rather than from a coin toss or from the order the keys arrived in. That is
+a deliberate departure from the textbook: it keeps the op-count signal reproducible,
+lets the TypeScript twin reproduce the Rust corpus exactly, and moves the
+"probabilistic" caveat from the algorithm's coin onto the *key distribution*, which is
+where this project can actually show it to you. Its animation, the graph and session
+persistence are still to come. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).

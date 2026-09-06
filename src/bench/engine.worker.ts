@@ -9,6 +9,7 @@ import init, {
   SortedArrayF64,
   LinkedListF64,
   MinHeapF64,
+  SkipListF64,
   ArrayStr,
   HashSetStr,
   TrieStr,
@@ -263,7 +264,9 @@ type MutationStructCtor = (new (keys: Float64Array, n: number) => MutationStruct
  * The **tree** mutation surface. Identical to {@link MutationStruct} except that churn
  * takes *two* spare keys instead of one: a tree's mutation cost depends on which end of
  * the key range the churn key lands in, so a single key can report the wrong complexity
- * class (docs/METHODOLOGY.md §4.1). `BstF64` and `AvlF64` satisfy it structurally.
+ * class (docs/METHODOLOGY.md §4.1). `BstF64`, `AvlF64` and `SkipListF64` satisfy it
+ * structurally — the skip list because its curve has to stay comparable with the trees',
+ * not because either of its ends would mislabel it.
  */
 interface TreeMutationStruct {
   set_churn_keys(lo: number, hi: number): void;
@@ -432,12 +435,19 @@ const api = {
     const sarr = measureSweep(sizes, searchRunnerFactory(SortedArrayF64, keys), now, opts);
     const hashset = measureSweep(sizes, searchRunnerFactory(HashSetF64, keys), now, opts);
     const heap = measureSweep(sizes, searchRunnerFactory(MinHeapF64, keys), now, opts);
+    const skiplist = measureSweep(sizes, searchRunnerFactory(SkipListF64, keys), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
     // op-count-vs-mechanism contrast — then the sorted array's binary search is the
     // "missing middle" and the hash set is flat. All four satisfy the same SearchStruct
     // interface, so each drops straight into the existing runner.
+    //
+    // The **skip list** is the second O(log n) search on the chart, and the pair is the
+    // point: the sorted array gets there by halving an interval it can only maintain by
+    // shifting (cheap to read, expensive to write), while the skip list gets there by
+    // dropping through express lanes it can splice in O(1) — the same class, opposite
+    // mutation costs, both visible on the churn chart below (docs/PLAN.md §8).
     //
     // The **min-heap** is measured on the same size ladder by the same runner, but it is
     // NOT a fifth competitor: a heap has no search shortcut, so this is the deliberate
@@ -451,6 +461,7 @@ const api = {
       { structure: 'sarr', op: 'search', points: sarr },
       { structure: 'hashset', op: 'search', points: hashset },
       { structure: 'heap', op: 'search', points: heap },
+      { structure: 'skiplist', op: 'search', points: skiplist },
     ];
   },
   /**
@@ -577,6 +588,47 @@ const api = {
       opts,
     );
     return [{ structure: 'avl', op: 'churn', points: churn }, fd.insert, fd.delete];
+  },
+  /**
+   * Run the §6.3 size-mutating measurement for the **skip list** across `sizes`: the churn
+   * primary plus the finite-difference split, as three series (`churn`, `insert`, `delete`)
+   * tagged `'skiplist'`. A separate call from {@link runMutationSweep} for the same reason
+   * the trees get one — it needs the **two-key** churn runner, not the single-key one — and
+   * *not* because its input is delicate: unlike the BST it cannot degenerate, since a
+   * node's height comes from its key's hash rather than from the order the keys arrived in
+   * (`bench-engine/src/structures/skip_list.rs`).
+   *
+   * Both churn ends are honest here, which was checked rather than assumed
+   * (`skip_list::tests::neither_churn_end_changes_the_reported_class`): `min − 1` fails one
+   * comparison per level, `max + 1` runs off the end of each level and pays nothing for
+   * doing so — a constant apart, both O(log n). Neither could mislabel the class the way a
+   * tail key would for the sorted array. The two-key recipe is kept because it is what
+   * makes this curve *comparable* with the BST's and the AVL's, which are measured that way
+   * for a reason that does bite them.
+   *
+   * The headline this sweep is here to draw: **sub-linear add/remove on any input order,
+   * with no rebalancing** — the AVL's outcome by the opposite mechanism, and the contrast
+   * to the sorted array, whose search shares this one's class while its mutation is O(n).
+   * `keys` is transferred in by the caller.
+   */
+  async runSkipMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const Ctor = SkipListF64 as unknown as TreeMutationStructCtor;
+    const churn = measureSweep(sizes, treeChurnRunnerFactory(Ctor, keys), now, opts);
+    const fd = measureMutationFd(
+      'skiplist',
+      sizes,
+      buildRunnerFactory(Ctor, keys),
+      buildTeardownRunnerFactory(Ctor, keys),
+      now,
+      opts,
+    );
+    return [{ structure: 'skiplist', op: 'churn', points: churn }, fd.insert, fd.delete];
   },
   /**
    * Run the §6.3 size-mutating measurement for the **min-heap** across `sizes` — the churn

@@ -21,7 +21,7 @@ export interface BenchEngine {
   ping(x: number): Promise<number>;
 
   /**
-   * Measure `search` cost across a size sweep for both Phase 2 structures
+   * Measure `search` cost across a size sweep for every numeric-key structure
    * (docs/PLAN.md §6.3). `keys` is the marshalled numeric key buffer; the engine
    * may consume (transfer) its backing `ArrayBuffer`, so callers must not reuse
    * it afterwards. Returns one {@link SweepSeries} per structure.
@@ -73,6 +73,23 @@ export interface BenchEngine {
    * (consume) the `keys` buffer.
    */
   runAvlMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
+  /**
+   * Measure the size-mutating ops for the **skip list** bench twin across a size sweep
+   * (docs/PLAN.md §6.3, §8 "Specialized") — three {@link SweepSeries} (`churn`, `insert`,
+   * `delete`) tagged `'skiplist'`. Separate from {@link runMutationSweep} because it needs
+   * the **two-key** churn recipe the trees use, not the single-key one; *not* because its
+   * input is delicate. A skip list cannot degenerate on input order at all: a node's height
+   * comes from its key's hash, so the same key set builds the same structure however the
+   * keys arrive — which is the finding this sweep exists to draw, against the BST's chain
+   * on the very same data. As with the other sweeps, the engine may transfer (consume) the
+   * `keys` buffer.
+   */
+  runSkipMutationSweep(
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,

@@ -15,7 +15,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
-| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end: Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate, and now its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. Skip list, graph, session persistence and performance polish are still open |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set*. Its animation, the graph, session persistence and performance polish are still open |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
@@ -29,7 +29,7 @@ complexity classes (METHODOLOGY §2.3 regime 7, and the UI says so beside the
 chart rather than letting the flat line pass for speed); BST and AVL churn
 sub-linear on shuffled input; and — clock-free,
 on exact op-counts — the AVL stays O(log n) on the sorted input that turns the
-BST into an O(n) chain, plus eight churn-vs-finite-difference regimes across the
+BST into an O(n) chain, plus nine churn-vs-finite-difference regimes across the
 structures (METHODOLOGY §2.3). Tree mutation is probed at **both ends** of the
 key range, so a reverse-sorted chain can no longer report a flat O(1) curve
 (METHODOLOGY §4.1). The **min-heap** completes the bench twins with its own op
@@ -46,7 +46,16 @@ puts a **trie** on that same chart, which turns one flat line into two flat line
 that are flat for unrelated reasons: the hash set reads the whole key once and
 jumps, the trie takes one branch per byte and never hashes at all — so "constant"
 and "cheap" come apart on one picture (its search beats the string scan ~500× at
-the top of the sweep while both stay in their own classes).
+the top of the sweep while both stay in their own classes). Phase 6's numeric
+addition is the **skip list**, which puts a second sub-linear search on the main
+chart and then separates itself from the first one: the sorted array and the skip
+list agree on read cost and disagree on write cost, because keeping an array in
+order costs a shift of everything after the change while splicing a node into a
+few express lanes costs the same O(log n) the lookup did. And it is the third
+answer to the input that kills a naive BST — the AVL survives reverse-sorted keys
+by **rotating**, the skip list by never having had a shape to lose, since its node
+heights come from each key's hash rather than from a coin or from the order the
+keys arrived in (METHODOLOGY §2.6).
 
 ---
 
@@ -321,7 +330,7 @@ The per-point rep spread (min → max) is drawn as error bars; reps are adaptive
 (continue until the coefficient of variation meets a target, bounded); every
 fitted slope carries a standard error and a 95 % CI; the local (per-interval)
 slope is plotted so regime changes are visible; and the churn-vs-finite-
-difference relationship is *structure-specific* (eight pinned regimes). All of
+difference relationship is *structure-specific* (nine pinned regimes). All of
 it, with the open hurdles (churn-key position bias, small-n overhead, cache
 regimes, sequential ordering), is in [`METHODOLOGY.md`](METHODOLOGY.md).
 
@@ -387,7 +396,7 @@ algorithm per structure, implemented identically in TS and Rust.
 | Structure | insert | search | delete | cost metric | notes |
 |-----------|--------|--------|--------|-------------|-------|
 | Trie (prefix tree) | O(L) | O(L) | O(L) | char-steps | strings only; L = key length, independent of n. **Built (Phase 6).** The `O(L)` here is in the *key*; `src/registry.ts` declares the class **in n**, which is `O(1)` for all four slots, and carries the L in `costMetric`. Both are the same statement in the two notations the project uses — the registry's `ComplexityClass` has no term for key length |
-| Skip list | O(log n) avg | O(log n) avg | O(log n) avg | node-visits / level-hops | probabilistic |
+| Skip list | O(log n) avg | O(log n) avg | O(log n) avg | node-visits | **Built (Phase 6).** O(n) worst (every key in one lane). Cost metric is **node-visits** — one key comparison per node inspected; dropping a level is a pointer move and costs nothing, the same rule that makes the BST's successor walk free. "Probabilistic" with **no random numbers**: a node's height is `1 + min(23, trailing_zeros(splitmix64(to_bits(key) ^ salt)))`, geometric with p = ½ but a pure function of the key, so the list is a function of its key *set* — no RNG state to keep the op-count signal reproducible under, and no order that can unbalance it. The guarantee moves from a coin to the key distribution (METHODOLOGY §2.6) |
 | Graph (adjacency list) | edge O(1) | traversal (BFS/DFS) | — | edge-visits | **own op set**; out of the insert/search/delete comparison; v1-late |
 
 Comparisons are grouped: heap, trie, and graph compare only within compatible op
@@ -1028,8 +1037,67 @@ insert/search/delete group on a shared key type.
     The fold is asserted against `snapshot()` shape *and* `nodeCount()`, not just the key
     set: a reducer that dropped a prune event would still answer every membership question
     while leaving litter nodes on screen. **No new deps.**
-  - **Open:** skip list, graph, session persistence, presets/demos beyond the six that
-    shipped in Phase 5, and performance polish.
+  - **Done (the skip list — O(log n) without ever rebalancing):**
+    `SkipListF64` in Rust (`bench-engine/src/structures/skip_list.rs`) and its TypeScript
+    teaching twin (`src/structures/skipList.ts`), pinned to each other by
+    `conformance/corpus-skip.txt`. It joins the *existing* numeric sweeps rather than
+    getting its own section — same three operations, same key type — so the search chart
+    gains a sixth line and the churn chart a fourth structure. Declared **O(log n)
+    average, O(n) worst**; `family: 'linear'` because the shape is a tower of linked
+    lists, the same call the trie's `family: 'tree'` makes about a §8 heading.
+
+    **The design decision the whole slice turns on: node heights come from the key's hash,
+    not from an RNG.** `height(key) = 1 + min(23, trailing_zeros(splitmix64(to_bits(key) ^
+    salt)))` — geometric with p = ½, so the textbook shape, but a *pure function of the key
+    set*. Three things need that, and an RNG breaks all three. (a) The counted path does
+    **real inserts**, and `measure.ts` interleaves timed and counted calls under adaptive
+    batching, so with a shared stream the op-count signal would depend on the machine's
+    clock — and the op-count is supposed to be the deterministic half of the two signals.
+    (b) The teaching twin reproduces the corpus exactly with **no new cross-language
+    primitive** (`splitMix64` / `toBits` were already bit-exact with pinned anchors), where
+    replaying recorded heights would have left it unable to insert a key the corpus never
+    saw — killing the animation slice before it started. (c) The finding gets *stronger*:
+    heights are insertion-order-independent by construction, so the headline holds with no
+    RNG caveat. The honest price is stated rather than buried (METHODOLOGY §2.6, hurdle
+    12): the probabilistic guarantee moves from the coin to the **key distribution**.
+    The salt earns its place too — `splitmix64(0) == 0`, so the raw-bit version handed the
+    key `0` a full-height tower, and `0` is one of the commonest keys real data contains;
+    one such key doubled the constant on every later descent.
+
+    **The headline, clock-free and then on the clock.** On the reverse-sorted input that
+    builds a naive BST into an O(n) chain, the skip list searches the far end in < 60
+    node-visits against the BST's 2000 (`structures::methodology::
+    skip_list_keeps_its_class_on_the_input_that_degenerates_a_bst`), and the browser gate's
+    second pass confirms its churn stays sub-linear where the BST's reads O(n). Two
+    structures survive that input for opposite reasons — the AVL **rotates**, the skip list
+    never had a shape to lose. On the first (uniform) pass the gate also pins the pairing
+    the structure was added for: **sub-linear search *and* sub-linear churn on the same
+    run**, against the sorted array's sub-linear search and O(n) churn. Measured on one
+    gate run: skip-list search slope 0.23 (the sorted array's 0.25, the array's 0.92) and
+    churn slope 0.02 against the sorted array's 0.82; on the reverse-sorted pass, churn
+    0.09 while the BST's reads 1.02.
+
+    Two measurement decisions, both checked rather than assumed. **Churn is two-keyed**,
+    the trees' recipe — and here *neither* end would mislabel the class: `min − 1` fails one
+    comparison per level, `max + 1` runs off the end of each level and pays nothing for it,
+    a constant apart and both O(log n)
+    (`skip_list::tests::neither_churn_end_changes_the_reported_class`). The recipe is kept
+    because it is what makes this curve comparable with the BST's and the AVL's, not
+    because it rescues anything. **Teardown alternates delete-max / delete-min**, which
+    needs a max that is not an O(n) walk to the tail — the pointer descent that takes every
+    forward link it finds — keeping the teardown Θ(n log n).
+
+    The corpus carries a dimension none of the earlier ones do: the **express-lane
+    profile**, the keys visible at each level, before and after a delete sequence. Level 0
+    alone is a sorted linked list, so a skip list whose upper levels are mis-linked or
+    never built answers every membership query correctly and returns a plausible op-count
+    while being O(n); order plus op-count would pass it. It is this structure's counterpart
+    to the BST corpus's pre-order shape, and it subsumes a height histogram. The ninth
+    churn-vs-finite-difference regime lands with it (METHODOLOGY §2.3): the FD sum
+    overshoots churn by ~56 %, the balanced BST's story told by a structure with no tree in
+    it. **No new deps.**
+  - **Open:** the skip list's step-animation, graph, session persistence, presets/demos
+    beyond the six that shipped in Phase 5, and performance polish.
 
 ---
 
@@ -1100,4 +1168,7 @@ insert/search/delete group on a shared key type.
 4. ~~Phase 6: the trie's step-animation.~~ **Done** — the trie is measured *and*
    watchable, drawn one node per UTF-8 byte with a terminal ring for "a key ends
    here".
-5. Phase 6 remainder: the skip list and the graph, then session persistence.
+5. ~~Phase 6: the skip list, measured.~~ **Done** — O(log n) search *and* add/remove
+   on any input order, from hash-derived tower heights rather than a coin.
+6. Phase 6 remainder: the skip list's step-animation, then the graph, then
+   session persistence.

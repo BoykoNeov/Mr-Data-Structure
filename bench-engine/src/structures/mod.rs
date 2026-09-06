@@ -37,6 +37,15 @@
 //! the one structure with a **different op set** (insert / peek / extract-min, with search as
 //! a deliberate O(n) scan contrast), so it is compared only within its own group
 //! (docs/PLAN.md §8, risk R6) — a separation enforced in the UI, not here.
+//!
+//! Phase 6 opens the "Specialized" catalogue. `trie::TrieStr` is the string-key prefix
+//! tree (cost metric **char-steps**), pinned by the string corpus. `skip_list::SkipListF64`
+//! is the numeric ordered structure that reaches O(log n) with **no balancing and no
+//! rotations**: a tower of forward-linked lists whose node heights are derived from
+//! `mix_f64` rather than from a coin, so the list is a pure function of its key *set*.
+//! That determinism is what lets the op-count signal stay reproducible under adaptive
+//! batching and the cross-language corpus stay exact — see the `skip_list` module doc for
+//! why an RNG could not do either. Pinned by `conformance/corpus-skip.txt`.
 
 pub mod avl;
 pub mod bst;
@@ -46,6 +55,7 @@ pub mod hash_set;
 pub mod hash_set_str;
 pub mod heap;
 pub mod linked_list;
+pub mod skip_list;
 pub mod sorted_array;
 pub mod trie;
 
@@ -160,6 +170,7 @@ mod methodology {
     use super::hash_set::HashSetF64;
     use super::heap::MinHeapF64;
     use super::linked_list::LinkedListF64;
+    use super::skip_list::SkipListF64;
     use super::sorted_array::SortedArrayF64;
 
     fn keys(n: usize) -> Vec<f64> {
@@ -643,5 +654,74 @@ mod methodology {
             (a - d).abs() < 0.35 * a,
             "churn must not move with input order: ascending {a} vs descending {d}"
         );
+    }
+    // ── Skip list: the ninth churn-vs-finite-difference regime, and the structure that
+    //    reaches O(log n) without ever rebalancing.
+    //
+    // Its heights come from `mix_f64(key)` rather than a coin (see the `skip_list` module
+    // doc), so every count below is deterministic and none of these assertions can flake.
+
+    /// The churn-vs-finite-difference question, answered the way the **balanced BST**
+    /// answers it: the finite-difference sum *overshoots* churn, and the two methods agree
+    /// on the **class** rather than the constant. Churn's two keys sit just off either end
+    /// of the key range, where a descent is cheap — running off the right-hand end costs no
+    /// comparison at all, and the left-hand end fails its first inspection at every level —
+    /// while `insert_fd` reflects the average key's full search path *and* `delete_fd` is
+    /// added on top. Nothing here is about balance: the skip list never rebalances. It is
+    /// the same end-vs-average asymmetry the trees have, in a structure that gets its shape
+    /// from a hash.
+    /// Measured: churn 22.5, insert_fd 22.0, delete_fd 13.2, sum 35.2 (~56% over).
+    #[test]
+    fn skip_list_finite_difference_sum_overshoots_churn() {
+        let ks = shuffled(4000);
+        let (n1, n2) = (2000usize, 4000usize); // wide span denoises the per-op estimate
+        let insert_fd = (SkipListF64::build_insert_counted(&ks, n2)
+            - SkipListF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (SkipListF64::teardown_counted(&ks, n2)
+            - SkipListF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut s = SkipListF64::new(&ks, n2);
+        s.set_churn_keys(-1.0, n2 as f64 + 1.0); // absent at both ends
+        let churn = s.churn_counted();
+        let sum = insert_fd + delete_fd;
+
+        // (1) The overshoot: churn's end probes are cheaper than the build's average key.
+        assert!(sum > churn, "skip list: expected fd sum {sum} > churn {churn} (the overshoot)");
+        // (2) Both methods read O(log n): nowhere near a linear reading of 4000 keys.
+        assert!(churn < 200.0, "skip-list churn {churn} must stay O(log n), far below n");
+        assert!(sum < 200.0, "skip-list fd sum {sum} must stay O(log n), far below n");
+        // (3) A churn pair leaves the list exactly as it found it.
+        assert_eq!(s.len(), n2);
+    }
+
+    /// **The payoff, clock-free.** Reverse-sorted input is the input that turns a naive BST
+    /// into an O(n) left chain (the headline demo, docs/PLAN.md §4.3). The skip list is
+    /// built from the *same* keys and does not care: its node heights come from the keys'
+    /// hashes, so the express lanes are identical however the keys arrived, and searching
+    /// the far end costs O(log n). The AVL survives that input by *rotating*; the skip list
+    /// survives it by never having had a shape to lose — the same outcome from opposite
+    /// mechanisms, which is what earns it a place on the chart.
+    #[test]
+    fn skip_list_keeps_its_class_on_the_input_that_degenerates_a_bst() {
+        let n = 2000usize;
+        let descending: Vec<f64> = (0..n).map(|i| (n - 1 - i) as f64).collect();
+        let min = 0.0; // the last key inserted, and the deepest one in the BST's chain
+
+        let bst = BstF64::new(&descending, n);
+        let skip = SkipListF64::new(&descending, n);
+
+        let (bst_found, bst_ops) = bst.search_one_counted(min);
+        let (skip_found, skip_ops) = skip.search_one_counted(min);
+        assert!(bst_found && skip_found);
+        assert_eq!(bst_ops, n as u64, "reverse-sorted BST search-min is O(n) — the full chain");
+        assert!(skip_ops < 60, "skip-list search-min {skip_ops} must stay O(log n) ≪ {n}");
+
+        // And the same key set built the other way round produces the same list, so the
+        // number above is not a lucky ordering.
+        let ascending: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let other = SkipListF64::new(&ascending, n);
+        assert_eq!(other.search_one_counted(min), (true, skip_ops));
     }
 }

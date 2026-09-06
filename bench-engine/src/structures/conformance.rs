@@ -27,6 +27,7 @@ use super::hash_set::HashSetF64;
 use super::hash_set_str::HashSetStr;
 use super::heap::MinHeapF64;
 use super::linked_list::LinkedListF64;
+use super::skip_list::SkipListF64;
 use super::sorted_array::SortedArrayF64;
 use super::trie::TrieStr;
 
@@ -43,6 +44,8 @@ const CORPUS_LL_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-ll.txt");
 const CORPUS_HEAP_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-heap.txt");
+const CORPUS_SKIP_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-skip.txt");
 
 struct Case {
     name: &'static str,
@@ -861,5 +864,141 @@ fn corpus_heap_matches_committed() {
         normalize(&serialize_heap(&heap_cases())),
         "min-heap conformance corpus is stale vs the Rust impl; \
          regenerate with: cargo test -- --ignored regen_corpus_heap",
+    );
+}
+
+// ── Skip-list corpus (docs/PLAN.md §8 "Specialized", §12) ────────────────────
+//
+// The skip list needs a dimension none of the earlier corpora carry: the
+// **express-lane profile**. Level 0 alone is a sorted linked list, so a skip list
+// whose upper levels are mis-linked, or silently never built, still answers every
+// membership query correctly and returns a plausible op-count — it is simply O(n)
+// instead of O(log n). Iteration order plus per-probe counts would pass it. Each
+// case therefore pins `skip_levels`: the keys visible at each level, level 0 first,
+// levels separated by `|` (a lone `-` for an empty list). That subsumes a height
+// histogram — a key's tower height is the number of lists it appears in — and it is
+// this structure's counterpart to the BST corpus's pre-order shape.
+//
+// A **delete sequence** is pinned for the same reason it is for the BST: unlinking
+// is the drift-prone half, because it has to fix every level the victim occupied,
+// and a delete that fixed only level 0 would leave the list answering correctly
+// while quietly rotting. Hence `skip_levels_after` as well as `skip_order_after`.
+
+struct SkipCase {
+    name: &'static str,
+    keys: Vec<f64>,
+    probes: Vec<f64>,
+    deletes: Vec<f64>,
+}
+
+/// Skip-list input cases. Beyond the shared edges (empty, singleton, ordered,
+/// duplicates), two are specific to this structure: `towers`, whose 31 keys build
+/// several express lanes, and `deep`, a handful of keys picked for their *heights*
+/// (116 → 9 levels, 37 → 6, 7 → 4) so a tiny case still exercises a tall tower and
+/// its unlink. Duplicates all share one height — the height is a function of the key
+/// — which is why the duplicates case is about *which* occurrence delete takes, not
+/// about differing towers.
+fn skip_cases() -> Vec<SkipCase> {
+    let zero_to_thirty: Vec<f64> = (0..=30).map(|i| i as f64).collect();
+    vec![
+        SkipCase { name: "empty", keys: vec![], probes: vec![1.0, 2.0], deletes: vec![1.0] },
+        SkipCase {
+            name: "singleton", // delete-to-empty, and the level count collapsing with it
+            keys: vec![42.0],
+            probes: vec![42.0, 7.0],
+            deletes: vec![42.0],
+        },
+        SkipCase {
+            name: "ordered",
+            keys: vec![10.0, 20.0, 30.0],
+            probes: vec![10.0, 20.0, 30.0, 99.0, 5.0],
+            deletes: vec![20.0, 99.0, 10.0],
+        },
+        SkipCase {
+            name: "duplicates", // one occurrence per delete, order among equals preserved
+            keys: vec![5.0, 5.0, 5.0, 7.0, 5.0, 9.0],
+            probes: vec![5.0, 7.0, 9.0, 99.0],
+            deletes: vec![5.0, 5.0, 9.0],
+        },
+        SkipCase {
+            name: "towers", // enough keys for several express lanes
+            keys: zero_to_thirty,
+            probes: vec![0.0, 15.0, 30.0, 31.0, -1.0, 1000.0],
+            deletes: vec![7.0, 0.0, 30.0, 15.0],
+        },
+        SkipCase {
+            name: "deep", // heights 9, 6, 4, 3, 1, 1 — a tall tower in a tiny list
+            keys: vec![116.0, 37.0, 7.0, 5.0, 1.0, 2.0],
+            probes: vec![116.0, 37.0, 7.0, 3.0, 200.0],
+            deletes: vec![116.0, 1.0, 37.0],
+        },
+        SkipCase {
+            name: "fractional",
+            keys: vec![0.0, 0.5, 2.5, -1.0],
+            probes: vec![0.5, 2.5, -1.0, 3.0],
+            deletes: vec![0.5, -1.0],
+        },
+    ]
+}
+
+/// The express-lane profile as one line: levels bottom-up, keys space-separated,
+/// levels separated by ` | `; a lone `-` for a list with no levels at all (empty).
+fn fmt_levels(levels: &[Vec<f64>]) -> String {
+    if levels.is_empty() {
+        return "-".to_string();
+    }
+    levels.iter().map(|l| fmt_nums(l)).collect::<Vec<_>>().join(" | ")
+}
+
+fn serialize_skip(cases: &[SkipCase]) -> String {
+    let mut out = String::new();
+    out.push_str("# Mr Data Structure — skip-list conformance corpus (docs/PLAN.md §8, §12).\n");
+    out.push_str("# Generated from the Rust bench impl; the TS teaching twin must match.\n");
+    out.push_str("# Op-count = node-visits. `skip_levels` is the EXPRESS-LANE PROFILE: the keys\n");
+    out.push_str("# at each level, level 0 first, levels separated by `|` (`-` = empty list).\n");
+    out.push_str("# Node heights come from the key's hash, so this is a function of the key SET\n");
+    out.push_str("# alone — no RNG, and insertion order cannot change it.\n");
+    out.push_str("# Regenerate: cargo test -- --ignored regen_corpus_skip\n");
+    for c in cases {
+        let s = SkipListF64::new(&c.keys, c.keys.len());
+        let search: Vec<(bool, u64)> =
+            c.probes.iter().map(|&p| s.search_one_counted(p)).collect();
+
+        // Deletes mutate, so run them on a fresh list built from the same keys.
+        let mut sd = SkipListF64::new(&c.keys, c.keys.len());
+        let del: Vec<(bool, u64)> =
+            c.deletes.iter().map(|&d| sd.delete_one_counted(d)).collect();
+
+        out.push('\n');
+        out.push_str(&format!("case {}\n", c.name));
+        out.push_str(&format!("keys {}\n", fmt_nums(&c.keys)));
+        out.push_str(&format!("probes {}\n", fmt_nums(&c.probes)));
+        out.push_str(&format!("skip_order {}\n", fmt_nums(&s.keys_in_order())));
+        out.push_str(&format!("skip_search {}\n", fmt_search(&search)));
+        out.push_str(&format!("skip_levels {}\n", fmt_levels(&s.level_keys())));
+        out.push_str(&format!("deletes {}\n", fmt_nums(&c.deletes)));
+        out.push_str(&format!("skip_delete {}\n", fmt_search(&del)));
+        out.push_str(&format!("skip_order_after {}\n", fmt_nums(&sd.keys_in_order())));
+        out.push_str(&format!("skip_levels_after {}\n", fmt_levels(&sd.level_keys())));
+    }
+    out
+}
+
+#[test]
+#[ignore = "writes the committed skip-list corpus; run deliberately after a behavior change"]
+fn regen_corpus_skip() {
+    std::fs::write(CORPUS_SKIP_PATH, serialize_skip(&skip_cases())).expect("write skip corpus");
+}
+
+#[test]
+fn corpus_skip_matches_committed() {
+    let committed = std::fs::read_to_string(CORPUS_SKIP_PATH).expect(
+        "skip-list corpus missing; generate it with: cargo test -- --ignored regen_corpus_skip",
+    );
+    assert_eq!(
+        normalize(&committed),
+        normalize(&serialize_skip(&skip_cases())),
+        "skip-list conformance corpus is stale vs the Rust impl; \
+         regenerate with: cargo test -- --ignored regen_corpus_skip",
     );
 }

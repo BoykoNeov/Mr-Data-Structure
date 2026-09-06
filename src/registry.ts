@@ -166,6 +166,46 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     shapeSensitive: false,
   },
   /**
+   * The **skip list** (docs/PLAN.md §8 "Specialized", Phase 6) — the ordered structure
+   * that reaches O(log n) **without ever rebalancing**. It stores its keys in a bottom
+   * list plus a tower of ever-sparser express lanes, and a search drops from lane to lane
+   * rather than rotating anything into place. That is the whole reason it earns a line on
+   * a chart that already has an AVL: on the reverse-sorted input that turns the naive BST
+   * into an O(n) chain, both survive, by opposite mechanisms — the AVL rotates, the skip
+   * list never had a shape to lose.
+   *
+   * **`family: 'linear'`**, though docs/PLAN.md §8 files it under "Specialized". `Family`
+   * describes the *shape* — this is a stack of linked lists, walked forward — while §8's
+   * heading is about which structures are comparable, a question `keyType` and
+   * {@link CANONICAL_STRUCTURES} already answer. The same call the trie's `family: 'tree'`
+   * makes.
+   *
+   * **`shapeSensitive: false`, and that is the finding rather than a default.** A node's
+   * height comes from its key's hash (`bench-engine/src/structures/skip_list.rs`), so the
+   * express lanes are a function of the key *set*: no input order can degenerate them.
+   * What *can*, in principle, is a key distribution adversarially chosen to collide in
+   * that hash — the probabilistic guarantee moved from a coin to the data. A boolean flag
+   * about input *order* cannot say that, so it is documented (docs/METHODOLOGY.md §2.6)
+   * rather than encoded in a field that cannot hold it — the same call the min-heap's
+   * order-sensitive build gets.
+   *
+   * Worst case is `O(n)`: every key landing in one lane degenerates the list to the sorted
+   * linked list at its base. Average is `O(log n)`, the same shape as the balanced tree's,
+   * which is what the overlay draws.
+   */
+  skiplist: {
+    id: 'skiplist',
+    label: 'skip list',
+    family: 'linear',
+    keyType: 'number',
+    color: '#bcbd22',
+    costMetric: 'node-visits',
+    mechanism: 'drops down a tower of ever-sparser express lanes; tower heights come from the key, so no input order can unbalance it',
+    average: { search: OLOG, insert: OLOG, delete: OLOG, churn: OLOG },
+    worst: { search: ON, insert: ON, delete: ON, churn: ON },
+    shapeSensitive: false,
+  },
+  /**
    * The **string-key twins** (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5). Same
    * algorithms as `array` / `hashset`, same classes *in n* — and a second cost axis the
    * numeric structures do not have: the **key length L**. Every class below is in n only.
@@ -240,9 +280,9 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
 };
 
 /**
- * Every **numeric-key** structure, in catalogue order (§8: linear, hashing, trees, heaps)
- * — the catalogue the shared Compare charts are drawn from. The string twins live in
- * {@link STRING_STRUCTURES}, because a run measures one key type or the other.
+ * Every **numeric-key** structure, in catalogue order (§8: linear, hashing, trees/heaps,
+ * then specialized) — the catalogue the shared Compare charts are drawn from. The string
+ * twins live in {@link STRING_STRUCTURES}, because a run measures one key type or the other.
  */
 export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.array,
@@ -252,6 +292,7 @@ export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.bst,
   REGISTRY.avl,
   REGISTRY.heap,
+  REGISTRY.skiplist,
 ];
 
 /**
