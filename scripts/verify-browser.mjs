@@ -191,7 +191,20 @@ try {
     const lChurn = find('ll', 'churn');
     const lDel = find('ll', 'delete');
     if (lChurn) {
-      want(`linked-list churn stays flat (slope ${lChurn.slope.toFixed(2)} < 0.4)`, lChurn.slope < 0.4);
+      // Two-sided, and looser than the other flat-line bands, for a measured reason. At ~9
+      // ns/op this series sits *on* the timer's quantization floor — one run reported
+      // firstNanos === lastNanos to sixteen digits with R² 1.0 and a slope stderr of 5.7e-9,
+      // i.e. the clock's granularity, not the list, set the number. Quantization then walks
+      // the fitted slope around freely on a curve whose true slope is 0: five runs gave
+      // 0.00, −0.35, −0.05, −0.05, 0.00. The noise is *signed*, so a one-sided `< 0.4` band
+      // would have failed at random on a run that swung the other way. `|slope| < 0.6` keeps
+      // the same sub-linear threshold the bst/avl/heap churn checks use, with headroom past
+      // the worst reading actually observed. The class-disagreement claim does not lean on
+      // this check anyway — the O(n) delete and the 500×+ cost gap below carry it.
+      want(
+        `linked-list churn stays flat (|slope| ${Math.abs(lChurn.slope).toFixed(2)} < 0.6)`,
+        Math.abs(lChurn.slope) < 0.6,
+      );
     }
     if (lDel) {
       const ratio = lDel.lastNanos / lDel.firstNanos;
@@ -204,7 +217,7 @@ try {
     if (lChurn && lDel) {
       want(
         `linked list: churn and delete-by-value disagree on class (${lChurn.slope.toFixed(2)} vs ${lDel.slope.toFixed(2)})`,
-        lChurn.slope < 0.4 && lDel.slope > 0.6,
+        Math.abs(lChurn.slope) < 0.6 && lDel.slope > 0.6,
       );
       // ...and by a margin no one can mistake for noise: the same structure, the same
       // run, one op flat at single-digit ns and the other in the thousands.

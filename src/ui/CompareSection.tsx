@@ -275,6 +275,14 @@ export function CompareSection() {
             the list has to walk to it. Same structure, same run, both numbers honest — flat and linear at
             once. The hash set’s flat line, by contrast, holds for <em>any</em> key. That is the difference
             the chart alone cannot show you (docs/METHODOLOGY.md §2.3, regime 7).
+            <br />
+            One caveat on the wall-clock version of that flat line, in the spirit of the rest of this page:
+            at roughly nine nanoseconds an operation it is sitting on the <em>timer’s</em> resolution, not
+            the list’s. Runs have come back with the first and last points identical to sixteen digits — the
+            clock, not the structure, choosing the number. Read it as “too cheap to grow”, which is the
+            honest reading, rather than as a precise measurement; the O(1) class itself is carried by the
+            exact operation counts, where a churn pair is literally one node visit at every size. Switch the
+            <strong>Signal</strong> selector above to op-count to see that curve without the clock in it.
           </Callout>
 
           {split.length > 0 && (
