@@ -33,12 +33,15 @@ export interface BenchEngine {
   ): Promise<SweepSeries[]>;
 
   /**
-   * Measure the size-mutating ops across a size sweep for both Phase 2 structures
+   * Measure the size-mutating ops across a size sweep for the four **flat**
+   * structures — unsorted array, hash set, sorted array, linked list
    * (docs/PLAN.md §6.3): returns three {@link SweepSeries} per structure —
    * `churn` (the combined insert+delete primary), plus `insert` and `delete`
    * from the finite-difference cross-check. As with {@link runSweep}, the engine
    * may transfer (consume) the `keys` buffer, so callers must not reuse it.
-   * Keep `sizes` modest — the array's ordered delete makes teardown O(n²).
+   * Keep `sizes` modest — three of the four have an O(n²) build or teardown (the
+   * array's ordered delete, the sorted array's shifting insert and delete, the
+   * linked list's walk-to-the-tail teardown).
    */
   runMutationSweep(
     keys: Float64Array,

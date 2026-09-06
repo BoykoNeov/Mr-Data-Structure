@@ -90,8 +90,10 @@ function searchRunnerFactory(
 
 /**
  * The WASM mutation surface (docs/PLAN.md §6.3): a churn-able instance plus the
- * static cumulative build/teardown primitives. Both `ArrayF64` and `HashSetF64`
- * satisfy it structurally.
+ * static cumulative build/teardown primitives. `ArrayF64`, `HashSetF64`,
+ * `SortedArrayF64`, `LinkedListF64` and `MinHeapF64` all satisfy it structurally —
+ * only the trees differ, taking two churn keys instead of one
+ * (see {@link TreeMutationStruct}).
  */
 interface MutationStruct {
   set_churn_key(key: number): void;
@@ -307,12 +309,30 @@ const api = {
     ];
   },
   /**
-   * Run the §6.3 size-mutating measurement for both Phase 2 structures across
-   * `sizes`: the **churn** primary (combined insert+delete cost at fixed n) plus
-   * the **finite-difference** cross-check that separates per-insert (cumulative
-   * build) from per-delete (cumulative teardown). Returns three series per
-   * structure: `churn`, `insert`, `delete`. `keys` is transferred in by the
-   * caller. Keep `sizes` modest — the array's ordered delete makes teardown O(n²).
+   * Run the §6.3 size-mutating measurement for the four **flat** structures across
+   * `sizes` — unsorted array, hash set, sorted array, linked list: the **churn**
+   * primary (combined insert+delete cost at fixed n) plus the **finite-difference**
+   * cross-check that separates per-insert (cumulative build) from per-delete
+   * (cumulative teardown). Returns three series per structure: `churn`, `insert`,
+   * `delete`. `keys` is transferred in by the caller. Keep `sizes` modest — three of
+   * the four have an O(n²) build or teardown (the array's ordered delete, the sorted
+   * array's shifting insert *and* delete, the linked list's walk-to-the-tail teardown).
+   *
+   * Each structure names its own {@link ChurnKeyPicker}, because where the spare key
+   * lands is a measurement decision that can set the reported class (§2.3, §4.1):
+   *
+   * - **array** / **hash set** — `max + 1`. Position-uniform: the array appends and pops
+   *   with no shifts either way, the hash set hashes to a bucket wherever the key sits.
+   * - **sorted array** — `min − 1`, deliberately the **front**. A tail key would
+   *   append/pop with zero shifts and report O(log n) mutation for a structure whose
+   *   insert and delete are honestly O(n) — the key position, not the structure, would
+   *   have set the class.
+   * - **linked list** — `max + 1`, which a head-insert puts at the head, so the paired
+   *   delete finds it in one visit. Churn is therefore **honestly O(1)**, and that is a
+   *   *finding*, not a fast structure: there is no size-preserving same-key churn on a
+   *   head-inserting list that costs O(n). The canonical O(n) delete-by-value shows up
+   *   in this structure's finite-difference `delete` series instead, which is why the
+   *   two series must be read together (METHODOLOGY §2.3, regime 7).
    */
   async runMutationSweep(
     keys: Float64Array,
@@ -321,13 +341,15 @@ const api = {
   ): Promise<SweepSeries[]> {
     await ready;
     const now = () => performance.now();
-    const structures: ReadonlyArray<[StructureId, MutationStructCtor]> = [
-      ['array', ArrayF64 as unknown as MutationStructCtor],
-      ['hashset', HashSetF64 as unknown as MutationStructCtor],
+    const structures: ReadonlyArray<[StructureId, MutationStructCtor, ChurnKeyPicker]> = [
+      ['array', ArrayF64 as unknown as MutationStructCtor, aboveMax],
+      ['hashset', HashSetF64 as unknown as MutationStructCtor, aboveMax],
+      ['sarr', SortedArrayF64 as unknown as MutationStructCtor, belowMin],
+      ['ll', LinkedListF64 as unknown as MutationStructCtor, aboveMax],
     ];
     const out: SweepSeries[] = [];
-    for (const [structure, Ctor] of structures) {
-      const churn = measureSweep(sizes, churnRunnerFactory(Ctor, keys), now, opts);
+    for (const [structure, Ctor, pickKey] of structures) {
+      const churn = measureSweep(sizes, churnRunnerFactory(Ctor, keys, pickKey), now, opts);
       out.push({ structure, op: 'churn', points: churn });
       const fd = measureMutationFd(
         structure,

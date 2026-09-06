@@ -63,6 +63,15 @@ tool call does not survive into the next (each call is a fresh process).
   UI filters through them. Its search *is* measured on the same ladder — that is
   what makes the O(n)-scan contrast against the array meaningful — but it renders
   only in the heap's own section. Don't "tidy" it back onto the shared charts.
+- **Each flat structure's churn key is a measurement decision, not a default.**
+  `runMutationSweep` names one per structure: array and hash set `aboveMax`; the
+  **sorted array `belowMin`** (a tail key appends/pops with no shifts and would
+  report O(log n) mutation for an honestly O(n) structure); the **linked list
+  `aboveMax`**, whose head insert makes churn honestly O(1). That flat list curve
+  is a *finding* (METHODOLOGY §2.3 regime 7), not a bug and not a fast structure —
+  don't "fix" it with a different key (none exists), and don't ship it without the
+  caveat box + the O(n) delete-by-value curve beside it. `verify:browser` pins both
+  halves.
 - **The heap's churn key must stay `min − 1`** (`belowMin`). A heap has no
   delete-by-value, so the pair is insert + extract-min, and only a key below every
   stored key is the one the extract takes back; `max + 1` silently *drains* the

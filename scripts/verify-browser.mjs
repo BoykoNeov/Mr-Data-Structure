@@ -131,7 +131,7 @@ try {
     const aIns = find('array', 'insert');
     const aDel = find('array', 'delete');
 
-    want('six mutation series measured', mutation.length === 6);
+    want('twelve mutation series measured (four flat structures)', mutation.length === 12);
     if (aChurn) {
       const ratio = aChurn.lastNanos / aChurn.firstNanos;
       want(`array churn rises (slope ${aChurn.slope.toFixed(2)} > 0.6)`, aChurn.slope > 0.6);
@@ -146,6 +146,79 @@ try {
         aDel.slope > aIns.slope,
       );
     }
+
+    // ── Sorted array (docs/METHODOLOGY.md §2.3 regime 6) ──
+    //
+    // Its churn key is `min − 1`, deliberately the **front**: every insert and delete
+    // shifts the whole array, which is the structure's honest O(n). A tail key would
+    // append/pop with zero shifts and report O(log n) — the key's position, not the
+    // structure, would have set the class. Measured slope runs a little under 1 (0.80
+    // here) because a memmove is fast enough that the binary search's comparisons still
+    // show at the small end, so the band is the same > 0.6 used for the array's churn.
+    const sChurn = find('sarr', 'churn');
+    const sDel = find('sarr', 'delete');
+    if (sChurn) {
+      const ratio = sChurn.lastNanos / sChurn.firstNanos;
+      want(`sorted-array churn rises (slope ${sChurn.slope.toFixed(2)} > 0.6)`, sChurn.slope > 0.6);
+      want(`sorted-array churn grows with n (ratio ${ratio.toFixed(1)} > 3)`, ratio > 3);
+    }
+    // The split that only this structure has, and that until now was proven only
+    // clock-free: **sub-linear search, linear mutation on the same structure**. Sorting
+    // buys the lookup and charges for every change. (The heap's split is the mirror
+    // image: O(n) search, Θ(log n) extract-min.)
+    const sarrSearchFit = proof && proof.find((p) => p.structure === 'sarr');
+    if (sChurn && sarrSearchFit) {
+      want(
+        `sorted array: search sub-linear (${sarrSearchFit.slope.toFixed(2)}) but churn linear (${sChurn.slope.toFixed(2)})`,
+        sarrSearchFit.slope < 0.4 && sChurn.slope > 0.6,
+      );
+    }
+    if (sDel) {
+      want(`sorted-array delete grows (slope ${sDel.slope.toFixed(2)} > 0.6)`, sDel.slope > 0.6);
+    }
+
+    // ── Linked list (docs/METHODOLOGY.md §2.3 regime 7) — the class *disagreement*,
+    // on the real clock for the first time ──
+    //
+    // The list head-inserts, so the churn key lands at the head and the paired delete
+    // finds it in one visit: churn is honestly **O(1)**, and there is no size-preserving
+    // same-key churn on this structure that isn't. Read alone, that flat line is
+    // indistinguishable from the hash set's and would suggest a cheap list. The
+    // finite-difference `delete` — the canonical delete-by-value, walking from the head —
+    // is **O(n)** on the same run. The two methods land in *different complexity
+    // classes*, and this gate pins that they do, because the honest reading of the list
+    // requires both curves at once (the UI states it next to the chart).
+    const lChurn = find('ll', 'churn');
+    const lDel = find('ll', 'delete');
+    if (lChurn) {
+      want(`linked-list churn stays flat (slope ${lChurn.slope.toFixed(2)} < 0.4)`, lChurn.slope < 0.4);
+    }
+    if (lDel) {
+      const ratio = lDel.lastNanos / lDel.firstNanos;
+      want(
+        `linked-list delete-by-value reads O(n) (slope ${lDel.slope.toFixed(2)} > 0.6)`,
+        lDel.slope > 0.6,
+      );
+      want(`linked-list delete grows with n (ratio ${ratio.toFixed(1)} > 3)`, ratio > 3);
+    }
+    if (lChurn && lDel) {
+      want(
+        `linked list: churn and delete-by-value disagree on class (${lChurn.slope.toFixed(2)} vs ${lDel.slope.toFixed(2)})`,
+        lChurn.slope < 0.4 && lDel.slope > 0.6,
+      );
+      // ...and by a margin no one can mistake for noise: the same structure, the same
+      // run, one op flat at single-digit ns and the other in the thousands.
+      const gap = lDel.lastNanos / lChurn.lastNanos;
+      want(
+        `linked-list delete-by-value costs vastly more than head churn (${gap.toFixed(0)}x > 20x)`,
+        gap > 20,
+      );
+    }
+    // Both flat-family structures stay on the *first* pass only: neither is
+    // shape-sensitive (a sorted array re-sorts whatever arrives; a list head-inserts
+    // regardless), so there is nothing for reverse-sorted input to flip. Note for anyone
+    // adding one later: the second pass below does NOT reset `__mutationProof`, so an
+    // assert placed after it would read this pass's numbers and pass vacuously.
   }
 
   // BST mutation (docs/PLAN.md §6.3, §8 trees): the first tree bench twin on a

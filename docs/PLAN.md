@@ -13,14 +13,21 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 1 | data layer: import, type detection, generators, marshalling | ✅ done |
 | 2 | thin slice: array + hash set through both twins, §6.3 methodology, fitter, chart; string-key bench structures | ✅ done |
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
-| 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | 🟡 all bench twins built; string structures + sorted-array/linked-list *mutation* not wired into the browser sweep |
+| 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | 🟡 every numeric bench twin built **and wired into the browser sweep**, search *and* mutation; only the string-key structures remain Rust-only (tracked as a Phase 5 open item) |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; CSV/JSON export | 🟡 first slice landed (see §10); string-key sweep, presets, PNG export open |
 | 6 | trie, skip list, graph; presets/demos; persistence; polish | ⬜ not started |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
 and linked-list search O(n) by a different mechanism; array churn O(n) vs
-hash-set O(1); BST and AVL churn sub-linear on shuffled input; and — clock-free,
+hash-set O(1); the **sorted array cheap to read and expensive to write** — a
+sub-linear search and an O(n) add/remove on the same run; the **linked list's
+two answers at once** — an honestly flat O(1) add-and-remove of a key it just
+put at its own head, next to the honestly O(n) removal of a key already stored,
+the one place the project's two measurement methods land in different
+complexity classes (METHODOLOGY §2.3 regime 7, and the UI says so beside the
+chart rather than letting the flat line pass for speed); BST and AVL churn
+sub-linear on shuffled input; and — clock-free,
 on exact op-counts — the AVL stays O(log n) on the sorted input that turns the
 BST into an O(n) chain, plus eight churn-vs-finite-difference regimes across the
 structures (METHODOLOGY §2.3). Tree mutation is probed at **both ends** of the
@@ -671,12 +678,13 @@ insert/search/delete group on a shared key type.
     so `runSweep` returns the three-way contrast (array O(n) / sorted O(log n) / hash set O(1)) —
     asserted in `verify:browser` (sorted-array search slope ≈ 0.23, R² 0.99, sub-linear and
     flatter than the array; the slope *band* is asserted, not the fitter label, since §7.2 can't
-    reliably separate log n from constant). The **mutation** side stays Rust-only this slice: the
+    reliably separate log n from constant). The **mutation** side stayed Rust-only *this* slice: the
     `#[wasm_bindgen]` timed surface (front-churn, build/teardown) is ready and the methodology is
     proven by the self-test, but — exactly as the string structures left their impls ready with no
-    TS `BenchEngine` method — the TS sweep + chart wiring waits for Phase 5 (a browser mutation
+    TS `BenchEngine` method — the TS sweep + chart wiring waited for Phase 5 (a browser mutation
     curve would also be slow, both build and teardown being O(n²), and overhead-dominated at the
-    small n that stays affordable). **No new deps.**
+    small n that stays affordable). **No new deps.** *(Landed in Phase 5 — see "flat-family
+    mutation on the browser clock" below; the front-churn curve reads O(n) on the real clock.)*
   - **Done (linked-list bench twin — the Linear family is complete):**
     `linked_list::LinkedListF64` (`bench-engine/src/structures/linked_list.rs`), the bench twin of
     *both* `src/structures/linkedList.ts` teaching twins at once. The singly and doubly lists are
@@ -708,8 +716,12 @@ insert/search/delete group on a shared key type.
     delete-by-value, so churn ≪ insert_fd + delete_fd (the two methods in *different classes*,
     after the array's tight match, the balanced BST's overshoot, the AVL's close agreement, and the
     sorted array's front-churn overshoot — all same-class). As with the sorted array the mutation
-    side stays Rust-only this slice — a flat O(1) churn curve on the browser clock would look
-    identical to the hash set — so the TS sweep wiring waits for Phase 5. **No new deps.**
+    side stayed Rust-only *this* slice — a flat O(1) churn curve on the browser clock would look
+    identical to the hash set — so the TS sweep wiring waited for Phase 5. **No new deps.**
+    *(Landed in Phase 5 — see "flat-family mutation on the browser clock" below. The concern was
+    right and was answered rather than dissolved: the flat line now ships with a caveat box beside
+    the chart and with the O(n) delete-by-value curve it must be read against, and the browser gate
+    pins both halves so the pair cannot drift back to one reassuring line.)*
 
   - **Done (min-heap bench twin — the Trees/heaps family complete, §8):**
     `heap::MinHeapF64` is the bench twin of `src/structures/heap.ts` — an array-backed
@@ -823,6 +835,41 @@ insert/search/delete group on a shared key type.
     (0.16) on the same input — the curve the user actually sees, which no op-count test can
     prove. UI copy on the reverse-sorted callout, METHODOLOGY §2.3/§4.1/§5 and this section
     updated to match. **No new deps.**
+  - **Done (flat-family mutation on the browser clock — the last Phase 4 leftover):**
+    the sorted array and the linked list now run their add/remove sweeps in the browser, so
+    all four flat structures publish a churn primary plus a finite-difference split (twelve
+    series where there were six). No Rust changed: both twins already had the full
+    `#[wasm_bindgen]` timed surface, and `churnRunnerFactory` already took the
+    `ChurnKeyPicker` seam the heap slice added — `runMutationSweep`'s table just widened to
+    `[StructureId, Ctor, ChurnKeyPicker]`.
+    **The churn key is the whole measurement decision, and it differs per structure.** The
+    sorted array takes `min − 1`, deliberately the **front**: a tail key would append and pop
+    with zero shifts and the chart would report **O(log n)** mutation for a structure whose
+    insert and delete are honestly O(n) — the key's position, not the structure, setting the
+    class. On the real clock its churn now reads **O(n)** (slope ≈ 0.84, ratio ≈ 5.7×) while
+    its search on the same run is sub-linear (≈ 0.24): the signature split — cheap to read,
+    expensive to write — which until now existed only in op-counts.
+    **The linked list is the honest hard case this wiring was deferred for**, and the answer
+    is to show both curves, not to hide one. Its churn is flat **O(1)**, and that is true:
+    the list head-inserts, so the key the pair then deletes is the first one it looks at, and
+    *no* key choice makes a same-key churn expensive on this structure. Read alone that line
+    sits beside the hash set's and reads as "cheap list" — but the hash set is flat for *any*
+    key, and the list only for the one it just placed itself. The cost that matters, removing
+    a key already stored, is the finite-difference `delete`, which reads **O(n)** on the same
+    run (slope ≈ 1.15, ratio ≈ 11.5×, and 562× the per-op cost of churn at the top of the
+    sweep). So the UI gains a caveat box beside the chart saying exactly that, the split
+    paragraph names the list, and the churn callout tells the reader not to read the orange
+    line on its own. This is METHODOLOGY §2.3 **regime 7 — the project's only complexity-class
+    disagreement between its two measurement methods — on the wall clock for the first time**;
+    it was previously proven only on exact op-counts.
+    `verify:browser` gained nine checks (twelve series; sorted-array churn rising and its
+    search/churn split on one run; the list's flat churn, its O(n) delete-by-value, and that
+    the two disagree on class by a margin no one can call noise). Neither structure gets a
+    second-pass (reverse-sorted) assert: neither is shape-sensitive, and the second pass does
+    not reset `__mutationProof`, so such an assert would silently re-read the first pass —
+    noted in the gate so nobody adds one by accident. The whole gate still runs in ~13 s.
+    `runSweeps.test.ts`'s fake engine now returns all four structures and asserts the list's
+    class disagreement survives the pipeline. **No new deps.**
   - **Open:** string-key sweep wiring; presets ("sorted data kills a naive BST"
     as one click); PNG export; interleaved structure order per sweep point.
 

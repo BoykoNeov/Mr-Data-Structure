@@ -67,7 +67,13 @@ export interface CompareResult {
    * {@link canonicalSearch} / {@link heapSearch} rather than filtering by hand.
    */
   readonly search: readonly SeriesView[];
-  /** churn + finite-difference insert/delete for the array and hash set. */
+  /**
+   * churn + finite-difference insert/delete for the four **flat** structures — unsorted
+   * array, hash set, sorted array, linked list. Twelve series: each structure's churn
+   * primary plus its two finite-difference halves. The list's pair is the one that must
+   * be read together rather than separately (METHODOLOGY §2.3 regime 7): its churn is
+   * honestly O(1) and its delete-by-value honestly O(n).
+   */
   readonly mutation: readonly SeriesView[];
   /** churn + finite-difference insert/delete for the BST and the AVL. */
   readonly trees: readonly SeriesView[];
@@ -193,7 +199,7 @@ export async function runAllSweeps(
   const search = (await engine.runSweep(keyBuffer(data), searchSizes, SEARCH_OPTS)).map((s) => toView(s));
   if (win) win.__sweepProof = toProof(search);
 
-  onStatus('running mutation sweep (array, hash set)…');
+  onStatus('running mutation sweep (array, hash set, sorted array, linked list)…');
   const mutation = (await engine.runMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
   if (win) win.__mutationProof = toProof(mutation);
 

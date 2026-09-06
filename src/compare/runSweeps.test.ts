@@ -28,10 +28,15 @@ function series(structure: StructureId, op: SweepOp, sizes: number[], f: (n: num
 }
 
 function fakeEngine(log: string[]): BenchEngine {
-  const mutTrio = (st: StructureId, sizes: number[], f: (n: number) => number) => [
+  const mutTrio = (
+    st: StructureId,
+    sizes: number[],
+    f: (n: number) => number,
+    deleteF: (n: number) => number = f,
+  ) => [
     series(st, 'churn', sizes, f),
     series(st, 'insert', sizes, () => 1),
-    series(st, 'delete', sizes, f),
+    series(st, 'delete', sizes, deleteF),
   ];
   return {
     ready: async () => {},
@@ -51,7 +56,16 @@ function fakeEngine(log: string[]): BenchEngine {
     },
     runMutationSweep: async (_k, sizes) => {
       log.push(`mut:${sizes.length}`);
-      return [...mutTrio('array', sizes, (n) => n), ...mutTrio('hashset', sizes, () => 2)];
+      return [
+        ...mutTrio('array', sizes, (n) => n),
+        ...mutTrio('hashset', sizes, () => 2),
+        ...mutTrio('sarr', sizes, (n) => 2 * n),
+        // The linked list's shape is the point of regime 7 (METHODOLOGY §2.3): its churn
+        // is honestly O(1) — a head insert and a delete that hits the head — while the
+        // canonical delete-by-value in the teardown is O(n). The two series disagree on
+        // *class*, so the fake reproduces that here rather than a single cost shape.
+        ...mutTrio('ll', sizes, () => 1, (n) => n),
+      ];
     },
     runBstMutationSweep: async (_k, sizes) => {
       log.push(`bst:${sizes.length}`);
@@ -87,6 +101,19 @@ describe('runAllSweeps', () => {
     expect(r.search.map((v) => v.series.structure)).toEqual(['array', 'll', 'sarr', 'hashset', 'heap']);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
+    // All four **flat** structures now carry a mutation trio, not just the Phase 2 pair.
+    expect(r.mutation.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
+      'array.churn', 'array.insert', 'array.delete',
+      'hashset.churn', 'hashset.insert', 'hashset.delete',
+      'sarr.churn', 'sarr.insert', 'sarr.delete',
+      'll.churn', 'll.insert', 'll.delete',
+    ]);
+    // Regime 7 survives the pipeline: the list's churn and its delete land in different
+    // classes, which is exactly what the UI has to show side by side.
+    const byKey = (k: string) => r.mutation.find((v) => `${v.series.structure}.${v.series.op}` === k)!;
+    expect(byKey('ll.churn').fit.best).toBe('O(1)');
+    expect(byKey('ll.delete').fit.best).toBe('O(n)');
+    expect(byKey('sarr.churn').fit.best).toBe('O(n)');
     expect(r.trees.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'bst.churn', 'bst.insert', 'bst.delete', 'avl.churn', 'avl.insert', 'avl.delete',
     ]);

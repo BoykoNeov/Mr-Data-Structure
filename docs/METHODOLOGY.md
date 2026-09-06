@@ -113,6 +113,24 @@ the cross-check, and both are read for **shape** (PLAN §2.3). Where the churn
 key's position biases the constant (trees, sorted array) or even the class
 (linked list), the bias is stated next to the chart and in §4 below.
 
+All four flat structures now run this pair of methods **on the browser clock**,
+not only on op-counts, and regimes 6 and 7 are where that matters most:
+
+- The **sorted array**'s churn key is `min − 1` precisely so the measured curve
+  is the structure's honest O(n). A tail key would append and pop with no shifts
+  and the chart would report O(log n) mutation — the key's position, not the
+  structure, setting the class. Its own search on the same run is sub-linear, so
+  the user sees one structure that is cheap to read and expensive to write.
+- The **linked list**'s flat O(1) churn is the one measured line in this project
+  that is true and misleading at once: on screen it sits beside the hash set's
+  flat line, but the hash set is flat for *any* key while the list is flat only
+  for the key it just put at its own head. No key choice fixes it — the
+  structure has no expensive same-key churn — so the honest presentation is
+  *both* curves at once, and the UI prints a caveat box beside the chart saying
+  so, pointing at the O(n) delete-by-value in the finite-difference split.
+  `scripts/verify-browser.mjs` pins both halves so the pair cannot silently
+  drift back to a single reassuring line.
+
 ## 3. Reading a curve — the fitter (`src/bench/fit.ts`)
 
 The **log-log slope** is the headline (PLAN §2.3): on log-log axes `y ∝ nᵏ` is a
@@ -303,6 +321,8 @@ Ordered by how much they can mislead a reader today.
 | animation shows exactly what the benchmark counts | `src/viz/trace*.test.ts` | — |
 | dataset → sizes → engine → fit → `window` proofs plumbing | `src/compare/runSweeps.test.ts` (fake engine) | — |
 | the real browser clock yields array O(n) / hash O(1) / sorted-array sub-linear / list O(n) search, array O(n) vs hash O(1) churn, sub-linear tree churn, finite slope uncertainties | `scripts/verify-browser.mjs` (headless Chromium, non-blocking in CI) | real |
+| **sorted array on the real clock:** churn rises O(n) (slope ≈ 0.84, ratio ≈ 5.7×) while its *search* on the same run is sub-linear (≈ 0.24) — cheap to read, expensive to write. Regime 6, previously proven only on op-counts | `scripts/verify-browser.mjs` | real |
+| **linked list on the real clock — the class disagreement of regime 7:** churn reads flat O(1) while the finite-difference delete-by-value reads O(n) (slope ≈ 1.15, ratio ≈ 11.5×) on the *same* run, the two costs 562× apart at the top of the sweep. The only place in this project where the two methods land in different classes, now visible on the clock and not just in op-counts | `scripts/verify-browser.mjs` | real |
 | on **reverse-sorted** input the BST's *measured* churn curve reads O(n) (slope ≈ 1.00, R² 1.000) while the AVL stays sub-linear (≈ 0.16) — the wall-clock half of §4.1, which a right-spine-only probe read as flat | `scripts/verify-browser.mjs`, second pass (drives the picker to reverse-sorted) | real |
 | the min-heap on the real clock: search reads **O(n)** (slope ≈ 0.97, ratio ≈ 6400×) with no lookup shortcut, and churn stays **sub-linear** (≈ 0.13 uniform, ≈ 0.11 reverse-sorted — a heap cannot degenerate) | `scripts/verify-browser.mjs`, both passes | real |
 | extract-min costs **more per operation** than insert at the top of the sweep (asserted > 1.3×; measured 7.5× and 10.6×) — a *cost* claim, not a growth claim, for the reason in §4 hurdle 2 | `scripts/verify-browser.mjs` | real |

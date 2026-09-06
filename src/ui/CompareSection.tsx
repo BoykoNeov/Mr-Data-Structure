@@ -229,8 +229,12 @@ export function CompareSection() {
           <SlopeChart views={churn} />
           <Callout title="What to notice" tone="tip">
             The unsorted array (red) shifts elements to keep its order, so its churn rises <strong>O(n)</strong>.
-            The hash set (blue) stays <strong>O(1)</strong>. On shuffled data both trees — BST (purple) and AVL
-            (brown) — stay sub-linear (<strong>O(log n)</strong>), nearly flat.{' '}
+            The sorted array (green) rises the same way for a different reason — it shifts to keep the order it
+            binary-searches on, so it pays <strong>O(n)</strong> on every change to buy the sub-linear search you
+            saw above: <em>the same structure, cheap to read and expensive to write</em>. The hash set (blue)
+            stays <strong>O(1)</strong>. The linked list (orange) is flat too, but not for the hash set's reason —
+            see the note below the chart before you read anything into it. On shuffled data both trees — BST
+            (purple) and AVL (brown) — stay sub-linear (<strong>O(log n)</strong>), nearly flat.{' '}
             {sortedNote ? (
               <>
                 <strong>This dataset is sorted</strong>, so the naive BST built into a chain and its dashed
@@ -256,13 +260,32 @@ export function CompareSection() {
             )}
           </Callout>
 
+          <Callout title="The flat orange line is a trap — read it with the split below" tone="caveat">
+            The linked list’s add/remove line sits flat at <strong>O(1)</strong>, right down with the hash set.
+            That number is <em>true</em>, and it is <em>not</em> what it looks like. Every measurement here
+            adds one key and removes the same key, and a list adds at the front — so the key we then remove is
+            the very first one it looks at. We are timing the one position on a list where removal is free.
+            There is no way to fix this by choosing a different key: on a list that adds at the front, a
+            same-key add-and-remove pair is <em>always</em> cheap, which is why this structure is the one place
+            the two measurement methods land in <strong>different complexity classes</strong> rather than
+            merely different constants.
+            <br />
+            The cost you actually care about is removing a key that is already <em>in</em> the list, and that
+            is what the orange <em>delete</em> row in the split below reports: <strong>O(n)</strong>, because
+            the list has to walk to it. Same structure, same run, both numbers honest — flat and linear at
+            once. The hash set’s flat line, by contrast, holds for <em>any</em> key. That is the difference
+            the chart alone cannot show you (docs/METHODOLOGY.md §2.3, regime 7).
+          </Callout>
+
           {split.length > 0 && (
             <>
               <p style={{ color: '#555', marginBottom: 4 }}>
                 <strong>Cross-check — the per-operation split.</strong> Churn measures the <em>combined</em>{' '}
                 insert+delete cost. A second method differences the cumulative build and teardown times to
                 recover each operation separately (§6.3) — for the array it exposes the asymmetry churn hides:
-                delete is O(n) (shift to close the gap), while insert is an O(1) append. That O(1) is clean on
+                delete is O(n) (shift to close the gap), while insert is an O(1) append. For the{' '}
+                <strong>linked list</strong> it is the only place the real cost of removing a stored key shows
+                up at all, for the reason in the box above. That O(1) is clean on
                 the <em>op-count</em> signal; on <em>wall-clock</em> a single append is so cheap the timing is
                 mostly noise (watch the low R² and the wide error bars) — a live reminder of <em>why</em> there
                 are two signals. The two methods agree only in complexity class, and not always even then —
