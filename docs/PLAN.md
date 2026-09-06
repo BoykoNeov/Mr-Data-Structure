@@ -15,7 +15,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
-| 6 | trie, skip list, graph; presets/demos; persistence; polish | ⬜ not started |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is wired end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate). Skip list, graph, session persistence, the trie's own step-animation, and performance polish are still open |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
@@ -41,7 +41,12 @@ hash set keep their classes — O(n) scan, O(1) lookup — and gain a second cos
 axis the classes cannot express: *hashing a string costs more than hashing a
 number while staying just as flat* (14.1 ns vs 4.2 ns on one gate run), and
 raising the key-length control lifts that flat line again without tilting it —
-O(1) in the number of keys, O(L) in the size of one (METHODOLOGY §2.5).
+O(1) in the number of keys, O(L) in the size of one (METHODOLOGY §2.5). Phase 6
+puts a **trie** on that same chart, which turns one flat line into two flat lines
+that are flat for unrelated reasons: the hash set reads the whole key once and
+jumps, the trie takes one branch per byte and never hashes at all — so "constant"
+and "cheap" come apart on one picture (its search beats the string scan ~500× at
+the top of the sweep while both stay in their own classes).
 
 ---
 
@@ -379,7 +384,7 @@ algorithm per structure, implemented identically in TS and Rust.
 ### Specialized (later phase)
 | Structure | insert | search | delete | cost metric | notes |
 |-----------|--------|--------|--------|-------------|-------|
-| Trie (prefix tree) | O(L) | O(L) | O(L) | char-steps | strings only; L = key length, independent of n |
+| Trie (prefix tree) | O(L) | O(L) | O(L) | char-steps | strings only; L = key length, independent of n. **Built (Phase 6).** The `O(L)` here is in the *key*; `src/registry.ts` declares the class **in n**, which is `O(1)` for all four slots, and carries the L in `costMetric`. Both are the same statement in the two notations the project uses — the registry's `ComplexityClass` has no term for key length |
 | Skip list | O(log n) avg | O(log n) avg | O(log n) avg | node-visits / level-hops | probabilistic |
 | Graph (adjacency list) | edge O(1) | traversal (BFS/DFS) | — | edge-visits | **own op set**; out of the insert/search/delete comparison; v1-late |
 
@@ -956,6 +961,43 @@ insert/search/delete group on a shared key type.
 - **Phase 6 — Specialized + polish.** Trie, skip list, graph; presets/demos
   (e.g. "sorted data kills a naive BST"); persistence of sessions; docs;
   performance polish (Canvas if needed).
+  - **Done (the trie — a second flat line, for a different reason):**
+    `TrieStr` in Rust (`bench-engine/src/structures/trie.rs`) and its TypeScript teaching
+    twin (`src/structures/trie.ts`), held together by the string conformance corpus, which
+    gained a `prefixes` case and two trie-only dimensions: **lexicographic-by-byte
+    iteration** (an order the trie gets free from its shape, and the hash set has not at
+    all) and a **delete sequence**, because the prune is the drift-prone half — clearing a
+    terminal flag is easy, deciding which nodes may then be unlinked is not. It joins the
+    *existing* string sweeps rather than getting its own call (2 search series → 3, 6
+    mutation series → 9), because it does the same three operations on the same key type.
+    Declared classes are **O(1) in n**, average and worst: the trie is the first structure
+    here whose textbook cost never mentions n, and `ComplexityClass` has no term for key
+    length, so the O(L) lives in the cost metric (**char-steps**) and the mechanism string.
+    On the real clock (third gate pass): trie search flat (slope 0.17, ratio 3.8× over a
+    20× ladder) against the string array's 2000× rise, **~500× cheaper at the top of the
+    sweep**, and trie churn flat (slope 0.00).
+    Two measurement decisions, both made deliberately and both pinned by a test that fails
+    if they are reversed. **The probe set stays shared** across all three string
+    structures, which for a trie is its *deepest* absent case — the workload's absent key
+    is a stored key with its last character changed, so the walk goes all the way down
+    before failing, where an unrelated string would fall off at the first byte. A chart on
+    which each line got a workload tuned to suit it would not be a comparison, so the trie's
+    height is labelled a pessimistic constant instead (UI + METHODOLOGY §2.5). **The churn
+    key is the same derived key**, which makes one insert+delete pair allocate and prune
+    exactly one node — the O(L) walk rather than the allocator; a prefix-free key would
+    build a whole L-node branch per pair, the trie's counterpart to the heap's drain
+    hazard (`trie::tests::a_prefix_free_churn_key_allocates_a_whole_branch`).
+    One wrinkle pinned rather than papered over, the trie's version of the string array's:
+    its search is labelled **O(log n)** about as often as O(1). The char-step count is
+    *identical* across the ladder with no clock involved
+    (`trie::tests::cost_is_flat_in_the_number_of_keys`), so the wall-clock bend is memory,
+    not work — one dependent pointer hop per key byte against a tree that outgrows the
+    caches, where the hash set's single bucket jump drifts ~6× less. Risk R3 with a
+    mechanism; the gate asserts the band and the rise, the UI explains the bend. **No new
+    deps.**
+  - **Open:** skip list, graph, session persistence, the trie's own step-animation
+    (it has a teaching twin but no viz yet, so it is measured and not yet watchable),
+    presets/demos beyond the six that shipped in Phase 5, and performance polish.
 
 ---
 
@@ -1023,3 +1065,5 @@ insert/search/delete group on a shared key type.
    it moves the conditions the gate's slope bands were calibrated under.
 3. Promote `verify:browser` to a blocking CI gate once its slope bands prove
    stable on shared runners.
+4. Phase 6 remainder: the trie's step-animation (it is measured but not yet
+   watchable), then the skip list and the graph, then session persistence.

@@ -17,8 +17,9 @@ measurements, held to identical behaviour by a cross-language conformance
 corpus. See [`docs/PLAN.md`](docs/PLAN.md) for the full design, the measurement
 methodology, and the phased roadmap.
 
-**Status:** Phases 0–5 complete — every Rust bench twin (the Linear family, the
-BST/AVL trees, the **min-heap**, and the **string-key** array and hash set) is
+**Status:** Phases 0–5 complete, Phase 6 begun — every Rust bench twin (the Linear
+family, the BST/AVL trees, the **min-heap**, and the **string-key** array, hash set
+and **trie**) is
 wired into the browser sweep for **both** search and add/remove, and the
 comparison layer is done: the sweeps run on a **user-chosen dataset** (generators
 or pasted CSV/JSON, or one of six **one-click presets**), with a theoretical
@@ -28,9 +29,16 @@ export; tree add/remove is probed at
 misleading flat curve; the linked list's add/remove ships with the caveat it needs —
 its flat O(1) line is true only for a key the list just put at its own head, so the
 O(n) cost of removing a key already stored is shown beside it rather than left off
-the page; and a **text-key dataset** runs its own two structures, where the same
+the page; and a **text-key dataset** runs its own three structures, where the same
 classes hold in the number of keys while a second cost axis — the key's length —
-shows up as a flat line that sits higher the longer the keys are. The phase table is at the top of
+shows up as a flat line that sits higher the longer the keys are.
+
+Phase 6 has started with the **trie**, which puts a second flat line on that text-key
+chart — flat for a reason that has nothing to do with hashing. A hash set reads the
+whole key once to work out where to jump; a trie takes one branch per byte and never
+hashes at all, so on one picture "constant in the number of keys" and "cheap" come
+apart. Skip list, graph, session persistence and the trie's own animation are still to
+come. The phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 

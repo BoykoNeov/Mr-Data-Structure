@@ -28,6 +28,7 @@ use super::hash_set_str::HashSetStr;
 use super::heap::MinHeapF64;
 use super::linked_list::LinkedListF64;
 use super::sorted_array::SortedArrayF64;
+use super::trie::TrieStr;
 
 const CORPUS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus.txt");
 const CORPUS_STR_PATH: &str =
@@ -205,6 +206,15 @@ fn str_cases() -> Vec<StrCase> {
             probes: svec(&["k0", "k15", "k30", "k31", "zzz"]),
         },
         StrCase {
+            // The trie's own edge, and one the array and hash set cannot express:
+            // a stored key that is a *prefix* of another. Reaching a node is not
+            // the same as a key ending there, and deleting the longer key must not
+            // take the shorter one's path with it.
+            name: "prefixes",
+            keys: svec(&["car", "cart", "cat", "dog"]),
+            probes: svec(&["car", "cart", "ca", "carts", "dog", "do"]),
+        },
+        StrCase {
             name: "unicode",
             keys: svec(&["café", "naïve", "日本", "🍎", "Москва"]),
             probes: svec(&["café", "日本", "🍎", "cafe"]),
@@ -240,6 +250,28 @@ fn serialize_str(cases: &[StrCase]) -> String {
         out.push_str(&format!("array_search {}\n", fmt_search(&array_search)));
         out.push_str(&format!("hashset_order {}\n", fmt_strs(&set.keys_in_order())));
         out.push_str(&format!("hashset_search {}\n", fmt_search(&set_search)));
+
+        // The trie carries two dimensions the array and hash set do not. Its
+        // **iteration order is lexicographic by byte** — an order it gets for free
+        // from its shape, so a drift in the walk shows up there and nowhere else.
+        // And its **delete prunes**, which is the drift-prone part (the counterpart
+        // of Hibbard delete in the BST corpus): each case therefore deletes the whole
+        // probe list from a fresh trie, pinning per-delete `(removed:char-steps)` and
+        // the order that survives.
+        let trie = TrieStr::new(&offsets, &bytes, c.keys.len());
+        let trie_search: Vec<(bool, u64)> =
+            c.probes.iter().map(|p| trie.search_one_counted(p)).collect();
+        let mut victim = TrieStr::new(&offsets, &bytes, c.keys.len());
+        let trie_delete: Vec<(bool, u64)> =
+            c.probes.iter().map(|p| victim.delete_one_counted(p)).collect();
+
+        out.push_str(&format!("trie_order {}\n", fmt_strs(&trie.keys_in_order())));
+        out.push_str(&format!("trie_search {}\n", fmt_search(&trie_search)));
+        out.push_str(&format!("trie_delete {}\n", fmt_search(&trie_delete)));
+        out.push_str(&format!(
+            "trie_after_delete {}\n",
+            fmt_strs(&victim.keys_in_order())
+        ));
     }
     out
 }

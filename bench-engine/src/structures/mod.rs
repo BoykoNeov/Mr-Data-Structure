@@ -47,6 +47,7 @@ pub mod hash_set_str;
 pub mod heap;
 pub mod linked_list;
 pub mod sorted_array;
+pub mod trie;
 
 #[cfg(test)]
 mod conformance;

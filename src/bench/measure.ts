@@ -27,6 +27,10 @@
  * They run the same three operations, but on a different key *type*, so they are
  * comparable to each other and never to the numeric structures: a run is either
  * numeric or string, never both (docs/PLAN.md §4.2, docs/METHODOLOGY.md §2.5).
+ *
+ * `triestr` joins them in Phase 6: a prefix tree, on the same three operations and
+ * the same key type, and the first structure here whose textbook cost does not
+ * mention `n` at all (docs/PLAN.md §8 "Specialized").
  */
 export type StructureId =
   | 'array'
@@ -37,7 +41,8 @@ export type StructureId =
   | 'll'
   | 'heap'
   | 'arraystr'
-  | 'hashsetstr';
+  | 'hashsetstr'
+  | 'triestr';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).

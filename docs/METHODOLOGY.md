@@ -198,6 +198,60 @@ slope band and the rise rather than the label, as it already does for the sorted
 array's search, and the UI says why beside the chart. The op-count signal —
 comparisons per probe — is exactly linear either way.
 
+#### The trie: a third string structure, and the probe question it sharpens
+
+Phase 6 adds `triestr` to the same run — a prefix tree, on the same three
+operations and the same key type, so it goes on the same chart. It earns its
+place by being **flat in n for an unrelated reason**: the hash set reads all L
+bytes once to compute a bucket and then jumps; the trie never hashes, and instead
+takes one branch per byte, stopping the instant a byte has no child. Two flat
+lines from two mechanisms is what makes the chart say something a two-line version
+could not — whichever sits lower is a fact about this corpus's key lengths and
+this machine's memory, not about complexity. Its declared cost metric is
+**char-steps**: one for entering the root, one per key byte whose child lookup is
+attempted. The within-node lookup is a binary search over at most 256 sorted
+children — bounded, so counting it would let a representation detail masquerade as
+complexity.
+
+**The shared probe set is now load-bearing, and it biases the trie.** For the
+array and the hash set, `absentLike` (a stored key with its last character
+changed) mainly protects the *constant*. For a trie it decides which of two very
+different numbers the chart shows: an absent key derived that way walks the whole
+key before failing — the trie's **deepest** miss — where an unrelated absent
+string falls off at the first byte, the trie's cheapest. The probe set stays
+shared and unchanged anyway, because a chart on which each line got a workload
+tuned to suit it would not be a comparison. The consequence is stated rather than
+hidden: **the trie's height on this chart is a pessimistic constant**, and the UI
+says so beside it. What no probe choice can do is tilt the line, since nothing the
+trie does depends on how many keys are stored.
+
+The **churn key** is the same derived key, and for a trie that is again a
+decision, not a default. Sharing all but its last byte with a stored key, one
+insert+delete pair allocates exactly one node and prunes it again, so the curve is
+the O(L) descent. A key sharing no prefix would build a whole L-node branch on
+every pair and measure the allocator instead — the trie's counterpart to the
+heap's drain hazard (§4.1), pinned the same way, by a Rust test that fails under
+the wrong key (`trie::tests::a_prefix_free_churn_key_allocates_a_whole_branch`)
+and by its teaching-twin mirror.
+
+A second measured wrinkle, alongside the string array's: **the trie's search is
+fitted `O(log n)` about as often as `O(1)`** — slope 0.17 ± 0.01, tail slope 0.14
+and falling, R² 0.999, rising from ~14 ns to ~55 ns across a 20× size ladder on
+one gate run. The char-step count over that same ladder is *identical*, which is
+not a clock claim at all: `trie::tests::cost_is_flat_in_the_number_of_keys` pins
+the same probe costing the same steps in a 100-key trie and a 100,000-key one. So
+the drift is **memory, not work**. A lookup is one dependent pointer hop per key
+byte, and a trie over 20k short keys is tens of thousands of separately allocated
+nodes, well past the caches a 1k-key trie fits inside; the hash set, making one
+bucket jump instead of ~6 hops, is exposed to the same effect roughly six times
+less and drifts ~1.5× over the same sweep. Risk R3 with a mechanism, handled as
+the sorted array's and the string array's searches already are: the gate asserts
+the slope band and the rise limit, allows either label, and the UI explains the
+bend beside the chart. It deliberately does *not* try to separate this curve from
+a genuinely logarithmic one by slope — a log-log slope is not comparable across
+two different size ladders, and the separation that matters is the clock-free one
+above.
+
 ## 3. Reading a curve — the fitter (`src/bench/fit.ts`)
 
 The **log-log slope** is the headline (PLAN §2.3): on log-log axes `y ∝ nᵏ` is a
@@ -364,8 +418,11 @@ Ordered by how much they can mislead a reader today.
 10. **No cross-machine comparability.** Wall-clock results are labelled as
    measured on *this* machine and browser; nothing is normalised across
    machines (PLAN §13, by choice).
-11. **String-key structures** exist and are conformance-pinned in the engine but
-   are not wired into the sweep; the Compare panel is numeric-only.
+11. **The trie's height is a pessimistic constant.** All three string structures
+   are probed with one shared derived key set, which for a trie is its *deepest*
+   absent case (§2.5). That keeps the chart a comparison, at the cost of a
+   constant no real workload would pay in full. It moves the line up, never its
+   slope.
 
 ## 5. Proof map — which test pins which claim
 
@@ -398,5 +455,10 @@ Ordered by how much they can mislead a reader today.
 | `prefixOf`'s two-buffer views round-trip to exactly the first n keys, and share the caller's buffer (no copy) | same | none |
 | **string keys on the real clock:** array search rises O(n) (slope ≈ 1.02 ± 0.03, R² 0.9995, ratio ≈ 2000×) while hash-set search stays O(1) (≈ 0.04); array churn rises (≈ 0.94), hash-set churn flat (≈ 0.05) | `scripts/verify-browser.mjs`, third pass (drives the picker to `string-corpus`) | real |
 | **the second cost axis:** hashing a *string* key costs more per op than hashing a number (14.1 ns vs 4.2 ns on one run) **while both stay flat** — O(1) in the number of keys, O(L) in the size of one | `scripts/verify-browser.mjs` | real |
+| the trie's cost is **flat in the number of keys** with no clock at all: the same probe costs the same char-steps in a 100-key trie and a 100 000-key one | `structures::trie::tests::cost_is_flat_in_the_number_of_keys` + `src/structures/trie.test.ts` | none (op-counts) |
+| a **prefix-free** churn key would allocate a whole L-node branch per insert+delete pair instead of one node — the trie's counterpart to the heap's drain hazard, and why the derived key is forced | `structures::trie::tests::a_prefix_free_churn_key_allocates_a_whole_branch` + its TS mirror | none |
+| the trie's prune-on-delete matches the TS twin key-for-key, including a key that is a *prefix* of another (the one miss neither a scan nor a hash can have) | `conformance/corpus-str.txt` case `prefixes` + `src/structures/conformance-str.test.ts` | none |
+| **the trie on the real clock:** search stays flat (slope ≈ 0.17, ratio ≈ 3.8× over a 20× ladder) and beats the string scan by ~500× at the top of the sweep; churn stays flat (\|slope\| ≈ 0.00) — a second O(1)-in-n line beside the hash set's, reached without hashing anything | `scripts/verify-browser.mjs`, third pass | real |
+| **deliberately not asserted:** the trie's *class label*, which comes out O(log n) as often as O(1). The char-steps are provably identical across the ladder, so the wall-clock bend is the memory hierarchy — ~6 dependent pointer hops per lookup against a tree that outgrows the caches (§2.5). The gate asserts the slope band and the rise limit instead | — | — |
 | **deliberately not asserted:** the string array's *class label*, which comes out O(n log n) as often as O(n) because its tail slope runs above 1 (pointer-chasing, §2.5). The slope band and the rise are asserted instead, as for the sorted array's search | — | — |
 | **deliberately not asserted:** the *class labels* on the heap's two finite-difference halves. They are noise-dominated and have been seen to mislabel (§4 hurdles 2 and 7); the clock-free op-count proofs carry those claims instead | — | — |

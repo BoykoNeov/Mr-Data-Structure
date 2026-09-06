@@ -289,9 +289,9 @@ export async function runAllSweeps(
 
 /** What one full **string-key** Compare run produces (see {@link runStringSweeps}). */
 export interface StringCompareResult {
-  /** `search` on the string array and the string hash set. */
+  /** `search` on the string array, the string hash set and the trie. */
   readonly search: readonly SeriesView[];
-  /** churn + finite-difference insert/delete for both — six series. */
+  /** churn + finite-difference insert/delete for all three — nine series. */
   readonly mutation: readonly SeriesView[];
   readonly searchSizes: readonly number[];
   readonly mutationSizes: readonly number[];
@@ -301,8 +301,8 @@ export interface StringCompareResult {
 
 /**
  * Run every **string-key** sweep on `dataset` — the string twins of the array and the hash
- * set (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5) — reporting progress through
- * `onStatus` and mirroring the results onto `window` for the runtime gate.
+ * set, plus the **trie** (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5) — reporting
+ * progress through `onStatus` and mirroring the results onto `window` for the runtime gate.
  *
  * A deliberately separate entry point from {@link runAllSweeps}, not a branch inside it.
  * A string dataset cannot build an f64 structure, so there is no run in which both sets of
@@ -311,7 +311,7 @@ export interface StringCompareResult {
  * therefore different types, and no chart takes both.
  *
  * What this run shows that the numeric one cannot: the classes are the same — O(n) scan,
- * O(1) hash — but they hold **in n only**. The same structures also pay O(L) in the key
+ * O(1) hash, and now the trie's O(1)-without-a-hash — but they hold **in n only**. The same structures also pay O(L) in the key
  * length, which is why the run reports {@link StringCompareResult.meanKeyBytes} and why
  * the op-count and wall-clock signals separate here (the op-count curve is the numeric
  * twin's; the wall-clock one carries the bytes).

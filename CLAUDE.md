@@ -98,6 +98,28 @@ tool call does not survive into the next (each call is a fresh process).
   long-key form is the documented fallback only. Related: `prefixOf` exists because
   wasm-bindgen copies the slice it is handed on **every** call — hand a timed static call
   the whole corpus and the copy, not the structure, sets the curve.
+- **The trie's probe and churn keys are the *shared* string ones, and that is a
+  decision.** All three string structures get one probe set (`buildStringProbes`), which
+  for a trie is its **deepest** absent case: the workload's absent key is a stored key
+  with its last character changed, so the walk descends the whole key before failing,
+  where an unrelated string would fall off at the first byte. Don't "improve" the trie's
+  number by giving it its own probes — a chart where each line gets a workload tuned to
+  suit it stops being a comparison. The height is labelled a pessimistic constant beside
+  the chart instead. Same key for churn, and there it also decides *what is measured*:
+  sharing all but its last byte with a stored key, one insert+delete pair allocates and
+  prunes exactly one node (the O(L) walk); a prefix-free key would build a whole L-node
+  branch per pair and measure the allocator. Pinned by
+  `trie::tests::a_prefix_free_churn_key_allocates_a_whole_branch` — the trie's counterpart
+  to the heap's drain test — and its TS mirror.
+- **The trie's search is labelled O(log n) as often as O(1), and that is memory, not
+  work.** The char-step count is provably identical across the sweep
+  (`trie::tests::cost_is_flat_in_the_number_of_keys`); the wall clock drifts up ~3.8× over
+  a 20× ladder because a lookup is one dependent pointer hop per key byte and a 20 k-key
+  trie outgrows the caches a 1 k-key one sits in. Assert the slope band and the rise, never
+  the label — the same call already made for the sorted array's and the string array's
+  searches. Don't add a tighter band to "prove it isn't logarithmic": a log-log slope is
+  not comparable across two different size ladders, and the clock-free op-count test is
+  the separation that actually holds.
 - **The heap's churn key must stay `min − 1`** (`belowMin`). A heap has no
   delete-by-value, so the pair is insert + extract-min, and only a key below every
   stored key is the one the extract takes back; `max + 1` silently *drains* the

@@ -11,6 +11,7 @@ import init, {
   MinHeapF64,
   ArrayStr,
   HashSetStr,
+  TrieStr,
 } from '../../bench-engine/pkg/bench_engine.js';
 import { encodeStringKeys } from '../data/marshal';
 import {
@@ -108,7 +109,7 @@ function searchRunnerFactory(
 
 /**
  * The string search surface — the offsets+UTF-8 mirror of {@link SearchStruct}.
- * `ArrayStr` and `HashSetStr` satisfy it structurally.
+ * `ArrayStr`, `HashSetStr` and `TrieStr` satisfy it structurally.
  */
 interface StringSearchStruct {
   set_probes(offsets: Uint32Array, bytes: Uint8Array): void;
@@ -618,8 +619,8 @@ const api = {
     return [{ structure: 'heap', op: 'churn', points: churn }, fd.insert, fd.delete];
   },
   /**
-   * Run the §6.3 **search** measurement on **string keys** — the unsorted array and the
-   * hash set, both storing `String` rather than `f64` (docs/PLAN.md §4.2, §8). `offsets`
+   * Run the §6.3 **search** measurement on **string keys** — the unsorted array, the hash
+   * set and the **trie**, all storing `String` rather than `f64` (docs/PLAN.md §4.2, §8). `offsets`
    * and `bytes` are the marshalled offsets+UTF-8 buffer (transferred in by the caller);
    * each sweep point measures an order-preserving prefix, as the numeric sweeps do.
    *
@@ -629,6 +630,18 @@ const api = {
    * the **second cost axis** — key length L. Both classes below are in n; toggling the
    * UI's signal selector shows the hash set's op-count flat and identical to its numeric
    * twin's while its wall-clock carries the per-byte hashing cost.
+   *
+   * The **trie** is why this chart is worth three lines rather than two. It is flat in n
+   * like the hash set, but by an unrelated mechanism — one branch per key byte, no hash at
+   * all — so the pair separates "constant" from "cheap": whichever of the two sits lower is
+   * a fact about this corpus's key lengths and this machine's memory, not about complexity.
+   * Its probes are the *same* derived set the other two get (`buildStringProbes`), which
+   * for a trie is deliberately its **deepest** absent case: a probe made by changing a
+   * stored key's last character walks the whole key before failing, where an unrelated
+   * absent string would fall off at the first byte. One probe set across the three
+   * structures is what makes the chart a comparison at all, so the trie's constant is read
+   * as a pessimistic one rather than the probe set being retuned per structure
+   * (docs/METHODOLOGY.md §2.5).
    */
   async runStringSweep(
     offsets: Uint32Array,
@@ -650,14 +663,22 @@ const api = {
       now,
       opts,
     );
+    const triestr = measureSweep(
+      sizes,
+      stringSearchRunnerFactory(TrieStr, offsets, bytes),
+      now,
+      opts,
+    );
     return [
       { structure: 'arraystr', op: 'search', points: arraystr },
       { structure: 'hashsetstr', op: 'search', points: hashsetstr },
+      { structure: 'triestr', op: 'search', points: triestr },
     ];
   },
   /**
-   * Run the §6.3 size-mutating measurement on **string keys** for the same two structures:
-   * the churn primary plus the finite-difference insert/delete split, three series each.
+   * Run the §6.3 size-mutating measurement on **string keys** for the same three
+   * structures: the churn primary plus the finite-difference insert/delete split, three
+   * series each.
    * Keep `sizes` modest — the string array's ordered delete makes its teardown O(n²), and
    * every comparison in it is a byte-wise one.
    *
@@ -666,6 +687,12 @@ const api = {
    * sentinel, so the array's scan pays the same per-byte comparison cost it pays on real
    * keys (`churnKeyFor` / `absentLike` in ./stringWorkload). `offsets`/`bytes` are
    * transferred in by the caller.
+   *
+   * The same derived key is what makes the **trie**'s churn the walk it should be: sharing
+   * all but its last byte with a stored key, one insert+delete pair allocates and prunes
+   * exactly one node, so the curve is the O(L) descent rather than the allocator. A key
+   * sharing no prefix would build a whole branch on every pair — pinned on the Rust side by
+   * `trie::tests::a_prefix_free_churn_key_allocates_a_whole_branch`.
    */
   async runStringMutationSweep(
     offsets: Uint32Array,
@@ -678,6 +705,7 @@ const api = {
     const structures: ReadonlyArray<[StructureId, StringMutationStructCtor]> = [
       ['arraystr', ArrayStr as unknown as StringMutationStructCtor],
       ['hashsetstr', HashSetStr as unknown as StringMutationStructCtor],
+      ['triestr', TrieStr as unknown as StringMutationStructCtor],
     ];
     const out: SweepSeries[] = [];
     for (const [structure, Ctor] of structures) {

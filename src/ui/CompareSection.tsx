@@ -206,6 +206,13 @@ export function CompareSection() {
           'list just put at its own head. Removing a key already stored is the O(n) delete-by-value (METHODOLOGY §2.3).',
       );
     }
+    if (stringSearch.some((v) => v.series.structure === 'triestr')) {
+      notes.push(
+        'The trie’s flat line is a pessimistic constant: every structure here is asked the same questions, and the ' +
+          'shared absent probes (a stored key with its last character changed) are the deepest miss a trie can have — ' +
+          'an unrelated string would stop at the first byte (METHODOLOGY §2.5).',
+      );
+    }
     if (stringSearch.some((v) => v.series.structure === 'arraystr')) {
       notes.push(
         'The string array’s fitted label is not a claim this tool makes: its scan is linear in the number of keys, ' +
@@ -530,10 +537,12 @@ export function CompareSection() {
         <>
           <h3 style={h3}>Text keys — the same structures, a second cost axis</h3>
           <p style={{ color: '#555', marginTop: 0 }}>
-            Your keys are text, so this run measured the two structures built to store text: the same
-            unsorted array and the same hash set, comparing and hashing <em>strings</em> instead of
-            numbers. The shapes below are the ones you would expect — the array scans, the hash set
-            jumps — but a number is one machine word and a key of{' '}
+            Your keys are text, so this run measured the three structures built to store text: the
+            same unsorted array and the same hash set, comparing and hashing <em>strings</em> instead
+            of numbers, plus a <strong>trie</strong> — a tree of shared prefixes that stores a key as
+            a path, one node per byte. The shapes below are the ones you would expect — the array
+            scans, the hash set jumps, the trie walks the key — but a number is one machine word and
+            a key of{' '}
             <strong>{stringResult.meanKeyBytes.toFixed(1)} bytes</strong> (this corpus’s average) is
             not. Everything here costs what the textbook says <em>in the number of keys</em>, and
             something extra per byte of the key on top.
@@ -546,15 +555,20 @@ export function CompareSection() {
               <SweepChart name="string-search" views={stringSearch} signal={signal} showTheory={showTheory} showSpread={showSpread} shape="random" />
               <SlopeChart views={stringSearch} />
               <Callout title="What to notice" tone="tip">
-                The array (red) still rises in step with the number of keys and the hash set (blue) is
-                still flat — the classes don’t change when the keys become text, because those classes
-                only ever counted <em>how many keys</em> get looked at. What changes is the price of
-                looking at one. Switch the <strong>Signal</strong> selector to op-count: the hash set’s
-                curve there is exactly its numeric twin’s, one hash and a short chain walk, flat.
-                Switch back to wall-clock and the same flat line sits higher, because that one hash
-                reads every byte of the key. Then re-run with the key-length boxes set to 30–40
-                characters: the line lifts again without tilting. That is the honest reading of
-                “O(1)” — constant in the number of keys, linear in the size of one.
+                The array (red) still rises in step with the number of keys, and <em>two</em> lines
+                are flat — the hash set (blue) and the trie (cyan) — for completely unrelated
+                reasons. The hash set reads the whole key once, turns it into a bucket number and
+                jumps. The trie never hashes anything: it takes one branch per byte and stops the
+                moment a byte has no child, which is why a key sharing nothing with your data is its
+                cheapest miss and one differing in its last letter is its dearest. Both are constant
+                in the <em>number</em> of keys, so which of the two sits lower on your screen is a
+                fact about your key lengths and this machine’s memory, not about complexity. Switch
+                the <strong>Signal</strong> selector to op-count: the hash set’s curve there is
+                exactly its numeric twin’s, one hash and a short chain walk, flat. Switch back to
+                wall-clock and the same flat line sits higher, because that one hash reads every byte
+                of the key. Then re-run with the key-length boxes set to 30–40 characters: both flat
+                lines lift without tilting. That is the honest reading of “O(1)” — constant in the
+                number of keys, linear in the size of one.
               </Callout>
               <Callout title="Why the array’s label may say n·log n" tone="caveat">
                 The array’s scan is linear in the number of keys — the slope above sits at about 1,
@@ -577,7 +591,10 @@ export function CompareSection() {
                 from your own data with its last character changed — not a long sentinel — so the
                 array pays the same byte-by-byte comparison it would pay on a real key. (A sentinel
                 longer than every stored key would be rejected on the length check alone, which would
-                have made the array look cheaper and the hash set dearer at the same time.)
+                have made the array look cheaper and the hash set dearer at the same time.) For the
+                trie that same key means one insert adds exactly one node and the matching removal
+                takes it back again, so what you are seeing is the walk down the key, not the cost of
+                asking the allocator for a whole new branch.
               </p>
               <ul style={{ marginTop: 4 }}>
                 {stringChurn.map((v) => <FitRow key={`${v.series.structure}-${v.series.op}`} v={v} />)}
@@ -595,13 +612,40 @@ export function CompareSection() {
                   </ul>
                 </>
               )}
-              <Callout title="Why these two and not the other five" tone="caveat">
-                Only the array and the hash set have string-key bench twins in the engine, so a text
-                dataset measures two structures rather than seven. And these curves are read against
-                each other only — never against the numeric charts, even though the operations have
-                the same names. One run’s comparison is a byte-wise walk over a key; the other’s is a
-                single instruction on a double. Putting them on one chart would be reading two
-                different units off one axis.
+              <Callout title="Why the trie’s label may say log n" tone="caveat">
+                The trie’s line is flat and its label sometimes is not, and the gap is worth a
+                minute. Count the work instead of timing it — switch <strong>Signal</strong> to
+                op-count — and the curve is exactly, provably flat: looking up the same key takes
+                the same number of steps in a trie holding a hundred keys and one holding a
+                hundred thousand, because the walk only ever reads the key. What the wall clock
+                adds is <em>memory</em>. Each byte of the key is one hop to a node stored somewhere
+                else, and a trie over twenty thousand keys is tens of thousands of little nodes
+                scattered across far more memory than a small one, so each hop is likelier to be a
+                trip the processor has to wait for. Six hops per lookup means six chances to wait;
+                the hash set, which makes one jump, drifts about six times less over the same
+                sweep. The fitter sees that gentle upward bend and reaches for the next class up.
+                It is reporting something real about this machine — just not about the algorithm.
+              </Callout>
+              <Callout title="What the trie’s number is, and is not" tone="caveat">
+                All three structures are asked the <em>same</em> questions — the same present keys and
+                the same absent ones — because a chart where each line got a workload tuned to suit it
+                would not be a comparison. That shared workload builds its absent keys by taking one
+                of yours and changing its last character, and for a trie that is the <em>worst</em>
+                miss there is: the walk goes all the way down the key before discovering the key is
+                not there. A miss on an unrelated string would stop at the first letter and cost
+                almost nothing. So read the trie’s height as a pessimistic constant. What it is not is
+                a slope: no choice of probe makes the line tilt, because nothing the trie does depends
+                on how many keys are stored.
+              </Callout>
+              <Callout title="Why these three and not the other five" tone="caveat">
+                Only the array, the hash set and the trie have string-key bench twins in the engine,
+                so a text dataset measures three structures rather than seven. And these curves are
+                read against each other only — never against the numeric charts, even though the
+                operations have the same names. One run’s comparison is a byte-wise walk over a key;
+                the other’s is a single instruction on a double. Putting them on one chart would be
+                reading two different units off one axis. The op-count signal is per-structure too —
+                “char-steps” for the trie, “hashes + chain probes” for the hash set — so on that
+                signal compare the <em>shapes</em> of the curves and not their heights.
               </Callout>
             </>
           )}

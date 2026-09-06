@@ -98,14 +98,20 @@ export interface BenchEngine {
 
   /**
    * Measure `search` across a size sweep on **string keys** (docs/PLAN.md §4.2, §8) —
-   * two {@link SweepSeries}, tagged `'arraystr'` and `'hashsetstr'`. `offsets`/`bytes`
-   * are the marshalled offsets+UTF-8 key buffer, and the engine may transfer (consume)
-   * both, so callers must not reuse them.
+   * three {@link SweepSeries}, tagged `'arraystr'`, `'hashsetstr'` and `'triestr'`.
+   * `offsets`/`bytes` are the marshalled offsets+UTF-8 key buffer, and the engine may
+   * transfer (consume) both, so callers must not reuse them.
    *
    * A separate call from {@link runSweep} for a reason stronger than tagging: a string
    * dataset cannot build an f64 structure at all, and the two runs' curves are not
    * comparable even when both are on the chart — one comparison walks bytes, the other
    * compares two doubles (docs/METHODOLOGY.md §2.5).
+   *
+   * The **trie** is the third line and the reason the chart says something the numeric
+   * run cannot: it is flat in n like the hash set but reaches flat by a different route
+   * — one branch per key byte and no hash — so "constant" and "cheap" come apart on one
+   * picture. All three are probed with the *same* derived key set, which for a trie is
+   * its deepest absent case; retuning the probes per structure would end the comparison.
    */
   runStringSweep(
     offsets: Uint32Array,
@@ -115,11 +121,12 @@ export interface BenchEngine {
   ): Promise<SweepSeries[]>;
 
   /**
-   * Measure the size-mutating ops across a size sweep on **string keys** — six
-   * {@link SweepSeries} (`churn`, `insert`, `delete` for each of `'arraystr'` and
-   * `'hashsetstr'`). Keep `sizes` modest: the string array's ordered delete gives it an
-   * O(n²) teardown, with a byte-wise comparison at every step. As with the other sweeps,
-   * the engine may transfer (consume) both buffers.
+   * Measure the size-mutating ops across a size sweep on **string keys** — nine
+   * {@link SweepSeries} (`churn`, `insert`, `delete` for each of `'arraystr'`,
+   * `'hashsetstr'` and `'triestr'`). Keep `sizes` modest: the string array's ordered
+   * delete gives it an O(n²) teardown, with a byte-wise comparison at every step. The
+   * trie's teardown is only Θ(n·L) — it is the one string structure with no quadratic
+   * half. As with the other sweeps, the engine may transfer (consume) both buffers.
    */
   runStringMutationSweep(
     offsets: Uint32Array,

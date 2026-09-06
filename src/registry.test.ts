@@ -24,7 +24,7 @@ describe('structure registry', () => {
   });
 
   it('keeps the string twins in their own catalogue, sharing their numeric twin’s hue', () => {
-    expect(STRING_STRUCTURES.map((s) => s.id)).toEqual(['arraystr', 'hashsetstr']);
+    expect(STRING_STRUCTURES.map((s) => s.id)).toEqual(['arraystr', 'hashsetstr', 'triestr']);
     expect(STRING_STRUCTURES.every((s) => s.keyType === 'string')).toBe(true);
     expect(new Set(STRING_STRUCTURES.map((s) => s.color)).size).toBe(STRING_STRUCTURES.length);
     // The shared hue is deliberate: it is the *same structure* seen through a different
@@ -40,6 +40,27 @@ describe('structure registry', () => {
     // ...but they are not in the numeric catalogue the shared charts iterate.
     expect(STRUCTURES.map((s) => s.id)).not.toContain('arraystr');
     expect(CANONICAL_STRUCTURES.map((s) => s.id)).not.toContain('hashsetstr');
+  });
+
+  it('pins the trie flat in n, on its own hue, with the O(L) in its cost metric', () => {
+    // The trie is the first structure whose textbook cost never mentions n: it walks the
+    // key, one node per byte. So every class is O(1) here — average *and* worst, since
+    // there is no input order that lengthens a key — and it sits on the same flat line as
+    // the string hash set for an unrelated reason (docs/METHODOLOGY.md §2.5).
+    for (const op of ['search', 'insert', 'delete', 'churn'] as const) {
+      expect(REGISTRY.triestr.average[op]).toBe('O(1)');
+      expect(REGISTRY.triestr.worst[op]).toBe('O(1)');
+    }
+    expect(theoreticalClass('triestr', 'search')).toBe(theoreticalClass('hashsetstr', 'search'));
+    expect(REGISTRY.triestr.shapeSensitive).toBe(false);
+    // The O(L) the classes cannot carry lives in the declared unit instead.
+    expect(REGISTRY.triestr.costMetric).toBe('char-steps');
+    // Same three operations as the other two, so it belongs on their chart...
+    expect(isCanonical('triestr')).toBe(true);
+    // ...but unlike them it has no numeric twin to pair a hue with, so its colour is
+    // its own rather than a deliberate duplicate.
+    const numericHues = new Set(STRUCTURES.map((s) => s.color));
+    expect(numericHues.has(REGISTRY.triestr.color)).toBe(false);
   });
 
   it('pins the §8 search classes: O(n) scan/walk, O(log n) binary search, O(1) hash', () => {

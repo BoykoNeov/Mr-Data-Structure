@@ -400,7 +400,8 @@ try {
   // ── Third pass: the same page, driven onto **string keys** ──
   //
   // A dataset of text keys drives a different set of structures entirely — the string
-  // array and the string hash set (docs/PLAN.md §4.2, docs/METHODOLOGY.md §2.5) — so this
+  // array, the string hash set and the **trie** (docs/PLAN.md §4.2, §8;
+  // docs/METHODOLOGY.md §2.5) — so this
   // pass proves a path the numeric ones cannot: that the offsets+UTF-8 marshal layout
   // survives worker → WASM at runtime, and that the classes hold when a "comparison" stops
   // being one instruction on a double and becomes a walk over bytes.
@@ -436,7 +437,11 @@ try {
   if (strSearch) {
     const aStr = strSearch.find((p) => p.structure === 'arraystr');
     const hStr = strSearch.find((p) => p.structure === 'hashsetstr');
-    want('two string search series measured', strSearch.length === 2 && aStr && hStr);
+    const tStr = strSearch.find((p) => p.structure === 'triestr');
+    want(
+      'three string search series measured',
+      strSearch.length === 3 && aStr && hStr && tStr,
+    );
     if (aStr) {
       const ratio = aStr.lastNanos / aStr.firstNanos;
       // The slope band and the rise, NOT the label — deliberately, and for a measured
@@ -465,6 +470,42 @@ try {
       want(`string hash-set search slope ~0 (< 0.4)`, hStr.slope < 0.4);
       want(`string hash-set search stays flat (ratio ${ratio.toFixed(1)} < 10)`, ratio < 10);
     }
+    if (tStr) {
+      // The trie walks the key one byte at a time, so nothing it does can depend on how
+      // many keys are stored — and that is not a claim resting on this clock: the
+      // char-step count is *identical* for the same probe in a 100-key trie and a
+      // 100,000-key one, pinned with no clock at all by
+      // `trie::tests::cost_is_flat_in_the_number_of_keys` and its TS twin.
+      //
+      // The wall clock nonetheless drifts up gently over the ladder (~14 ns to ~55 ns
+      // across a 20x size increase, slope 0.17, tail slope falling), and the fitter
+      // labels that O(log n) about as often as O(1). That drift is **memory, not work**:
+      // a lookup is one dependent pointer hop per key byte, and a trie over 20k keys is
+      // some tens of thousands of separately allocated nodes — far past the caches a
+      // 1k-key trie fits inside. The hash set, one bucket jump instead of six hops, is
+      // exposed to the same effect ~6x less and drifts ~1.5x over the same ladder.
+      // Same call as the sorted array's search and the string array's: assert the band
+      // and the rise limit, allow either label, and say why beside the chart
+      // (docs/PLAN.md risk R3, docs/METHODOLOGY.md §2.5).
+      const ratio = tStr.lastNanos / tStr.firstNanos;
+      want(
+        `trie search fitted flat or near-flat (${tStr.best})`,
+        tStr.best === 'O(1)' || tStr.best === 'O(log n)',
+      );
+      want(`trie search slope ~0 (${tStr.slope.toFixed(2)} < 0.4)`, tStr.slope < 0.4);
+      want(`trie search stays flat (ratio ${ratio.toFixed(1)} < 10)`, ratio < 10);
+    }
+    if (aStr && tStr) {
+      // The headline of the three-line chart: at the top of the sweep the scan has lost to
+      // the walk by orders of magnitude, and the two got there by different mechanisms. The
+      // trie's own constant is a *pessimistic* one — the shared absent probes are a stored
+      // key with its last character changed, which is the deepest miss a trie can have
+      // (docs/METHODOLOGY.md §2.5) — so this direction is the safe one to assert.
+      want(
+        `trie search beats the string scan at the top of the sweep (${tStr.lastNanos.toFixed(1)} < ${aStr.lastNanos.toFixed(1)} ns)`,
+        tStr.lastNanos < aStr.lastNanos,
+      );
+    }
     // The claim the numeric run cannot make: the class is in n, but the *constant* is in
     // the key length. A string hash lookup must cost more per op than the f64 one on the
     // same machine and the same run of the gate — it reads every byte of the key, where the
@@ -482,7 +523,8 @@ try {
     const find = (st, op) => strMutation.find((m) => m.structure === st && m.op === op);
     const aChurn = find('arraystr', 'churn');
     const hChurn = find('hashsetstr', 'churn');
-    want('six string mutation series measured', strMutation.length === 6);
+    const tChurn = find('triestr', 'churn');
+    want('nine string mutation series measured', strMutation.length === 9);
     if (aChurn) {
       // The churn key is derived from the corpus (a stored key with its last character
       // changed), *not* a sentinel longer than every stored key: Rust compares string
@@ -497,6 +539,18 @@ try {
       want(
         `string hash-set churn stays flat (|slope| ${Math.abs(hChurn.slope).toFixed(2)} < 0.6)`,
         Math.abs(hChurn.slope) < 0.6,
+      );
+    }
+    if (tChurn) {
+      // Two-sided, like the list's flat churn band: the trie's add/remove is a walk down
+      // one key, so it must neither rise with n nor fall. It stays flat only because the
+      // churn key shares all but its last byte with a stored key — one node allocated and
+      // pruned per pair. A prefix-free key would build a whole branch each time and this
+      // band is what would catch the swap (Rust:
+      // `trie::tests::a_prefix_free_churn_key_allocates_a_whole_branch`).
+      want(
+        `trie churn stays flat (|slope| ${Math.abs(tChurn.slope).toFixed(2)} < 0.6)`,
+        Math.abs(tChurn.slope) < 0.6,
       );
     }
   }

@@ -190,6 +190,41 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     worst: { search: ON, insert: ON, delete: ON, churn: ON },
     shapeSensitive: false,
   },
+  /**
+   * The **trie** (prefix tree) — docs/PLAN.md §8 "Specialized", the Phase 6 structure.
+   *
+   * The first structure in the catalogue whose textbook cost does not mention `n` at
+   * all: it stores a key as a *path*, one node per byte, so every operation costs the
+   * length of the key it was handed and nothing else. Every class below is therefore
+   * **O(1) in n**, average and worst — the same flat line as the string hash set, and
+   * the point of putting the two on one chart is that they get there by different
+   * means. The hash set reads all L bytes of the key once, to compute a hash, then
+   * jumps; the trie never hashes and takes one branch per byte, stopping the moment a
+   * byte has no child. The O(L) both pay is a constant in n that the class notation
+   * cannot carry, which is why it lives in {@link StructureInfo.costMetric} and
+   * {@link StructureInfo.mechanism} instead (docs/METHODOLOGY.md §2.5).
+   *
+   * **Its own hue, unlike the other two string twins**, because it has no numeric twin
+   * to pair with: a trie over f64 keys is not a structure this project builds.
+   *
+   * **`family: 'tree'` on purpose**, though docs/PLAN.md §8 files the trie under
+   * "Specialized". `Family` describes the *shape* — this is a tree, walked by descent —
+   * while §8's grouping is about which structures are comparable, which the key type and
+   * {@link STRING_STRUCTURES} already decide. Adding a `'specialized'` member would put a
+   * catalogue heading into a field that answers a different question.
+   */
+  triestr: {
+    id: 'triestr',
+    label: 'trie (string keys)',
+    family: 'tree',
+    keyType: 'string',
+    color: '#17becf',
+    costMetric: 'char-steps',
+    mechanism: 'walks the key one byte at a time down a tree of shared prefixes; never hashes, never compares a whole key',
+    average: { search: O1, insert: O1, delete: O1, churn: O1 },
+    worst: { search: O1, insert: O1, delete: O1, churn: O1 },
+    shapeSensitive: false,
+  },
   hashsetstr: {
     id: 'hashsetstr',
     label: 'hash set (string keys)',
@@ -235,10 +270,15 @@ export const CANONICAL_STRUCTURES: readonly StructureInfo[] = STRUCTURES.filter(
  * string keys. A Compare run drives *one* key type — a string dataset cannot build an
  * f64 structure and an f64 dataset has nothing to say about byte-wise comparison — so
  * these are rendered in their own section and never merged with {@link STRUCTURES}.
+ *
+ * Three of them since Phase 6: the array, the hash set, and the **trie**, which is the
+ * one that makes the section's point unarguable — two flat lines and one rising one,
+ * where the two flat ones are flat for unrelated reasons.
  */
 export const STRING_STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.arraystr,
   REGISTRY.hashsetstr,
+  REGISTRY.triestr,
 ];
 
 /**

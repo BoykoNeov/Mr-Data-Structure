@@ -90,11 +90,16 @@ function fakeEngine(log: string[]): BenchEngine {
       return [
         series('arraystr', 'search', sizes, (n) => n),
         series('hashsetstr', 'search', sizes, () => 3),
+        series('triestr', 'search', sizes, () => 7),
       ];
     },
     runStringMutationSweep: async (_o, _b, sizes) => {
       log.push(`strmut:${sizes.length}`);
-      return [...mutTrio('arraystr', sizes, (n) => n), ...mutTrio('hashsetstr', sizes, () => 2)];
+      return [
+        ...mutTrio('arraystr', sizes, (n) => n),
+        ...mutTrio('hashsetstr', sizes, () => 2),
+        ...mutTrio('triestr', sizes, () => 6),
+      ];
     },
     dispose: () => {},
   };
@@ -203,12 +208,20 @@ describe('runStringSweeps', () => {
       `strmut:${r.mutationSizes.length}`,
     ]);
 
-    expect(r.search.map((v) => v.series.structure)).toEqual(['arraystr', 'hashsetstr']);
+    expect(r.search.map((v) => v.series.structure)).toEqual([
+      'arraystr',
+      'hashsetstr',
+      'triestr',
+    ]);
     expect(r.search[0].fit.best).toBe('O(n)');
+    // Two flat lines and one rising one: the hash set and the trie are both O(1) in the
+    // number of keys, by unrelated mechanisms (docs/METHODOLOGY.md §2.5).
     expect(r.search[1].fit.best).toBe('O(1)');
+    expect(r.search[2].fit.best).toBe('O(1)');
     expect(r.mutation.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'arraystr.churn', 'arraystr.insert', 'arraystr.delete',
       'hashsetstr.churn', 'hashsetstr.insert', 'hashsetstr.delete',
+      'triestr.churn', 'triestr.insert', 'triestr.delete',
     ]);
     // The second cost axis, reported alongside the classes: 4 chars ⇒ 4 UTF-8 bytes.
     expect(r.meanKeyBytes).toBe(4);

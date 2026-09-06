@@ -9,6 +9,10 @@ array_order
 array_search 0:0 0:0
 hashset_order 
 hashset_search 0:1 0:1
+trie_order 
+trie_search 0:2 0:2
+trie_delete 0:2 0:2
+trie_after_delete 
 
 case singleton
 keys hello
@@ -17,6 +21,10 @@ array_order hello
 array_search 1:1 0:1
 hashset_order hello
 hashset_search 1:2 0:1
+trie_order hello
+trie_search 1:6 0:2
+trie_delete 1:6 0:2
+trie_after_delete 
 
 case ordered
 keys apple banana cherry
@@ -25,6 +33,10 @@ array_order apple banana cherry
 array_search 1:1 1:2 1:3 0:3
 hashset_order cherry apple banana
 hashset_search 1:2 1:2 1:2 0:2
+trie_order apple banana cherry
+trie_search 1:6 1:7 1:7 0:2
+trie_delete 1:6 1:7 1:7 0:2
+trie_after_delete 
 
 case duplicates
 keys a a b a c
@@ -33,6 +45,10 @@ array_order a a b a c
 array_search 1:1 1:3 1:5 0:5
 hashset_order a b c
 hashset_search 1:2 1:2 1:2 0:2
+trie_order a b c
+trie_search 1:2 1:2 1:2 0:2
+trie_delete 1:2 1:2 1:2 0:2
+trie_after_delete 
 
 case rehash
 keys k0 k1 k2 k3 k4 k5 k6 k7 k8 k9 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k20 k21 k22 k23 k24 k25 k26 k27 k28 k29 k30
@@ -41,6 +57,22 @@ array_order k0 k1 k2 k3 k4 k5 k6 k7 k8 k9 k10 k11 k12 k13 k14 k15 k16 k17 k18 k1
 array_search 1:1 1:16 1:31 0:31 0:31
 hashset_order k11 k28 k1 k10 k20 k24 k0 k12 k5 k7 k16 k6 k17 k22 k15 k25 k26 k23 k13 k21 k29 k4 k27 k14 k18 k3 k9 k8 k19 k30 k2
 hashset_search 1:2 1:2 1:2 0:1 0:2
+trie_order k0 k1 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k2 k20 k21 k22 k23 k24 k25 k26 k27 k28 k29 k3 k30 k4 k5 k6 k7 k8 k9
+trie_search 1:3 1:4 1:4 0:4 0:2
+trie_delete 1:3 1:4 1:4 0:4 0:2
+trie_after_delete k1 k10 k11 k12 k13 k14 k16 k17 k18 k19 k2 k20 k21 k22 k23 k24 k25 k26 k27 k28 k29 k3 k4 k5 k6 k7 k8 k9
+
+case prefixes
+keys car cart cat dog
+probes car cart ca carts dog do
+array_order car cart cat dog
+array_search 1:1 1:2 0:4 0:4 1:4 0:4
+hashset_order cat cart car dog
+hashset_search 1:2 1:2 0:1 0:2 1:2 0:1
+trie_order car cart cat dog
+trie_search 1:4 1:5 0:3 0:6 1:4 0:3
+trie_delete 1:4 1:5 0:3 0:4 1:4 0:2
+trie_after_delete cat
 
 case unicode
 keys café naïve 日本 🍎 Москва
@@ -49,3 +81,7 @@ array_order café naïve 日本 🍎 Москва
 array_search 1:1 1:3 1:4 0:5
 hashset_order naïve 🍎 日本 Москва café
 hashset_search 1:2 1:2 1:2 0:1
+trie_order café naïve Москва 日本 🍎
+trie_search 1:6 1:7 1:5 0:5
+trie_delete 1:6 1:7 1:5 0:2
+trie_after_delete naïve Москва
