@@ -927,7 +927,16 @@ insert/search/delete group on a shared key type.
     **PNG export** (`ui/png.ts`) stacks the charts the page is *currently* showing into one
     image with their titles, legends and this run's provenance (dataset, key length, signal,
     engine, timestamp). It composes rather than dumping a canvas, because uPlot renders its
-    legend as DOM: a raw `toDataURL` would export lines with nothing naming them. The layout
+    legend as DOM: a raw `toDataURL` would export lines with nothing naming them.
+    **The qualifiers travel with it, which is the point.** An exported image is the form most
+    likely to be read with no page attached, so a churn chart carries the finite-difference
+    **delete-by-value** figures as cross-check legend rows, and the caption carries the
+    sentences the page prints beside the charts — the linked list's flat line being flat only
+    for the key it just head-inserted (the rule `CLAUDE.md` states: never ship that curve
+    without its pair), the string array's fitted label not being a claim the tool makes, and
+    wall-clock numbers being specific to one machine. Caption lines are wrapped to the sheet
+    width rather than clipped: a truncated caveat is worse than none, because it looks
+    complete. The layout
     arithmetic is a pure function with its own tests (nothing overlaps, nothing falls off the
     sheet, the furniture scales with the device pixel ratio — uPlot's canvas is already
     DPR-scaled, so unscaled labels would come out microscopic on exactly the screens people

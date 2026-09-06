@@ -22,6 +22,8 @@ export const SHEET = {
   captionLine: 16,
   gap: 22,
   swatch: 10,
+  /** Caption font size — also the width the caption is wrapped against. */
+  captionText: 11,
 } as const;
 
 /** One chart to place on the sheet: its canvas size and how many legend lines it needs. */
@@ -93,6 +95,40 @@ export function planSheet(
   };
 }
 
+/**
+ * Wrap caption lines to `maxWidth`, measured by the caller's `widthOf` (a canvas text
+ * metric in practice, an injected stub in tests).
+ *
+ * Needed rather than cosmetic: the caption is where the qualifiers travel — the linked
+ * list's flat churn line only being flat for the key it just inserted, or a fitted label
+ * the project does not stand behind. Those sentences are longer than a chart is wide, and
+ * a clipped caveat is worse than none, because it looks complete.
+ *
+ * Words longer than `maxWidth` are left over-long rather than broken: a URL or an
+ * identifier is more use whole than split.
+ */
+export function wrapLines(
+  lines: readonly string[],
+  maxWidth: number,
+  widthOf: (text: string) => number,
+): string[] {
+  const out: string[] = [];
+  for (const line of lines) {
+    let current = '';
+    for (const word of line.split(' ')) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (current && widthOf(candidate) > maxWidth) {
+        out.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    }
+    out.push(current);
+  }
+  return out;
+}
+
 /** One legend entry: the text and the colour of its swatch. */
 export interface LegendEntry {
   readonly text: string;
@@ -116,17 +152,27 @@ export function renderSheet(
   caption: readonly string[],
   scale = typeof devicePixelRatio === 'number' ? devicePixelRatio : 1,
 ): HTMLCanvasElement {
-  const layout = planSheet(
-    shots.map((s) => ({
-      title: s.title,
-      width: s.canvas.width,
-      height: s.canvas.height,
-      legendLines: s.legend.length,
-    })),
-    caption.length,
-    scale,
-  );
-  const s = layout.scale;
+  const blocks = shots.map((s) => ({
+    title: s.title,
+    width: s.canvas.width,
+    height: s.canvas.height,
+    legendLines: s.legend.length,
+  }));
+  const s = Math.max(1, scale);
+  const captionFont = `${SHEET.captionText * s}px system-ui, -apple-system, Segoe UI, sans-serif`;
+
+  // Wrap the caption *before* planning, so the sheet is tall enough for what it will hold.
+  // Measuring needs a context; without one (no DOM) the unwrapped lines are used, which
+  // only matters in an environment that cannot draw the sheet anyway.
+  const measurer = document.createElement('canvas').getContext('2d');
+  const contentWidth = blocks.reduce((w, b) => Math.max(w, b.width), 0);
+  let lines = [...caption];
+  if (measurer) {
+    measurer.font = captionFont;
+    lines = wrapLines(caption, contentWidth, (t) => measurer.measureText(t).width);
+  }
+
+  const layout = planSheet(blocks, lines.length, scale);
   const sheet = document.createElement('canvas');
   sheet.width = Math.ceil(layout.width);
   sheet.height = Math.ceil(layout.height);
@@ -158,8 +204,8 @@ export function renderSheet(
   });
 
   ctx.fillStyle = '#666';
-  ctx.font = font(11);
-  caption.forEach((line, i) => {
+  ctx.font = captionFont;
+  lines.forEach((line, i) => {
     ctx.fillText(line, SHEET.pad * s, layout.captionY + i * SHEET.captionLine * s);
   });
 

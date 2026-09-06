@@ -49,6 +49,13 @@ tool call does not survive into the next (each call is a fresh process).
   never dedupe** (it would corrupt benchmark inputs).
 - **Shell is PowerShell** on this Windows box; a Bash tool is also available for
   POSIX scripts. They take different syntax.
+- **Run `verify:browser` on a quiet machine — don't race it against `npm test`.** It
+  times real work, and its noise-sensitive checks (the heap's extract-min-vs-insert
+  cost ratio above all, a finite-difference figure the gate's own comments call
+  mostly noise) will flake under CPU contention: one run against a concurrent Vitest
+  suite reported 1.2× against a > 1.3× band, and 2.1× on its own moments later. A
+  single failing ratio check with everything else green is a scheduling artefact, not
+  a regression — re-run it alone before chasing it.
 - `verify:browser` needs Playwright's pinned Chromium; in a sandbox with a
   pre-installed one, set `VERIFY_CHROMIUM=/path/to/chrome`.
 - The Compare default auto-run (what the browser gate measures first) is **one
@@ -74,7 +81,11 @@ tool call does not survive into the next (each call is a fresh process).
   `aboveMax`**, whose head insert makes churn honestly O(1). That flat list curve
   is a *finding* (METHODOLOGY §2.3 regime 7), not a bug and not a fast structure —
   don't "fix" it with a different key (none exists), and don't ship it without the
-  caveat box + the O(n) delete-by-value curve beside it. `verify:browser` pins both
+  caveat box + the O(n) delete-by-value curve beside it. **That rule binds every way
+  the curve leaves the page**, not just the screen: the PNG sheet (`ui/png.ts`) carries
+  the delete-by-value figure as a cross-check legend row and the caveat as a caption
+  line, because prose in the DOM does not travel with an exported image — and an image
+  is the form most likely to be read with no page attached. `verify:browser` pins both
   halves.
 - **A string probe/churn key is derived from the data, never invented.** There is no
   `max + 1` for strings, and the tempting substitute — a key longer than every stored

@@ -170,14 +170,55 @@ export function CompareSection() {
    * is actually looking at, not a fixed list, so a string run exports its two and a
    * numeric run exports its four.
    */
-  const chartsOnScreen: ReadonlyArray<{ name: string; title: string; views: readonly SeriesView[] }> = [
+  const deleteRows = (vs: readonly SeriesView[]) => vs.filter((v) => v.series.op === 'delete');
+  const chartsOnScreen: ReadonlyArray<{
+    name: string;
+    title: string;
+    views: readonly SeriesView[];
+    /**
+     * Extra legend rows with no line on the chart. The churn charts carry the
+     * finite-difference **delete-by-value** figures here, because a churn line read alone
+     * can be true and misleading at once — the linked list's flat O(1) most of all
+     * (docs/METHODOLOGY.md §2.3 regime 7). On the page that pairing is made by a caveat
+     * box; in an exported image the box does not travel, so the number has to.
+     */
+    extra?: readonly SeriesView[];
+  }> = [
     { name: 'search', title: 'Search — the cost of finding a key', views: search },
-    { name: 'churn', title: 'Add / remove (churn)', views: churn },
-    { name: 'heap-churn', title: 'Min-heap — insert + extract-min', views: heapChurn },
+    { name: 'churn', title: 'Add / remove (churn)', views: churn, extra: deleteRows(split) },
+    { name: 'heap-churn', title: 'Min-heap — insert + extract-min', views: heapChurn, extra: deleteRows(heapSplit) },
     { name: 'heap-scan', title: 'Min-heap vs array — the linear scan', views: [...heapScan, ...arrayScan] },
     { name: 'string-search', title: 'Text keys — search', views: stringSearch },
-    { name: 'string-churn', title: 'Text keys — add / remove (churn)', views: stringChurn },
+    { name: 'string-churn', title: 'Text keys — add / remove (churn)', views: stringChurn, extra: deleteRows(stringSplit) },
   ].filter((c) => c.views.length > 0);
+
+  /**
+   * The qualifiers the page prints beside its charts, reduced to caption lines so they
+   * leave the page with the picture. A PNG is the artifact most likely to be read with no
+   * page attached, so every claim on it that the project does *not* stand behind unqualified
+   * has to say so here.
+   */
+  const sheetNotes = (): string[] => {
+    const notes: string[] = [];
+    if (churn.some((v) => v.series.structure === 'll')) {
+      notes.push(
+        'Read the linked list’s flat add/remove with its delete row above it: the O(1) holds only for the key the ' +
+          'list just put at its own head. Removing a key already stored is the O(n) delete-by-value (METHODOLOGY §2.3).',
+      );
+    }
+    if (stringSearch.some((v) => v.series.structure === 'arraystr')) {
+      notes.push(
+        'The string array’s fitted label is not a claim this tool makes: its scan is linear in the number of keys, ' +
+          'and the tail bends up because the array holds pointers to text, not the text (METHODOLOGY §2.5).',
+      );
+    }
+    if (signal === 'nanos') {
+      notes.push(
+        'Wall-clock costs are specific to this machine and this run — compare the shapes, not the absolute nanoseconds.',
+      );
+    }
+    return notes;
+  };
 
   const exportPng = () => {
     const root = sectionRef.current;
@@ -189,7 +230,15 @@ export function CompareSection() {
         shots.push({
           title: c.title,
           canvas,
-          legend: c.views.map((v) => ({ text: seriesLabel(v), color: v.color })),
+          legend: [
+            ...c.views.map((v) => ({ text: seriesLabel(v), color: v.color })),
+            // Cross-check rows: no line on the chart, but the number the chart must be
+            // read against (see `chartsOnScreen.extra`).
+            ...(c.extra ?? []).map((v) => ({
+              text: `cross-check — ${seriesLabel(v)}`,
+              color: v.color,
+            })),
+          ],
         });
       }
     }
@@ -201,6 +250,7 @@ export function CompareSection() {
       `Mr Data Structure — ${dataset ? describeDataset(dataset) : 'no dataset'}`,
       `signal: ${signal === 'nanos' ? 'wall-clock ns/op (this machine)' : 'op-count (hardware-free)'}` +
         ` · engine: ${version || '—'} · ${new Date().toISOString()}`,
+      ...sheetNotes(),
     ];
     renderSheet(shots, caption).toBlob((blob) => {
       if (blob) downloadBlob('mr-data-structure-charts.png', blob);
