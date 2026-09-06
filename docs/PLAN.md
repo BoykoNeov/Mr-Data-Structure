@@ -751,9 +751,14 @@ insert/search/delete group on a shared key type.
     reads **O(n)** (slope ≈ 1.0, ratio ≈ 6000×) and churn stays **sub-linear** (slope ≈ 0.14)
     on uniform input and **still sub-linear on reverse-sorted** (≈ 0.10) — a heap cannot
     degenerate. The insert-vs-extract asymmetry is asserted on **magnitude, not slope**
-    (measured 7.5× per-op): both series are sub-linear so there is no class gap for a slope
-    comparison to catch, and the finite-difference insert slope is noise-dominated at these
-    sizes (0.31 ± 0.21) — METHODOLOGY §4 hurdle 7 in the wild. **No new deps.**
+    (measured 7.5× and 10.6× per-op on two runs): both series are sub-linear so there is no
+    class gap for a slope comparison to catch, and the heap's finite-difference halves are
+    noise-dominated at these sizes — insert came out 0.31 ± 0.20 and 0.26 ± 0.28, and one run
+    *mislabelled* extract-min as O(n log n). METHODOLOGY §4 hurdles 2 and 7 in the wild, now
+    written up there: the heap's textbook **O(1) average insert is a theory claim this
+    project states but cannot measure** (the churn probe is pinned to the worst case by
+    construction, and the average-case reading is too noisy to separate O(1) from O(log n)),
+    so only the clock-free op-count proof carries it. **No new deps.**
 
 - **Phase 5 — Comparison / analysis.** Multi-overlay, log-log, fitter with
   honesty UI, theoretical overlay, export.

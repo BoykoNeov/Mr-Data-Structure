@@ -203,6 +203,32 @@ Ordered by how much they can mislead a reader today.
    difference insert is the honest *average* reading, so the two curves together
    bracket the truth rather than either being wrong — which is why both are shown.
 
+   **What no instrument here can show, and what the gate settles for.** The
+   registry states the textbook split for a heap insert, O(1) average against
+   O(log n) worst. The churn probe is structurally pinned to the worst case (above),
+   and the only average-case reading — the finite-difference insert — is
+   noise-dominated on the wall clock at these sizes: its standard error arrives the
+   same size as the slope itself (two runs on the same machine: 0.31 ± 0.20 at
+   R² 0.93, and 0.26 ± 0.28 at R² 0.89). That is hurdle 7 below in the wild, and a
+   slope that wide cannot separate O(1) from O(log n) — so **the heap's O(1) average
+   insert is a theory claim this project states but does not measure**; only the
+   clock-free op-count proof in Rust pins it.
+
+   The heap's finite-difference *extract* side is unstable in the same way, and
+   loudly enough to mislabel itself: the second run above fitted it as **O(n log n)**
+   (slope 0.89 ± 0.27, tail 1.30) when the true class is Θ(log n), pinned by
+   `heap_search_is_linear_while_extract_min_is_log_n`. **Read the heap's two
+   finite-difference halves for their relative magnitude, not for their class
+   labels.** The churn curve, which is not a difference of two timings, stays stable
+   and correct across runs (slope ≈ 0.13).
+
+   That is why `scripts/verify-browser.mjs` asserts the insert-vs-extract-min
+   asymmetry on per-op **magnitude at the largest swept size** (extract-min > 1.3×
+   insert; measured 7.5× and 10.6× on the two runs) rather than on a growth-rate
+   comparison: both series are sub-linear in truth, so there is no class gap for a
+   slope test to catch, and the noisy slopes' ordering flips between runs. Read that
+   check as a statement about *cost*, not about *growth*.
+
    A separate order-sensitivity, deliberately **not** encoded as shape-sensitivity:
    a heap's *build* is Θ(n) on ascending input (every insert appends after one
    failed comparison) and Θ(n log n) on descending (every insert climbs to the
@@ -238,6 +264,11 @@ Ordered by how much they can mislead a reader today.
    timings amplifies noise, and subtracting build from build+teardown adds
    more; a wall-clock `insert_fd` for an O(1) append is mostly noise (the UI
    says so). The propagated spread is a conservative bound, not a variance.
+   Two structures hit this hard enough to change what is asserted: the array's
+   O(1) append (§2.3), and the **min-heap's** average-case insert, whose slope
+   arrives with a standard error the same size as itself — which is why the
+   runtime gate compares the heap's insert and extract-min on magnitude rather
+   than on slope (hurdle 2).
 8. **Input size vs stored size.** `n` is the number of *input* keys in the
    prefix. A set de-duplicates, so on duplicate-heavy (zipfian) data the hash
    set holds fewer than n keys; the array and multiset structures hold all n.
@@ -273,3 +304,6 @@ Ordered by how much they can mislead a reader today.
 | dataset → sizes → engine → fit → `window` proofs plumbing | `src/compare/runSweeps.test.ts` (fake engine) | — |
 | the real browser clock yields array O(n) / hash O(1) / sorted-array sub-linear / list O(n) search, array O(n) vs hash O(1) churn, sub-linear tree churn, finite slope uncertainties | `scripts/verify-browser.mjs` (headless Chromium, non-blocking in CI) | real |
 | on **reverse-sorted** input the BST's *measured* churn curve reads O(n) (slope ≈ 1.00, R² 1.000) while the AVL stays sub-linear (≈ 0.16) — the wall-clock half of §4.1, which a right-spine-only probe read as flat | `scripts/verify-browser.mjs`, second pass (drives the picker to reverse-sorted) | real |
+| the min-heap on the real clock: search reads **O(n)** (slope ≈ 0.97, ratio ≈ 6400×) with no lookup shortcut, and churn stays **sub-linear** (≈ 0.13 uniform, ≈ 0.11 reverse-sorted — a heap cannot degenerate) | `scripts/verify-browser.mjs`, both passes | real |
+| extract-min costs **more per operation** than insert at the top of the sweep (asserted > 1.3×; measured 7.5× and 10.6×) — a *cost* claim, not a growth claim, for the reason in §4 hurdle 2 | `scripts/verify-browser.mjs` | real |
+| **deliberately not asserted:** the *class labels* on the heap's two finite-difference halves. They are noise-dominated and have been seen to mislabel (§4 hurdles 2 and 7); the clock-free op-count proofs carry those claims instead | — | — |

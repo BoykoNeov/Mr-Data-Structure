@@ -310,7 +310,10 @@ export function CompareSection() {
             <em>cheaper</em> than average (docs/METHODOLOGY.md §4.1, §4.2). The two half-operations listed
             above the chart show where the cost actually sits: an ordinary insert usually stops after a step
             or two, since most of a heap is leaves, while every extract-min must sift the refill all the way
-            back down.
+            back down. Compare those two on their <em>per-operation cost</em>, not on their fitted labels:
+            each is reconstructed by subtracting one timing from another, which for operations this cheap
+            leaves mostly noise — wide enough here that the label on either half can come out wrong from one
+            run to the next. The pair cost above, which is timed directly, is the reliable curve.
           </Callout>
         </>
       )}

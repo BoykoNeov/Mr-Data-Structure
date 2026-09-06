@@ -211,12 +211,16 @@ try {
     //
     // Asserted on **magnitude, not slope**, deliberately. Both series are sub-linear, so
     // unlike the array's O(n) delete vs O(1) append there is no class gap for a slope
-    // comparison to catch — and the heap's finite-difference *insert* slope is
-    // noise-dominated at these sizes (measured 0.31 with a standard error of 0.20, R² 0.93),
-    // so its ordering against delete flips between runs. That is docs/METHODOLOGY.md §4
-    // hurdle 7 in the wild: differencing two cumulative timings of a very cheap op is mostly
-    // noise. The per-op *cost* gap is what the mechanism actually predicts and what holds
-    // steady (measured 22.7 ns vs 8.6 ns at the top of the sweep).
+    // comparison to catch — and both of the heap's finite-difference halves are
+    // noise-dominated at these sizes. Insert has been measured at 0.31 ± 0.20 (R² 0.93) and
+    // 0.26 ± 0.28 (R² 0.89) — a standard error the size of the slope — and one run fitted
+    // *extract-min* as O(n log n) (0.89 ± 0.27) when its true class is Θ(log n). So neither
+    // half's class label is asserted here, and their slope ordering flips between runs.
+    // That is docs/METHODOLOGY.md §4 hurdles 2 and 7 in the wild: differencing two
+    // cumulative timings of a cheap op is mostly noise. Only the per-op *cost* gap is stable
+    // and is what the mechanism predicts (22.7 ns vs 8.6 ns, and 10.6× on a later run).
+    // This check therefore proves a cost claim at the largest swept size, NOT a growth claim
+    // — the Θ(log n) extract-min class is carried clock-free by the Rust op-count proofs.
     if (hIns && hDel) {
       const gap = hDel.lastNanos / hIns.lastNanos;
       want(
