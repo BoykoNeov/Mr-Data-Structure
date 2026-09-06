@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createBenchEngine } from '../bench/wasmBenchEngine';
 import type { BenchEngine } from '../bench/BenchEngine';
-import { runAllSweeps, toView, type CompareResult } from '../compare/runSweeps';
+import {
+  runAllSweeps,
+  toView,
+  canonicalSearch,
+  heapSearch,
+  type CompareResult,
+} from '../compare/runSweeps';
 import type { Dataset } from '../data';
 import { REGISTRY } from '../registry';
 import { Callout, ChartGuide, ComplexityLadder } from './Explain';
@@ -85,7 +91,27 @@ export function CompareSection() {
   }, []);
 
   // Re-fit on the selected signal (§2.2): op-count is the clean curve, wall-clock the real one.
-  const search = useMemo(() => result?.search.map((v) => toView(v.series, signal)) ?? [], [result, signal]);
+  // Risk R6: the shared charts show only the canonical insert/search/delete structures.
+  // The min-heap's op set is different, so its series are split out into their own section
+  // below rather than being lined up against structures it cannot fairly be compared to.
+  const search = useMemo(
+    () => canonicalSearch(result).map((v) => toView(v.series, signal)),
+    [result, signal],
+  );
+  const heapScan = useMemo(
+    () => heapSearch(result).map((v) => toView(v.series, signal)),
+    [result, signal],
+  );
+  const heapChurn = useMemo(
+    () => (result?.heap ?? []).filter((v) => v.series.op === 'churn').map((v) => toView(v.series, signal)),
+    [result, signal],
+  );
+  const heapSplit = useMemo(
+    () => (result?.heap ?? []).filter((v) => v.series.op !== 'churn').map((v) => toView(v.series, signal)),
+    [result, signal],
+  );
+  /** The array's scan, reused (not re-measured) as the reference line for the heap's. */
+  const arrayScan = useMemo(() => search.filter((v) => v.series.structure === 'array'), [search]);
   const churn = useMemo(
     () =>
       [...(result?.mutation ?? []), ...(result?.trees ?? [])]
@@ -106,7 +132,7 @@ export function CompareSection() {
   const reverse = dataset?.order.kind === 'reverse-sorted';
 
   const exportAll = (kind: 'csv' | 'json') => {
-    const views = [...search, ...churn, ...split];
+    const views = [...search, ...churn, ...split, ...heapScan, ...heapChurn, ...heapSplit];
     const meta = { dataset: dataset ? describeDataset(dataset) : null, order: dataset?.order, signal, engine: version };
     if (kind === 'csv') download('mr-data-structure-sweep.csv', toCsv(views), 'text/csv');
     else download('mr-data-structure-sweep.json', toJson(views, meta), 'application/json');
@@ -166,7 +192,8 @@ export function CompareSection() {
       <p style={{ color: '#555', marginTop: 0 }}>
         Four structures look up a key four different ways: the unsorted array scans from the front, the
         linked list walks node by node, the sorted array binary-searches, and the hash set jumps straight to
-        a bucket.
+        a bucket. (The min-heap is measured too, but it answers a different question and gets its own
+        section below.)
       </p>
       {search.length > 0 && (
         <>
@@ -239,7 +266,7 @@ export function CompareSection() {
                 the <em>op-count</em> signal; on <em>wall-clock</em> a single append is so cheap the timing is
                 mostly noise (watch the low R² and the wide error bars) — a live reminder of <em>why</em> there
                 are two signals. The two methods agree only in complexity class, and not always even then —
-                the five regimes are tabulated in docs/METHODOLOGY.md §2.
+                the eight regimes are tabulated in docs/METHODOLOGY.md §2.
               </p>
               <ul style={{ marginTop: 4 }}>
                 {split.map((v) => <FitRow key={`${v.series.structure}-${v.series.op}`} v={v} />)}
@@ -248,6 +275,69 @@ export function CompareSection() {
           )}
         </>
       )}
+
+      <h3 style={h3}>The min-heap — a different job, so a different scoreboard</h3>
+      <p style={{ color: '#555', marginTop: 0 }}>
+        Every structure above answers the same three questions: add a key, find a key, remove a key. A heap
+        answers a different one — <em>what is the smallest key right now?</em> — so it is measured on its own
+        operations (insert, peek, extract-min) and shown here rather than on the charts above. Comparing its
+        “delete” to an array’s would be comparing two different things.
+      </p>
+      {heapChurn.length > 0 && (
+        <>
+          <ul style={{ marginTop: 8 }}>
+            {heapChurn.map((v) => (
+              <FitRow key={`${v.series.structure}-${v.series.op}`} v={v} what="insert + extract-min" />
+            ))}
+            {heapSplit.map((v) => (
+              <FitRow
+                key={`${v.series.structure}-${v.series.op}`}
+                v={v}
+                what={v.series.op === 'delete' ? 'extract-min' : 'insert'}
+              />
+            ))}
+          </ul>
+          <SweepChart views={heapChurn} signal={signal} showTheory={showTheory} showSpread={showSpread} shape={shape} />
+          <SlopeChart views={heapChurn} />
+          <Callout title="What to notice" tone="tip">
+            One add-and-remove pair costs <strong>O(log n)</strong> — the pink line stays nearly flat,
+            because each operation walks a single root-to-leaf path of a tree that doubles in width every
+            level. Read this curve for its <em>shape</em>, not its height. The key we add is deliberately
+            smaller than everything already stored, and that is the most expensive key a heap can take, so
+            the line sits above what an average workload would pay. It has to be that key: a heap can only
+            remove its <em>smallest</em> item, so anything larger would take a real key out and slowly empty
+            the structure. That bias runs the opposite way to the two trees above, whose add/remove probe is
+            <em>cheaper</em> than average (docs/METHODOLOGY.md §4.1, §4.2). The two half-operations listed
+            above the chart show where the cost actually sits: an ordinary insert usually stops after a step
+            or two, since most of a heap is leaves, while every extract-min must sift the refill all the way
+            back down.
+          </Callout>
+        </>
+      )}
+
+      {heapScan.length > 0 && (
+        <>
+          <p style={{ color: '#555', marginBottom: 4 }}>
+            <strong>And the contrast that makes the point.</strong> A heap keeps only its <em>minimum</em>{' '}
+            findable. Ask it for any other key and it has no shortcut at all — it checks every slot, exactly
+            like the unsorted array. Both lines below are <strong>O(n)</strong>, which is the honest answer to
+            “can I just use a heap for everything?”: not if you need lookups.
+          </p>
+          <ul style={{ marginTop: 4 }}>
+            {[...heapScan, ...arrayScan].map((v) => (
+              <FitRow key={`scan-${v.series.structure}`} v={v} what="search (linear scan)" />
+            ))}
+          </ul>
+          <SweepChart
+            views={[...heapScan, ...arrayScan]}
+            signal={signal}
+            showTheory={showTheory}
+            showSpread={showSpread}
+            shape={shape}
+          />
+        </>
+      )}
+
     </section>
   );
 }

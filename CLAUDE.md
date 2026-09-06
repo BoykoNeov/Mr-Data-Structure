@@ -57,13 +57,23 @@ tool call does not survive into the next (each call is a fresh process).
   drives the picker to **reverse-sorted** for a second pass and asserts the
   opposite there (BST churn O(n), AVL still sub-linear) — the regression guard for
   the two-key churn probe, METHODOLOGY §4.1. Keep both passes.
+- **The min-heap is deliberately kept off the shared Compare charts** (PLAN §8,
+  risk R6): its op set is insert / peek / extract-min, not insert / search /
+  delete, so `registry.ts` exposes `CANONICAL_STRUCTURES` / `isCanonical` and the
+  UI filters through them. Its search *is* measured on the same ladder — that is
+  what makes the O(n)-scan contrast against the array meaningful — but it renders
+  only in the heap's own section. Don't "tidy" it back onto the shared charts.
+- **The heap's churn key must stay `min − 1`** (`belowMin`). A heap has no
+  delete-by-value, so the pair is insert + extract-min, and only a key below every
+  stored key is the one the extract takes back; `max + 1` silently *drains* the
+  heap. Pinned by `heap::tests::a_high_churn_key_would_drain_the_heap`.
 - `dist/` and `bench-engine/pkg/` are gitignored build artifacts (CI rebuilds
   them) — leave them untracked.
 
 ## Architecture map
 
 - `bench-engine/` — Rust crate → WASM, the "production" benchmark impls; its
-  `structures/mod.rs` `mod methodology` pins the churn-vs-finite-difference
+  `structures/mod.rs` `mod methodology` pins the eight churn-vs-finite-difference
   regimes clock-free.
 - `src/bench/` — `BenchEngine` interface, Comlink Web Worker, WASM-backed engine;
   `measure.ts` (batching, adaptive reps, spread), `fit.ts` (classes, slope ± SE,

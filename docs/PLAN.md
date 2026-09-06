@@ -13,7 +13,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 1 | data layer: import, type detection, generators, marshalling | ✅ done |
 | 2 | thin slice: array + hash set through both twins, §6.3 methodology, fitter, chart; string-key bench structures | ✅ done |
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
-| 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete); churn-vs-FD regimes pinned clock-free | 🟡 min-heap bench twin outstanding; string structures + sorted-array/linked-list *mutation* not wired into the browser sweep |
+| 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | 🟡 all bench twins built; string structures + sorted-array/linked-list *mutation* not wired into the browser sweep |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; CSV/JSON export | 🟡 first slice landed (see §10); string-key sweep, presets, PNG export open |
 | 6 | trie, skip list, graph; presets/demos; persistence; polish | ⬜ not started |
 
@@ -22,10 +22,14 @@ vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
 and linked-list search O(n) by a different mechanism; array churn O(n) vs
 hash-set O(1); BST and AVL churn sub-linear on shuffled input; and — clock-free,
 on exact op-counts — the AVL stays O(log n) on the sorted input that turns the
-BST into an O(n) chain, plus seven churn-vs-finite-difference regimes across the
+BST into an O(n) chain, plus eight churn-vs-finite-difference regimes across the
 structures (METHODOLOGY §2.3). Tree mutation is probed at **both ends** of the
 key range, so a reverse-sorted chain can no longer report a flat O(1) curve
-(METHODOLOGY §4.1).
+(METHODOLOGY §4.1). The **min-heap** completes the bench twins with its own op
+set — insert / peek / extract-min, its add+remove pair reading O(log n) and its
+"search" the deliberate O(n) scan that shows a heap is not a lookup structure —
+and is kept off the shared charts, since comparing it to the others would be
+comparing different operations (§8, risk R6).
 
 ---
 
@@ -298,7 +302,7 @@ The per-point rep spread (min → max) is drawn as error bars; reps are adaptive
 (continue until the coefficient of variation meets a target, bounded); every
 fitted slope carries a standard error and a 95 % CI; the local (per-interval)
 slope is plotted so regime changes are visible; and the churn-vs-finite-
-difference relationship is *structure-specific* (seven pinned regimes). All of
+difference relationship is *structure-specific* (eight pinned regimes). All of
 it, with the open hurdles (churn-key position bias, small-n overhead, cache
 regimes, sequential ordering), is in [`METHODOLOGY.md`](METHODOLOGY.md).
 
@@ -358,7 +362,7 @@ algorithm per structure, implemented identically in TS and Rust.
 |-----------|--------|--------|--------|-------------|-------|
 | BST (unbalanced) | O(log n) avg, O(n) worst | same | same | comparisons | shows degeneration on sorted data |
 | AVL (balanced) | O(log n) | O(log n) | O(log n) | comparisons + rotations | **AVL chosen** (cleanest rotations to animate) |
-| Binary heap (min) | O(log n) | — (peek O(1)) | O(log n) extract | comparisons + swaps | **different op set**: insert / peek / extract-min; "search" = O(n) scan, shown as a contrast |
+| Binary heap (min) | O(log n) worst, O(1) avg | — (peek O(1)) | O(log n) extract | comparisons + swaps | **different op set**: insert / peek / extract-min; "search" = O(n) scan, shown as a contrast. Compared only within its own group (risk R6) — the Compare UI gives it a separate section |
 
 ### Specialized (later phase)
 | Structure | insert | search | delete | cost metric | notes |
@@ -707,6 +711,50 @@ insert/search/delete group on a shared key type.
     side stays Rust-only this slice — a flat O(1) churn curve on the browser clock would look
     identical to the hash set — so the TS sweep wiring waits for Phase 5. **No new deps.**
 
+  - **Done (min-heap bench twin — the Trees/heaps family complete, §8):**
+    `heap::MinHeapF64` is the bench twin of `src/structures/heap.ts` — an array-backed
+    complete tree (a multiset; cost metric **comparisons + swaps**), iterative sift loops
+    with no arena, since a heap's height is ⌊log₂ n⌋ by construction and there is no
+    degenerate-chain stack hazard to design around. Pinned to the teaching twin by
+    `conformance/corpus-heap.txt`, whose dimensions differ from the trees': the **array
+    layout** (the multiset alone does not determine it, so this is the line that catches a
+    divergent sift tie-break — extracted *values* come out ascending whatever the tie-break
+    does) plus an **extract sequence** exercising all six counting rules at once. Six hand-
+    computed Rust unit tests pin those rules individually.
+    **The op set is different, and that is enforced, not just documented.** A heap does
+    insert / peek / extract-min; `search` exists only as the deliberate **O(n) scan
+    contrast**. `StructureId += 'heap'`, and the registry gains `CANONICAL_STRUCTURES` /
+    `isCanonical`, through which the Compare UI filters the shared charts — so the heap
+    can never land beside structures doing a different job (risk R6). It renders in its
+    own section: its add+remove pair, its insert/extract split, and its scan shown next to
+    the array's *already-measured* scan as the "a heap is not a lookup structure" contrast.
+    **Churn is `insert(min − 1)` + `extract_min()`, and the low key is forced, not
+    preferred:** a heap has no delete-by-value, so the pair must be insert-then-extract-min,
+    and only a key strictly below every stored key is the one the extract takes back. With
+    `max + 1` the extract removes a *real* key and the heap **drains** — pinned by its own
+    Rust test so nobody "simplifies" it to the recipe the flat structures use. The worker's
+    `churnRunnerFactory` is now parameterised by a `ChurnKeyPicker` (`aboveMax` / `belowMin`)
+    instead of hardcoding `max + 1`; the sorted array and linked list will need the same seam
+    when their mutation is wired.
+    The self-test records an **eighth churn-vs-finite-difference regime**, and a new kind:
+    the two methods agree in class on the *total* (churn 53 vs sum 34.9 at n = 4000, both
+    Θ(log n)) while their **insert halves disagree on class** — churn's insert is the
+    worst-case insert by construction (a new global minimum climbs the full height) whereas a
+    shuffled build's marginal insert is O(1), because most of a heap is leaves. A narrower
+    version of the linked list's disagreement, where the totals diverged too. Two further
+    clock-free findings: the heap's signature split (**O(n) search vs Θ(log n) extract-min**
+    on the same structure — the sorted array's split inverted), and that the **build** is
+    order-sensitive (ascending is its best case, Θ(n); descending its worst, Θ(n log n))
+    while **churn is not**, which is why the heap is *not* registered as shape-sensitive —
+    one flag cannot say "ascending best, descending worst" when `inputShapeOf` collapses both
+    into one `sorted` shape. `verify:browser` gained heap checks on both passes: the scan
+    reads **O(n)** (slope ≈ 1.0, ratio ≈ 6000×) and churn stays **sub-linear** (slope ≈ 0.14)
+    on uniform input and **still sub-linear on reverse-sorted** (≈ 0.10) — a heap cannot
+    degenerate. The insert-vs-extract asymmetry is asserted on **magnitude, not slope**
+    (measured 7.5× per-op): both series are sub-linear so there is no class gap for a slope
+    comparison to catch, and the finite-difference insert slope is noise-dominated at these
+    sizes (0.31 ± 0.21) — METHODOLOGY §4 hurdle 7 in the wild. **No new deps.**
+
 - **Phase 5 — Comparison / analysis.** Multi-overlay, log-log, fitter with
   honesty UI, theoretical overlay, export.
   - **Done (first slice — one dataset, every structure; honesty instruments):**
@@ -827,16 +875,18 @@ insert/search/delete group on a shared key type.
   and deletes at an average-depth key (at the cost of a key that is only probably
   absent)?
 - Interleave structures per sweep point to cancel frequency/thermal drift
-  between sequential sweeps (METHODOLOGY §4.4)?
+  between sequential sweeps (METHODOLOGY §4.5)?
 - Configurable present/absent probe mix (§6.3), and reporting *stored* size next
-  to *input* size for de-duplicating structures (METHODOLOGY §4.7–4.8).
+  to *input* size for de-duplicating structures (METHODOLOGY §4.8–4.9).
 
 ---
 
 ## 14. Next steps
 
-1. Finish Phase 4: the min-heap bench twin (its own op set, §8), then wire the
-   sorted-array and linked-list *mutation* surfaces into the browser sweep.
+1. Finish Phase 4: wire the sorted-array and linked-list *mutation* surfaces into
+   the browser sweep (both are built and clock-free-proven in Rust; only the sweep
+   wiring is missing), and the string structures. The churn-key selector the worker
+   now takes (`aboveMax` / `belowMin`) is the seam those need.
 2. Phase 5 remainder: string-key sweep; one-click presets; PNG export; the
    interleaving experiment from §13.
 3. Promote `verify:browser` to a blocking CI gate once its slope bands prove

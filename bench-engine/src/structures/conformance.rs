@@ -25,6 +25,7 @@ use super::dyn_array::ArrayF64;
 use super::dyn_array_str::ArrayStr;
 use super::hash_set::HashSetF64;
 use super::hash_set_str::HashSetStr;
+use super::heap::MinHeapF64;
 use super::linked_list::LinkedListF64;
 use super::sorted_array::SortedArrayF64;
 
@@ -39,6 +40,8 @@ const CORPUS_SARR_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-sarr.txt");
 const CORPUS_LL_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-ll.txt");
+const CORPUS_HEAP_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-heap.txt");
 
 struct Case {
     name: &'static str,
@@ -696,5 +699,135 @@ fn corpus_ll_matches_committed() {
         normalize(&serialize_ll(&ll_cases())),
         "linked-list conformance corpus is stale vs the Rust impl; \
          regenerate with: cargo test -- --ignored regen_corpus_ll",
+    );
+}
+
+// ── Min-heap corpus (docs/PLAN.md §8 trees/heaps, §12) ───────────────────────
+//
+// The heap needs a different set of dimensions again, because its op set is different
+// (insert / peek / extract-min, with search as the O(n) scan contrast):
+//   • **layout, not sort order** — a heap's `keys_in_order` is the backing array in heap
+//     order, and the multiset alone does not determine it. Insertion order and the
+//     sift tie-breaks do. This is the line that catches a divergent tie-break, because
+//     the extracted *values* come out ascending whatever the tie-break does; and
+//   • an **extract sequence** — the drift-prone half, where all six counting rules of
+//     `heap.rs` show up at once: the child-vs-child comparison only when a right child
+//     exists, equal children breaking left, the failing comparison that ends the sift,
+//     the uncounted `heap[0] = last` refill, and the 0-op extract from a heap the pop
+//     empties. Each case extracts `extracts` times (deliberately past empty in the small
+//     cases) and pins per-extract `(present:ops)`, the extracted values, and the layout
+//     that remains.
+// `search` is pinned too, since a scan over the *layout* has a position-dependent cost —
+// which is itself the point the contrast makes.
+
+struct HeapCase {
+    name: &'static str,
+    keys: Vec<f64>,
+    probes: Vec<f64>,
+    extracts: usize,
+}
+
+/// Min-heap input cases (docs/PLAN.md §12). Chosen to exercise every divergence-prone
+/// path: the empty/singleton edges (including the 0-op extract that empties the heap and
+/// an extract *past* empty), the two build extremes (**ascending** = every insert appends
+/// after one failed comparison; **descending** = every insert climbs to the root), the
+/// **duplicates** case that discriminates the equal-key tie-break rules, a general
+/// unsorted build, and fractional/negative keys for `f64` formatting through the layout.
+fn heap_cases() -> Vec<HeapCase> {
+    vec![
+        HeapCase { name: "empty", keys: vec![], probes: vec![1.0, 2.0], extracts: 1 },
+        HeapCase {
+            name: "singleton", // extract-to-empty (0 ops, rule 5), then extract past empty
+            keys: vec![42.0],
+            probes: vec![42.0, 7.0],
+            extracts: 2,
+        },
+        HeapCase {
+            name: "ascending", // every insert is a new maximum: 1 failed comparison, no swap
+            keys: vec![10.0, 20.0, 30.0, 40.0, 50.0],
+            probes: vec![10.0, 50.0, 35.0],
+            extracts: 2,
+        },
+        HeapCase {
+            name: "descending", // every insert is a new minimum: climbs to the root
+            keys: vec![50.0, 40.0, 30.0, 20.0, 10.0],
+            probes: vec![10.0, 50.0, 35.0],
+            extracts: 2,
+        },
+        HeapCase {
+            name: "duplicates", // equal children break LEFT; equal keys don't swap on insert
+            keys: vec![5.0, 5.0, 5.0, 7.0, 5.0, 9.0],
+            probes: vec![5.0, 7.0, 9.0, 99.0],
+            extracts: 3,
+        },
+        HeapCase {
+            name: "unsorted", // a general build, then a full sift-down chain per extract
+            keys: vec![50.0, 30.0, 70.0, 20.0, 40.0, 60.0, 80.0],
+            probes: vec![20.0, 80.0, 55.0],
+            extracts: 3,
+        },
+        HeapCase {
+            name: "fractional", // non-trivial f64 bit patterns through the layout
+            keys: vec![0.0, 0.5, 2.5, -1.0],
+            probes: vec![0.5, 2.5, -1.0, 3.0],
+            extracts: 2,
+        },
+    ]
+}
+
+fn serialize_heap(cases: &[HeapCase]) -> String {
+    let mut out = String::new();
+    out.push_str("# Mr Data Structure — min-heap conformance corpus (docs/PLAN.md §8, §12).\n");
+    out.push_str("# Generated from the Rust bench impl; the TS teaching twin must match.\n");
+    out.push_str("# Op-count = comparisons + swaps. `heap_order` is the backing ARRAY (heap\n");
+    out.push_str("# order), not a sort — it is what catches a divergent sift tie-break.\n");
+    out.push_str("# Regenerate: cargo test -- --ignored regen_corpus_heap\n");
+    for c in cases {
+        let h = MinHeapF64::new(&c.keys, c.keys.len());
+        let search: Vec<(bool, u64)> =
+            c.probes.iter().map(|&p| h.search_one_counted(p)).collect();
+
+        // Extracts mutate, so run them on a fresh heap built from the same keys.
+        let mut he = MinHeapF64::new(&c.keys, c.keys.len());
+        let mut results: Vec<(bool, u64)> = Vec::new();
+        let mut values: Vec<f64> = Vec::new();
+        for _ in 0..c.extracts {
+            let (min, ops) = he.extract_min_counted();
+            results.push((min.is_some(), ops));
+            if let Some(v) = min {
+                values.push(v);
+            }
+        }
+
+        out.push('\n');
+        out.push_str(&format!("case {}\n", c.name));
+        out.push_str(&format!("keys {}\n", fmt_nums(&c.keys)));
+        out.push_str(&format!("probes {}\n", fmt_nums(&c.probes)));
+        out.push_str(&format!("heap_order {}\n", fmt_nums(&h.keys_in_order())));
+        out.push_str(&format!("heap_search {}\n", fmt_search(&search)));
+        out.push_str(&format!("extracts {}\n", c.extracts));
+        out.push_str(&format!("heap_extract {}\n", fmt_search(&results)));
+        out.push_str(&format!("heap_extracted {}\n", fmt_nums(&values)));
+        out.push_str(&format!("heap_order_after {}\n", fmt_nums(&he.keys_in_order())));
+    }
+    out
+}
+
+#[test]
+#[ignore = "writes the committed min-heap corpus; run deliberately after a behavior change"]
+fn regen_corpus_heap() {
+    std::fs::write(CORPUS_HEAP_PATH, serialize_heap(&heap_cases())).expect("write heap corpus");
+}
+
+#[test]
+fn corpus_heap_matches_committed() {
+    let committed = std::fs::read_to_string(CORPUS_HEAP_PATH).expect(
+        "min-heap corpus missing; generate it with: cargo test -- --ignored regen_corpus_heap",
+    );
+    assert_eq!(
+        normalize(&committed),
+        normalize(&serialize_heap(&heap_cases())),
+        "min-heap conformance corpus is stale vs the Rust impl; \
+         regenerate with: cargo test -- --ignored regen_corpus_heap",
     );
 }

@@ -3,7 +3,7 @@ import { fitComplexity } from '../bench/fit';
 import type { MeasureOptions, SweepSeries } from '../bench/measure';
 import { geometricSweep } from '../bench/sweep';
 import { marshalKeys, type Dataset, type NumberDataset } from '../data';
-import { REGISTRY, type InputShape } from '../registry';
+import { REGISTRY, isCanonical, type InputShape } from '../registry';
 import type { SeriesView, Signal } from '../ui/SweepChart';
 import { inputShapeOf } from './shape';
 
@@ -47,20 +47,57 @@ export const MUT_OPTS: MeasureOptions = {
   maxReps: 7,
 };
 export const SEARCH_OPTS: MeasureOptions = { targetRelStddev: 0.05, maxReps: 9 };
+/**
+ * The min-heap's mutation sweep, which needs a larger starting batch than the others.
+ * `MUT_OPTS.baseBatch` is 1 because the array's build+teardown is a full O(n²) cycle per
+ * `run(1)` — one is already plenty of work. A heap's build+teardown is only Θ(n log n),
+ * cheaper by orders of magnitude, so starting at 1 makes the auto-grow spend a long
+ * doubling ladder just to clear the clock clamp at the small end of the sweep. Starting
+ * at 8 lands near the useful batch immediately; adaptive reps still handle noisy points.
+ */
+export const HEAP_OPTS: MeasureOptions = { ...MUT_OPTS, baseBatch: 8 };
 
 /** What one full Compare run produces. */
 export interface CompareResult {
-  /** `search` on every wired structure, at the wide sweep. */
+  /**
+   * `search` on every wired structure, at the wide sweep — **including the min-heap**,
+   * whose scan is measured on the same size ladder for point-for-point comparability
+   * with the array's. Callers must split it: the heap is not on the canonical op set, so
+   * it belongs in the heap's own section, not the shared search chart (risk R6). Use
+   * {@link canonicalSearch} / {@link heapSearch} rather than filtering by hand.
+   */
   readonly search: readonly SeriesView[];
   /** churn + finite-difference insert/delete for the array and hash set. */
   readonly mutation: readonly SeriesView[];
   /** churn + finite-difference insert/delete for the BST and the AVL. */
   readonly trees: readonly SeriesView[];
+  /**
+   * churn + finite-difference insert/extract-min for the **min-heap**. Kept apart from
+   * {@link trees} because the op set differs: `churn` here is insert + extract-min, so
+   * these curves compare only against each other (docs/PLAN.md §4.1, §8, risk R6).
+   */
+  readonly heap: readonly SeriesView[];
   /** The dataset's input shape, for the theoretical overlay. */
   readonly shape: InputShape;
   /** Sweep sizes actually used (bounded by the dataset). */
   readonly searchSizes: readonly number[];
   readonly mutationSizes: readonly number[];
+}
+
+/**
+ * The search series for the structures on the **canonical** op set — what the shared
+ * search chart may show. Excludes the min-heap (risk R6); see {@link heapSearch}.
+ */
+export function canonicalSearch(r: CompareResult | null): readonly SeriesView[] {
+  return (r?.search ?? []).filter((v) => isCanonical(v.series.structure));
+}
+
+/**
+ * The min-heap's search series — its deliberate O(n) scan contrast, rendered in the
+ * heap's own section next to the array's scan rather than on the shared chart.
+ */
+export function heapSearch(r: CompareResult | null): readonly SeriesView[] {
+  return (r?.search ?? []).filter((v) => v.series.structure === 'heap');
 }
 
 /** Fit a series on the chosen signal and attach its registry colour. */
@@ -104,12 +141,13 @@ export function toProof(views: readonly SeriesView[]): SweepProof[] {
   }));
 }
 
-/** The `window` globals the runtime gate polls; `__avlMutationProof` is set last. */
+/** The `window` globals the runtime gate polls; `__heapMutationProof` is set last. */
 interface ProofWindow {
   __sweepProof?: SweepProof[];
   __mutationProof?: SweepProof[];
   __bstMutationProof?: SweepProof[];
   __avlMutationProof?: SweepProof[];
+  __heapMutationProof?: SweepProof[];
   __compareMeta?: { order: unknown; size: number; shape: InputShape };
 }
 
@@ -165,10 +203,15 @@ export async function runAllSweeps(
 
   onStatus('running AVL mutation sweep…');
   const avl = (await engine.runAvlMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
+  if (win) win.__avlMutationProof = toProof(avl);
+
+  onStatus('running min-heap mutation sweep…');
+  const heap = (await engine.runHeapMutationSweep(keyBuffer(data), mutationSizes, HEAP_OPTS)).map((s) => toView(s));
   if (win) {
     win.__compareMeta = { order: data.order, size: data.size, shape };
-    win.__avlMutationProof = toProof(avl);
+    // Set last, so the runtime gate can poll this one global as the "all sweeps done" signal.
+    win.__heapMutationProof = toProof(heap);
   }
 
-  return { search, mutation, trees: [...bst, ...avl], shape, searchSizes, mutationSizes };
+  return { search, mutation, trees: [...bst, ...avl], heap, shape, searchSizes, mutationSizes };
 }

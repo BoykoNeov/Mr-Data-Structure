@@ -31,7 +31,12 @@
 //! `linked_list::LinkedListF64` closes the Linear family — the bench twin of *both*
 //! `src/structures/linkedList.ts` teaching twins (singly and doubly are bench-identical
 //! under the **node-visit** cost metric), an index arena with O(1) head insert and O(n)
-//! search/delete, pinned by `conformance/corpus-ll.txt`.
+//! search/delete, pinned by `conformance/corpus-ll.txt`. `heap::MinHeapF64` closes the
+//! Trees/heaps family — the bench twin of `src/structures/heap.ts`, an array-backed complete
+//! tree (cost metric **comparisons + swaps**) pinned by `conformance/corpus-heap.txt`. It is
+//! the one structure with a **different op set** (insert / peek / extract-min, with search as
+//! a deliberate O(n) scan contrast), so it is compared only within its own group
+//! (docs/PLAN.md §8, risk R6) — a separation enforced in the UI, not here.
 
 pub mod avl;
 pub mod bst;
@@ -39,6 +44,7 @@ pub mod dyn_array;
 pub mod dyn_array_str;
 pub mod hash_set;
 pub mod hash_set_str;
+pub mod heap;
 pub mod linked_list;
 pub mod sorted_array;
 
@@ -151,6 +157,7 @@ mod methodology {
     use super::bst::BstF64;
     use super::dyn_array::ArrayF64;
     use super::hash_set::HashSetF64;
+    use super::heap::MinHeapF64;
     use super::linked_list::LinkedListF64;
     use super::sorted_array::SortedArrayF64;
 
@@ -523,6 +530,117 @@ mod methodology {
         assert!(
             sum > churn * 100.0,
             "fd sum {sum} ≫ churn {churn}: a complexity-class disagreement, the fifth regime"
+        );
+    }
+
+    // ── Min-heap: an EIGHTH regime — the totals agree in class, the *insert halves* do not.
+    //
+    // A heap has no delete-by-value, so its churn pair must be insert + extract-**min**, and
+    // the inserted key must therefore be `min − 1`: anything higher and the extract removes a
+    // *real* key, draining the heap (pinned in `heap::tests::a_high_churn_key_would_drain_
+    // the_heap`). That makes churn's insert the **worst-case** insert — a new global minimum
+    // climbs the full ⌊log₂ n⌋ — while the build's inserts are ordinary keys that, on shuffled
+    // input, sift O(1) levels in expectation because most of a heap is leaves. So `insert_fd`
+    // reads ≈ flat (O(1)) where churn's insert half is Θ(log n): the two methods disagree on
+    // the *class of the insert half* while their totals still agree (both Θ(log n), carried by
+    // the extract). That is a narrower version of the linked list's class disagreement — there
+    // the totals diverged too; here only the halves do.
+
+    /// The eighth regime: churn overshoots the finite-difference sum by a constant factor
+    /// (both Θ(log n)), while the **insert halves** disagree on class — `insert_fd` is O(1)
+    /// on shuffled input, churn's insert half is Θ(log n). Measured at n = 4000: churn 53,
+    /// insert_fd 3.6, delete_fd 31.3, sum 34.9 (churn ~1.5× the sum). Deterministic via the
+    /// fixed-seed `shuffled`, so the wide-margin inequalities never flake.
+    #[test]
+    fn heap_churn_overshoots_finite_differences_on_the_insert_side() {
+        let ks = shuffled(4000);
+        let (n1, n2) = (2000usize, 4000usize); // wide span denoises the per-op estimate
+        let insert_fd = (MinHeapF64::build_insert_counted(&ks, n2)
+            - MinHeapF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (MinHeapF64::teardown_counted(&ks, n2)
+            - MinHeapF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+
+        let mut h = MinHeapF64::new(&ks, n2);
+        h.set_churn_key(-1.0); // min(0..3999) − 1: strictly below every key ⇒ sifts to the root
+        let churn = h.churn_counted();
+        let sum = insert_fd + delete_fd;
+
+        // (1) Churn overshoots: its insert half rides the full height, the build's does not.
+        assert!(churn > sum, "heap churn {churn} should overshoot fd sum {sum}");
+        // (2) The insert halves disagree on CLASS: a shuffled build's marginal insert is O(1)
+        //     (a handful of ops), nowhere near the ⌊log₂ 4000⌋ ≈ 12 levels churn's insert climbs.
+        assert!(
+            insert_fd < 6.0,
+            "shuffled build's marginal insert {insert_fd} must read O(1) — most of a heap is leaves"
+        );
+        // (3) Yet the totals stay the same class: the extract half carries both, so the sum is
+        //     within a small factor of churn.
+        assert!(sum > churn / 4.0, "heap: churn {churn} and sum {sum} must stay the same class");
+        // (4) Both are Θ(log n), nowhere near a linear structure's O(n): far below n/50 = 80.
+        assert!(churn < 80.0 && sum < 80.0, "heap churn {churn} / sum {sum} must stay O(log n)");
+        // (5) And the extract half really is the Θ(log n) one, well above the flat insert.
+        assert!(delete_fd > 4.0 * insert_fd, "extract {delete_fd} ≫ insert {insert_fd}: the asymmetry");
+    }
+
+    /// The heap's signature: the *same* structure is Θ(log n) to **extract-min** but O(n) to
+    /// **search**, because it is ordered for the root only — the deliberate contrast that
+    /// makes the point a heap is not a lookup structure (docs/PLAN.md §8, risk R6). A
+    /// deterministic op-count claim, the clock-free home for a numeric finding.
+    #[test]
+    fn heap_search_is_linear_while_extract_min_is_log_n() {
+        let n = 4096usize;
+        let ks = shuffled(n);
+        let h = MinHeapF64::new(&ks, n);
+
+        // An absent key costs the whole array — no better than scanning an unsorted array.
+        let (found, scan_ops) = h.search_one_counted(-1.0);
+        assert!(!found);
+        assert_eq!(scan_ops, n as u64, "a heap scan examines every slot: O(n)");
+
+        // Churn (insert + extract-min), by contrast, rides ⌊log₂ 4096⌋ = 12 levels ⇒ ≈ 3·12.
+        let mut b = MinHeapF64::new(&ks, n);
+        b.set_churn_key(-1.0);
+        let churn = b.churn_counted();
+        assert!(churn < 80.0, "heap churn {churn} must be O(log n), not O(n)");
+        assert!(
+            scan_ops as f64 > 50.0 * churn,
+            "search {scan_ops} ≫ mutation {churn}: the signature split, inverted from the sorted array"
+        );
+    }
+
+    /// The build's order-sensitivity, which the module doc warns about and which the gate's
+    /// reverse-sorted pass will see: ascending input makes every insert a tail append (Θ(n)
+    /// build, flat `insert_fd`), descending makes every insert climb to the root (Θ(n log n)
+    /// build, `insert_fd` ≈ 2·log n). Churn is unaffected either way — it always rides the
+    /// full height — which is why the heap is not registered as shape-sensitive.
+    #[test]
+    fn heap_build_is_order_sensitive_but_churn_is_not() {
+        let n = 4000usize;
+        let ascending: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let descending: Vec<f64> = (0..n).map(|i| (n - 1 - i) as f64).collect();
+
+        let asc_build = MinHeapF64::build_insert_counted(&ascending, n);
+        let desc_build = MinHeapF64::build_insert_counted(&descending, n);
+
+        // Ascending: exactly one failed comparison per key after the first ⇒ n − 1.
+        assert_eq!(asc_build, (n - 1) as f64, "ascending build is Θ(n): one comparison per key");
+        // Descending: every key climbs to the root ⇒ Θ(n log n), an order above.
+        assert!(
+            desc_build > 5.0 * asc_build,
+            "descending build {desc_build} must be Θ(n log n) ≫ ascending {asc_build}"
+        );
+
+        // Churn is order-insensitive: the same full-height cost on both inputs.
+        let mut asc = MinHeapF64::new(&ascending, n);
+        asc.set_churn_key(-1.0);
+        let mut desc = MinHeapF64::new(&descending, n);
+        desc.set_churn_key(-1.0);
+        let (a, d) = (asc.churn_counted(), desc.churn_counted());
+        assert!(
+            (a - d).abs() < 0.35 * a,
+            "churn must not move with input order: ascending {a} vs descending {d}"
         );
     }
 }

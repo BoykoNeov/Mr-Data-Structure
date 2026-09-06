@@ -1,0 +1,75 @@
+# Mr Data Structure — min-heap conformance corpus (docs/PLAN.md §8, §12).
+# Generated from the Rust bench impl; the TS teaching twin must match.
+# Op-count = comparisons + swaps. `heap_order` is the backing ARRAY (heap
+# order), not a sort — it is what catches a divergent sift tie-break.
+# Regenerate: cargo test -- --ignored regen_corpus_heap
+
+case empty
+keys 
+probes 1 2
+heap_order 
+heap_search 0:0 0:0
+extracts 1
+heap_extract 0:0
+heap_extracted 
+heap_order_after 
+
+case singleton
+keys 42
+probes 42 7
+heap_order 42
+heap_search 1:1 0:1
+extracts 2
+heap_extract 1:0 0:0
+heap_extracted 42
+heap_order_after 
+
+case ascending
+keys 10 20 30 40 50
+probes 10 50 35
+heap_order 10 20 30 40 50
+heap_search 1:1 1:5 0:5
+extracts 2
+heap_extract 1:5 1:3
+heap_extracted 10 20
+heap_order_after 30 40 50
+
+case descending
+keys 50 40 30 20 10
+probes 10 50 35
+heap_order 10 20 40 50 30
+heap_search 1:1 1:4 0:5
+extracts 2
+heap_extract 1:4 1:3
+heap_extracted 10 20
+heap_order_after 30 50 40
+
+case duplicates
+keys 5 5 5 7 5 9
+probes 5 7 9 99
+heap_order 5 5 5 7 5 9
+heap_search 1:1 1:4 1:6 0:6
+extracts 3
+heap_extract 1:6 1:5 1:3
+heap_extracted 5 5 5
+heap_order_after 5 7 9
+
+case unsorted
+keys 50 30 70 20 40 60 80
+probes 20 80 55
+heap_order 20 30 60 50 40 70 80
+heap_search 1:1 1:7 0:7
+extracts 3
+heap_extract 1:6 1:6 1:5
+heap_extracted 20 30 40
+heap_order_after 50 70 60 80
+
+case fractional
+keys 0 0.5 2.5 -1
+probes 0.5 2.5 -1 3
+heap_order -1 0 2.5 0.5
+heap_search 1:4 1:3 1:1 0:4
+extracts 2
+heap_extract 1:3 1:2
+heap_extracted -1 0
+heap_order_after 0.5 2.5

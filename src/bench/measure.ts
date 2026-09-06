@@ -16,8 +16,14 @@
  * home for risk R2, since that risk is about the browser clock specifically.
  */
 
-/** Which structure a series was measured on (docs/PLAN.md §8). */
-export type StructureId = 'array' | 'hashset' | 'bst' | 'avl' | 'sarr' | 'll';
+/**
+ * Which structure a series was measured on (docs/PLAN.md §8). `heap` is the one
+ * entry with a **different op set** (insert / peek / extract-min; `search` is a
+ * deliberate O(n) scan contrast), so it is compared only within its own group and
+ * never merged into the canonical charts — enforced in the UI, not here
+ * (docs/PLAN.md §8, risk R6).
+ */
+export type StructureId = 'array' | 'hashset' | 'bst' | 'avl' | 'sarr' | 'll' | 'heap';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).

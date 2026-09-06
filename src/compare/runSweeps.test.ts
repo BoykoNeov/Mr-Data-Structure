@@ -2,7 +2,17 @@ import { describe, it, expect } from 'vitest';
 import type { BenchEngine } from '../bench/BenchEngine';
 import type { SweepPoint, SweepSeries, StructureId, SweepOp } from '../bench/measure';
 import { generateSorted, generateUniform, generateStringCorpus, makeDataset } from '../data';
-import { runAllSweeps, sizesFor, toProof, toView, MUT_MAX, SWEEP_MAX, SWEEP_MIN } from './runSweeps';
+import {
+  runAllSweeps,
+  sizesFor,
+  toProof,
+  toView,
+  canonicalSearch,
+  heapSearch,
+  MUT_MAX,
+  SWEEP_MAX,
+  SWEEP_MIN,
+} from './runSweeps';
 import { inputShapeOf, isMonotone } from './shape';
 
 /**
@@ -34,6 +44,9 @@ function fakeEngine(log: string[]): BenchEngine {
         series('ll', 'search', sizes, (n) => 2 * n),
         series('sarr', 'search', sizes, (n) => Math.log2(n)),
         series('hashset', 'search', sizes, () => 3),
+        // The heap's scan is measured on the same ladder but is NOT a fifth competitor —
+        // it is the O(n) contrast, split off by `canonicalSearch` / `heapSearch` (risk R6).
+        series('heap', 'search', sizes, (n) => n),
       ];
     },
     runMutationSweep: async (_k, sizes) => {
@@ -48,12 +61,16 @@ function fakeEngine(log: string[]): BenchEngine {
       log.push(`avl:${sizes.length}`);
       return mutTrio('avl', sizes, (n) => Math.log2(n));
     },
+    runHeapMutationSweep: async (_k, sizes) => {
+      log.push(`heap:${sizes.length}`);
+      return mutTrio('heap', sizes, (n) => Math.log2(n));
+    },
     dispose: () => {},
   };
 }
 
 describe('runAllSweeps', () => {
-  it('drives every sweep from one dataset and publishes the four proofs in order', async () => {
+  it('drives every sweep from one dataset and publishes the five proofs in order', async () => {
     const log: string[] = [];
     const statuses: string[] = [];
     const win: Record<string, unknown> = {};
@@ -65,19 +82,34 @@ describe('runAllSweeps', () => {
     expect(r.searchSizes[r.searchSizes.length - 1]).toBe(50_000); // capped by the dataset
     expect(r.mutationSizes[r.mutationSizes.length - 1]).toBe(MUT_MAX);
     expect(log[0]).toBe(`search:50000:${r.searchSizes.length}`);
-    expect(statuses).toHaveLength(4);
+    expect(statuses).toHaveLength(5);
 
-    expect(r.search.map((v) => v.series.structure)).toEqual(['array', 'll', 'sarr', 'hashset']);
+    expect(r.search.map((v) => v.series.structure)).toEqual(['array', 'll', 'sarr', 'hashset', 'heap']);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
     expect(r.trees.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'bst.churn', 'bst.insert', 'bst.delete', 'avl.churn', 'avl.insert', 'avl.delete',
     ]);
+    // The heap is kept in its own bucket: its op set differs, so its churn (insert +
+    // extract-min) is comparable only against its own split (docs/PLAN.md §8, risk R6).
+    expect(r.heap.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
+      'heap.churn', 'heap.insert', 'heap.delete',
+    ]);
     expect(r.shape).toBe('random');
 
-    // The runtime gate's globals, with the AVL proof set last.
+    // Risk R6 at the seam: the shared search chart sees only canonical structures, and
+    // the heap's scan is available separately for its own section.
+    expect(canonicalSearch(r).map((v) => v.series.structure)).toEqual(['array', 'll', 'sarr', 'hashset']);
+    expect(heapSearch(r).map((v) => v.series.structure)).toEqual(['heap']);
+
+    // The runtime gate's globals, with the heap proof set last.
     expect(Object.keys(win)).toEqual([
-      '__sweepProof', '__mutationProof', '__bstMutationProof', '__compareMeta', '__avlMutationProof',
+      '__sweepProof',
+      '__mutationProof',
+      '__bstMutationProof',
+      '__avlMutationProof',
+      '__compareMeta',
+      '__heapMutationProof',
     ]);
     const proof = win.__sweepProof as ReturnType<typeof toProof>;
     expect(proof[0]).toMatchObject({ structure: 'array', op: 'search', best: 'O(n)' });

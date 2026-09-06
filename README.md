@@ -17,13 +17,14 @@ measurements, held to identical behaviour by a cross-language conformance
 corpus. See [`docs/PLAN.md`](docs/PLAN.md) for the full design, the measurement
 methodology, and the phased roadmap.
 
-**Status:** Phases 0–3 complete; Phase 4 (Rust bench twins) has the Linear
-family and the BST/AVL trees (min-heap outstanding); Phase 5 (comparison /
-analysis) has its first slice — the sweeps run on a **user-chosen dataset**
-(generators or pasted CSV/JSON), with a theoretical overlay, error bars, slope
-uncertainty, a local-slope panel and export, and tree add/remove is now probed
-at **both ends** of the key range so a reverse-sorted chain can no longer report
-a misleading flat curve. The phase table is at the top of
+**Status:** Phases 0–3 complete; Phase 4 (Rust bench twins) now has every
+structure — the Linear family, the BST/AVL trees and the **min-heap** — with the
+string structures and the sorted-array/linked-list add-remove surfaces still to be
+wired into the browser sweep; Phase 5 (comparison / analysis) has its first slice
+— the sweeps run on a **user-chosen dataset** (generators or pasted CSV/JSON),
+with a theoretical overlay, error bars, slope uncertainty, a local-slope panel and
+export, and tree add/remove is now probed at **both ends** of the key range so a
+reverse-sorted chain can no longer report a misleading flat curve. The phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 
@@ -71,6 +72,13 @@ The page has two parts, matching the two modes above:
     (a falling trend is the logarithm's signature; a rising one means a fixed
     overhead is masking growth);
   - **export** of the results as CSV or JSON with provenance columns.
+- **The min-heap gets its own section**, because it answers a different question.
+  The structures above all do add / find / remove a key; a heap does add, *peek at
+  the smallest*, and *remove the smallest*. Lining it up against the others would
+  compare different operations, so it is charted separately: its add+remove pair
+  reads **O(log n)**, and its “search” is shown next to the unsorted array’s scan
+  as the honest answer to “can I just use a heap for everything?” — both **O(n)**,
+  because a heap keeps only its minimum findable.
 
 ## Build / test / verify
 

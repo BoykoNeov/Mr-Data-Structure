@@ -23,29 +23,32 @@ let proof = null;
 let mutation = null;
 let bst = null;
 let avl = null;
+let heap = null;
 let revBst = null;
 let revAvl = null;
+let revHeap = null;
 let meta = null;
 let text = '(no text captured)';
 const checks = [];
 
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  // The sweeps run in a worker; wait until the AVL mutation proof publishes (it is set
-  // last, after the search sweep — which now includes the sorted array — and the
-  // array/hashset and BST mutation sweeps), or the app reports an error. Generous timeout
-  // — the sweeps do real timed work.
+  // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
+  // is set last, after the search sweep and the array/hashset, BST and AVL mutation
+  // sweeps — or until the app reports an error. Generous timeout: the sweeps do real timed
+  // work, and the heap adds a fifth search series plus a sixth mutation sweep.
   await page.waitForFunction(
     () =>
-      window.__avlMutationProof !== undefined ||
+      window.__heapMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
-    { timeout: 60000 },
+    { timeout: 90000 },
   );
   text = await page.evaluate(() => document.body.innerText);
   proof = await page.evaluate(() => window.__sweepProof ?? null);
   mutation = await page.evaluate(() => window.__mutationProof ?? null);
   bst = await page.evaluate(() => window.__bstMutationProof ?? null);
   avl = await page.evaluate(() => window.__avlMutationProof ?? null);
+  heap = await page.evaluate(() => window.__heapMutationProof ?? null);
   meta = await page.evaluate(() => window.__compareMeta ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
@@ -65,10 +68,11 @@ try {
     const ll = proof.find((p) => p.structure === 'll');
     const sarrSearch = proof.find((p) => p.structure === 'sarr');
     const hashset = proof.find((p) => p.structure === 'hashset');
+    const heapSearch = proof.find((p) => p.structure === 'heap');
 
     want(
-      'four search series measured',
-      proof.length === 4 && array && ll && sarrSearch && hashset,
+      'five search series measured',
+      proof.length === 5 && array && ll && sarrSearch && hashset && heapSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -102,6 +106,17 @@ try {
       want('hashset search labelled O(1)', hashset.best === 'O(1)');
       want('hashset search slope ~0 (< 0.4)', hashset.slope < 0.4);
       want(`hashset search stays flat (ratio ${ratio.toFixed(1)} < 10)`, ratio < 10);
+    }
+    // Min-heap search (docs/PLAN.md §8, risk R6): the deliberate O(n)-scan **contrast**, not
+    // a fifth competitor. A heap is ordered for its root only, so a lookup has no shortcut
+    // and must read O(n) exactly like the unsorted array's scan. The UI keeps this series
+    // off the shared chart; measuring it on the same ladder is what makes the two
+    // comparable at all.
+    if (heapSearch) {
+      const ratio = heapSearch.lastNanos / heapSearch.firstNanos;
+      want('heap search labelled O(n) — no lookup shortcut', heapSearch.best === 'O(n)');
+      want(`heap search slope ~1 (0.7..1.4)`, heapSearch.slope >= 0.7 && heapSearch.slope <= 1.4);
+      want(`heap search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
     }
   }
 
@@ -169,6 +184,52 @@ try {
     }
   }
 
+  // Min-heap mutation (docs/PLAN.md §6.3, §8 trees/heaps): the churn primary here is
+  // insert + **extract-min**, so it is read only against the heap's own split, never
+  // against the structures above (risk R6). Two things the real clock can show that the
+  // clock-free Rust proof cannot: that the worker→WASM heap path resolves at all, and that
+  // the measured curve is **sub-linear** — one root-to-leaf walk per operation. The
+  // absolute-ns constant is deliberately high (churn inserts a new global minimum, the
+  // worst-case insert), so only the *shape* is asserted (docs/METHODOLOGY.md §4.2).
+  if (heap) {
+    const hChurn = heap.find((m) => m.structure === 'heap' && m.op === 'churn');
+    const hIns = heap.find((m) => m.structure === 'heap' && m.op === 'insert');
+    const hDel = heap.find((m) => m.structure === 'heap' && m.op === 'delete');
+    want('three heap mutation series measured', heap.length === 3);
+    if (hChurn) {
+      const ratio = hChurn.lastNanos / hChurn.firstNanos;
+      want(
+        `heap churn sub-linear (slope ${hChurn.slope.toFixed(2)} < 0.6)`,
+        hChurn.slope < 0.6,
+      );
+      want(`heap churn stays near-flat (ratio ${ratio.toFixed(1)} < 6)`, ratio < 6);
+    }
+    // The heap's signature asymmetry on a shuffled build: an ordinary insert usually stops
+    // after a level or two (most of a heap is leaves), while every extract-min must sift the
+    // refill all the way back down. Op-counts put that gap at ~9x (insert_fd 3.6 vs
+    // delete_fd 31.3 at n = 4000, pinned in Rust).
+    //
+    // Asserted on **magnitude, not slope**, deliberately. Both series are sub-linear, so
+    // unlike the array's O(n) delete vs O(1) append there is no class gap for a slope
+    // comparison to catch — and the heap's finite-difference *insert* slope is
+    // noise-dominated at these sizes (measured 0.31 with a standard error of 0.20, R² 0.93),
+    // so its ordering against delete flips between runs. That is docs/METHODOLOGY.md §4
+    // hurdle 7 in the wild: differencing two cumulative timings of a very cheap op is mostly
+    // noise. The per-op *cost* gap is what the mechanism actually predicts and what holds
+    // steady (measured 22.7 ns vs 8.6 ns at the top of the sweep).
+    if (hIns && hDel) {
+      const gap = hDel.lastNanos / hIns.lastNanos;
+      want(
+        `heap extract-min costs more per op than insert (${gap.toFixed(1)}x > 1.3x)`,
+        gap > 1.3,
+      );
+      want(
+        `heap insert slope is reported with its uncertainty (stderr ${hIns.slopeStderr.toFixed(2)})`,
+        Number.isFinite(hIns.slopeStderr),
+      );
+    }
+  }
+
   // ── Second pass: the same page, driven onto **reverse-sorted** input ──
   //
   // The default run above is uniform, on which every tree looks balanced. Reverse-sorted
@@ -183,17 +244,19 @@ try {
   await page.evaluate(() => {
     window.__bstMutationProof = undefined;
     window.__avlMutationProof = undefined;
+    window.__heapMutationProof = undefined;
   });
   await page.locator('select').first().selectOption('reverse-sorted');
   await page.getByRole('button', { name: /run|sweep/i }).first().click();
   await page.waitForFunction(
     () =>
-      window.__avlMutationProof !== undefined ||
+      window.__heapMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
-    { timeout: 120000 },
+    { timeout: 150000 },
   );
   revBst = await page.evaluate(() => window.__bstMutationProof ?? null);
   revAvl = await page.evaluate(() => window.__avlMutationProof ?? null);
+  revHeap = await page.evaluate(() => window.__heapMutationProof ?? null);
   const revMeta = await page.evaluate(() => window.__compareMeta ?? null);
 
   want('reverse-sorted run measured', revMeta && revMeta.order.kind === 'reverse-sorted');
@@ -217,6 +280,23 @@ try {
     if (c) {
       want(
         `reverse-sorted AVL churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
+        c.slope < 0.6,
+      );
+    }
+  }
+
+  // The heap on the same reverse-sorted input. Unlike the naive BST, a heap **cannot**
+  // degenerate — it is a complete tree by construction, so its height is ⌊log₂ n⌋ whatever
+  // order the keys arrive in. Churn must therefore stay sub-linear here exactly as it was
+  // on the uniform pass. (Descending input *is* the heap's worst case for the cumulative
+  // build — every insert climbs to the root — but that moves the finite-difference insert
+  // series, not churn, which always rides the full height. Pinned clock-free in Rust by
+  // `structures::methodology::heap_build_is_order_sensitive_but_churn_is_not`.)
+  if (revHeap) {
+    const c = revHeap.find((m) => m.op === 'churn');
+    if (c) {
+      want(
+        `reverse-sorted heap churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
         c.slope < 0.6,
       );
     }
@@ -246,6 +326,14 @@ if (bst) {
 if (avl) {
   console.log('--- avl mutation proof ---');
   console.log(JSON.stringify(avl, null, 2));
+}
+if (heap) {
+  console.log('--- heap mutation proof ---');
+  console.log(JSON.stringify(heap, null, 2));
+}
+if (revHeap) {
+  console.log('--- heap mutation proof (reverse-sorted) ---');
+  console.log(JSON.stringify(revHeap, null, 2));
 }
 if (revBst) {
   console.log('--- bst mutation proof (reverse-sorted) ---');

@@ -75,6 +75,24 @@ export interface BenchEngine {
     opts?: MeasureOptions,
   ): Promise<SweepSeries[]>;
 
+  /**
+   * Measure the size-mutating ops for the **min-heap** bench twin across a size sweep
+   * (docs/PLAN.md §6.3, §8 trees/heaps) — three {@link SweepSeries} (`churn`, `insert`,
+   * `delete`) tagged `'heap'`. Separate from the tree sweeps because the heap's **op set
+   * is different** (docs/PLAN.md §4.1): `churn` is insert + **extract-min**, and the
+   * `delete` series is the marginal extract-min, so these curves are meaningful only
+   * against each other and never against the canonical insert/search/delete structures
+   * (risk R6). Input order is safe in either direction — a heap cannot degenerate — though
+   * the *build* half is order-sensitive (ascending is its best case, descending its worst),
+   * which moves the `insert` series but not `churn`. As with the other sweeps, the engine
+   * may transfer (consume) the `keys` buffer.
+   */
+  runHeapMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
   /** Release the worker / underlying resources. */
   dispose(): void;
 }

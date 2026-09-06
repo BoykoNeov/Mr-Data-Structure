@@ -70,7 +70,9 @@ each on the same structure (PLAN §6.3):
 
 - **Churn (primary).** Build to n, then time `k` insert+delete *pairs* of a
   spare key (absent by construction: `max + 1`, or `min − 1` for the sorted
-  array). Size stays at n; the pair cost is the combined mutation cost. **The
+  array and the **min-heap** — for the heap that choice is forced, not tuned,
+  since a higher key makes the pair's extract-min remove a *real* key and drain
+  the structure, §4.2). Size stays at n; the pair cost is the combined mutation cost. **The
   trees use two spare keys**, `min − 1` and `max + 1`, alternating pair by
   pair, and average them — one key can only ever walk one spine, which on a
   degenerate input reports the wrong *class* (§4.1). Their teardown alternates
@@ -98,6 +100,7 @@ position. Every regime is pinned clock-free on exact op-counts in
 | AVL | **close** (~10 %), churn ≥ sum | height and average depth differ by only ~1.44×, so the spine probes and the average insert nearly coincide | yes, O(log n) |
 | sorted array (front churn) | **churn overshoots sum** (≈ 2n vs ≈ 3n/2) | front churn shifts the whole array twice; the shuffled build inserts at average position n/2 | yes, O(n) — and *tail* churn would have read O(log n): the key position sets the class |
 | linked list | **class disagreement** (churn O(1), FD delete O(n)) | head insert puts the churn key where deletion is O(1); the canonical delete-by-value (teardown of the oldest) walks the list | **no** — reported, not hidden |
+| min-heap | **churn overshoots sum** (~1.5×: 53 vs 34.9), but the *insert halves* are in different classes | churn's insert is a new global minimum climbing the full height (Θ(log n), forced — see §4.2); a shuffled build's marginal insert is O(1), since most of a heap is leaves | totals yes, Θ(log n); **insert halves no** |
 
 Both BST rows moved with the two-key change (they were "tight" and
 "overshoot"): alternating the ends is what fixes the *class* on reverse-sorted
@@ -177,19 +180,51 @@ Ordered by how much they can mislead a reader today.
    its absolute nanoseconds. Averaging two ends also costs the chain regime its
    tight churn-vs-FD match (§2.3) — an honest trade: a constant that no longer
    lines up, in exchange for a class that is never wrong.
-2. **Fixed per-op overhead at small n.** The batch loop, probe cycling, and the
+2. **Churn-key position bias (min-heap) — the same bias, pointing the other
+   way.** Hurdle 1 says a tree's churn constant runs *low*. The heap's runs
+   **high**, for the mirror-image reason, and this one cannot be tuned away. A
+   heap has no delete-by-value, so a size-preserving churn pair must be insert
+   then extract-**min** — and only a key strictly below everything stored is the
+   key that extract then takes back. Any higher key and the extract removes a
+   *real* key: the structure drains, and after n pairs there is nothing left to
+   measure (pinned by
+   `heap::tests::a_high_churn_key_would_drain_the_heap`). So churn's insert is
+   forced to be the **worst-case** insert, a new global minimum climbing all
+   ⌊log₂ n⌋ levels, while an ordinary insert sifts O(1) levels in expectation
+   because most of a heap is leaves. The reported **class is right** (Θ(log n),
+   which is the textbook worst case and what the extract half costs anyway), but
+   the **constant sits above** an average workload's. Read the heap's churn curve
+   for its shape, not its nanoseconds — the same instruction as for the trees, in
+   the opposite direction.
+
+   Two consequences worth naming. First, this is what puts the heap's *insert
+   halves* in different classes in the §2.3 table: churn's is Θ(log n) by
+   construction, the finite-difference build's is O(1). Second, the finite-
+   difference insert is the honest *average* reading, so the two curves together
+   bracket the truth rather than either being wrong — which is why both are shown.
+
+   A separate order-sensitivity, deliberately **not** encoded as shape-sensitivity:
+   a heap's *build* is Θ(n) on ascending input (every insert appends after one
+   failed comparison) and Θ(n log n) on descending (every insert climbs to the
+   root), so the finite-difference insert series moves with input order. Churn
+   does not — it always rides the full height. The registry flag stays false
+   because `inputShapeOf` collapses both sort directions into one `sorted` shape,
+   and overlaying the worst case would then be wrong on ascending input, which is
+   the heap's *best* case. Pinned by
+   `structures::methodology::heap_build_is_order_sensitive_but_churn_is_not`.
+3. **Fixed per-op overhead at small n.** The batch loop, probe cycling, and the
    WASM call itself add a constant that flattens the low-n end of every
    wall-clock curve. Mitigated by the tail slope and the rising-trend flag,
    not removed. Op-counts are unaffected.
-3. **Cache and memory regimes.** A hash set whose table outgrows L2/L3 shows a
+4. **Cache and memory regimes.** A hash set whose table outgrows L2/L3 shows a
    wall-clock step that is a *machine* effect, not a class change. The
    local-slope panel makes it visible; the label may still wobble. Op-counts
    are unaffected.
-4. **Sequential structure order.** Structures are measured one after another,
+5. **Sequential structure order.** Structures are measured one after another,
    so later sweeps may run at a different CPU frequency or under a different
    background load. Interleaving structures per sweep point would remove the
    systematic part; not implemented. The rep spread captures the random part.
-5. **Churn and teardown exercise different machine paths (array).** Churn's
+6. **Churn and teardown exercise different machine paths (array).** Churn's
    spare key is appended, so its delete is a *scan* with zero shifts; the
    teardown deletes the *front*, so each delete is a pure memmove of the tail.
    Their op-counts agree (§2.3, tight), but the wall-clock need not: on a shared
@@ -199,21 +234,21 @@ Ordered by how much they can mislead a reader today.
    the FD split for class agreement with the op-count signal, and treat a
    wall-clock exponent above 1 on an O(n) delete as the machine's memmove
    regime, not the algorithm's.
-6. **Finite-difference noise amplification.** Differencing two noisy cumulative
+7. **Finite-difference noise amplification.** Differencing two noisy cumulative
    timings amplifies noise, and subtracting build from build+teardown adds
    more; a wall-clock `insert_fd` for an O(1) append is mostly noise (the UI
    says so). The propagated spread is a conservative bound, not a variance.
-7. **Input size vs stored size.** `n` is the number of *input* keys in the
+8. **Input size vs stored size.** `n` is the number of *input* keys in the
    prefix. A set de-duplicates, so on duplicate-heavy (zipfian) data the hash
    set holds fewer than n keys; the array and multiset structures hold all n.
    The curves are still honest per structure, but "n" means input size.
-8. **Probe mix is fixed** at 64 present + 64 absent. A present-only or
+9. **Probe mix is fixed** at 64 present + 64 absent. A present-only or
    absent-only workload changes the array's constant (n/2 vs n) and the
    chain-walk length in the hash set, not the class.
-9. **No cross-machine comparability.** Wall-clock results are labelled as
+10. **No cross-machine comparability.** Wall-clock results are labelled as
    measured on *this* machine and browser; nothing is normalised across
    machines (PLAN §13, by choice).
-10. **String-key structures** exist and are conformance-pinned in the engine but
+11. **String-key structures** exist and are conformance-pinned in the engine but
    are not wired into the sweep; the Compare panel is numeric-only.
 
 ## 5. Proof map — which test pins which claim
@@ -225,9 +260,13 @@ Ordered by how much they can mislead a reader today.
 | two-key churn recovers the O(n) class on a reverse-sorted BST (a one-keyed churn read O(1)) | `structures::methodology::bst_reverse_sorted_two_key_churn_recovers_the_linear_class` | none (op-counts) |
 | delete-min never takes the two-child path, so the alternating teardown is safe | `structures::bst::tests::delete_min_never_hits_the_two_child_path` | none (op-counts) |
 | the churn unit stays *one* pair — the two keys are averaged, not summed | `structures::bst::tests::churn_holds_size_and_averages_the_two_spine_round_trips` | none (op-counts) |
-| the seven churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` | none (exact op-counts) |
+| the eight churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` | none (exact op-counts) |
 | AVL stays O(log n) on the sorted input that makes the BST an O(n) chain | same | none |
 | sorted array: O(log n) search vs O(n) mutation on the same structure | same | none |
+| min-heap: O(n) search vs Θ(log n) extract-min on the same structure (the sorted array's split inverted) | `structures::methodology::heap_search_is_linear_while_extract_min_is_log_n` | none |
+| a heap's build is order-sensitive (Θ(n) ascending, Θ(n log n) descending) while its churn is not | `structures::methodology::heap_build_is_order_sensitive_but_churn_is_not` | none |
+| a `max + 1` churn key would drain a heap instead of holding its size — why the low key is forced | `structures::heap::tests::a_high_churn_key_would_drain_the_heap` | none |
+| the heap's six op-counting rules match the TS twin (layout, tie-breaks, the 0-op emptying extract) | `conformance/corpus-heap.txt` + `src/structures/conformance-heap.test.ts` | none |
 | fitter: classes, slope ± SE, CI, local slopes, tail slope, trend | `src/bench/fit.test.ts` | — |
 | TS twin ≡ Rust twin (iteration order, shape, per-op counts) | `conformance/*.txt` + `src/structures/conformance-*.test.ts` + Rust `conformance.rs` | — |
 | animation shows exactly what the benchmark counts | `src/viz/trace*.test.ts` | — |

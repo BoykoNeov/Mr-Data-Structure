@@ -14,7 +14,7 @@ import type { StructureId, SweepOp } from './bench/measure';
  * Nothing here is used to *label* a measurement; the fitter reads only the data.
  */
 
-export type Family = 'linear' | 'hashing' | 'tree';
+export type Family = 'linear' | 'hashing' | 'tree' | 'heap';
 
 export interface OpComplexity {
   readonly search: ComplexityClass;
@@ -117,9 +117,42 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     worst: { search: OLOG, insert: OLOG, delete: OLOG, churn: OLOG },
     shapeSensitive: false,
   },
+  /**
+   * The min-heap is the one structure with a **different op set** (docs/PLAN.md §4.1,
+   * §8), so the canonical slots carry heap meanings: `delete` is **extract-min**, and
+   * `search` is the deliberate O(n) linear scan kept only as a *contrast* — a heap is
+   * ordered for its root, not for membership. It is therefore compared only within its
+   * own group (risk R6), which the UI enforces by rendering it in its own section.
+   *
+   * `insert` is the textbook split: **O(1) average** — most of a complete tree is
+   * leaves, so a random key barely sifts — against **O(log n) worst**, a new global
+   * minimum climbing the full height. Both readings are real and the tool shows both:
+   * the finite-difference insert curve measures the average, while churn's insert half
+   * is always the worst case by construction (docs/METHODOLOGY.md §4.2).
+   *
+   * **Not `shapeSensitive`, despite an order-sensitive build.** Ascending input is the
+   * heap's *best* case (every insert appends after one failed comparison, an O(n) build)
+   * and descending its *worst* (every insert climbs to the root, O(n log n)). A single
+   * flag cannot say that, because `inputShapeOf` collapses both directions into one
+   * `sorted` shape — overlaying the worst case would then be wrong on ascending input.
+   * Churn, the primary curve, is genuinely order-insensitive: it always rides the full
+   * height. So the flag stays false and the nuance is documented (METHODOLOGY §4.2)
+   * rather than encoded in a flag that cannot hold it.
+   */
+  heap: {
+    id: 'heap',
+    label: 'min-heap',
+    family: 'heap',
+    color: '#e377c2',
+    costMetric: 'comparisons + swaps',
+    mechanism: 'keeps the smallest key at the root of a complete tree; sifts up on insert, down on extract',
+    average: { search: ON, insert: O1, delete: OLOG, churn: OLOG },
+    worst: { search: ON, insert: OLOG, delete: OLOG, churn: OLOG },
+    shapeSensitive: false,
+  },
 };
 
-/** Every registered structure, in catalogue order (§8: linear, hashing, trees). */
+/** Every registered structure, in catalogue order (§8: linear, hashing, trees, heaps). */
 export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.array,
   REGISTRY.ll,
@@ -127,7 +160,24 @@ export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.hashset,
   REGISTRY.bst,
   REGISTRY.avl,
+  REGISTRY.heap,
 ];
+
+/**
+ * Structures on the **canonical** op set (insert / search / delete on a key), which are
+ * the only ones comparable against each other (docs/PLAN.md §4.1, §8, risk R6). The
+ * min-heap is excluded: its op set is insert / peek / extract-min, so putting it on a
+ * shared chart would invite a comparison that isn't meaningful. The Compare UI filters
+ * the shared charts through this list and gives the heap its own section.
+ */
+export const CANONICAL_STRUCTURES: readonly StructureInfo[] = STRUCTURES.filter(
+  (s) => s.id !== 'heap',
+);
+
+/** Whether `id` is on the canonical op set (see {@link CANONICAL_STRUCTURES}). */
+export function isCanonical(id: StructureId): boolean {
+  return id !== 'heap';
+}
 
 /** The input order the dataset arrived in, as far as the theoretical overlay cares. */
 export type InputShape = 'random' | 'sorted';
