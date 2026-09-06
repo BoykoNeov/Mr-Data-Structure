@@ -14,9 +14,10 @@ import type { Dataset } from '../data';
 import { REGISTRY } from '../registry';
 import { Callout, ChartGuide, ComplexityLadder } from './Explain';
 import { DatasetPicker, DEFAULT_PICKER, buildDataset, describeDataset } from './DatasetPicker';
-import { SweepChart, type SeriesView, type Signal } from './SweepChart';
+import { SweepChart, seriesLabel, type SeriesView, type Signal } from './SweepChart';
 import { SlopeChart } from './SlopeChart';
-import { download, toCsv, toJson } from './export';
+import { download, downloadBlob, toCsv, toJson } from './export';
+import { plotCanvasOf, renderSheet, type ChartShot } from './png';
 
 /**
  * The Compare mode (docs/PLAN.md §7, §10 Phase 5): a dataset panel, the sweeps
@@ -46,6 +47,8 @@ function FitRow({ v, what }: { readonly v: SeriesView; readonly what?: string })
 
 export function CompareSection() {
   const engineRef = useRef<BenchEngine | null>(null);
+  // The PNG export reads the charts back out of this subtree (see `exportPng`).
+  const sectionRef = useRef<HTMLElement>(null);
   const [status, setStatus] = useState('initializing…');
   const [version, setVersion] = useState('');
   const [busy, setBusy] = useState(true);
@@ -161,6 +164,49 @@ export function CompareSection() {
   const sortedNote = shape === 'sorted';
   const reverse = dataset?.order.kind === 'reverse-sorted';
 
+  /**
+   * Every chart currently on screen, in the order the page shows them, each paired with
+   * the views that name its lines. This is the PNG sheet's contents: the charts the user
+   * is actually looking at, not a fixed list, so a string run exports its two and a
+   * numeric run exports its four.
+   */
+  const chartsOnScreen: ReadonlyArray<{ name: string; title: string; views: readonly SeriesView[] }> = [
+    { name: 'search', title: 'Search — the cost of finding a key', views: search },
+    { name: 'churn', title: 'Add / remove (churn)', views: churn },
+    { name: 'heap-churn', title: 'Min-heap — insert + extract-min', views: heapChurn },
+    { name: 'heap-scan', title: 'Min-heap vs array — the linear scan', views: [...heapScan, ...arrayScan] },
+    { name: 'string-search', title: 'Text keys — search', views: stringSearch },
+    { name: 'string-churn', title: 'Text keys — add / remove (churn)', views: stringChurn },
+  ].filter((c) => c.views.length > 0);
+
+  const exportPng = () => {
+    const root = sectionRef.current;
+    if (!root) return;
+    const shots: ChartShot[] = [];
+    for (const c of chartsOnScreen) {
+      const canvas = plotCanvasOf(root.querySelector<HTMLElement>(`[data-chart="${c.name}"]`));
+      if (canvas) {
+        shots.push({
+          title: c.title,
+          canvas,
+          legend: c.views.map((v) => ({ text: seriesLabel(v), color: v.color })),
+        });
+      }
+    }
+    if (shots.length === 0) return;
+    // The provenance travels with the picture: a chart without its dataset, signal and
+    // machine is a shape with no claim attached (docs/PLAN.md §6.2 — results are
+    // machine-specific and relative).
+    const caption = [
+      `Mr Data Structure — ${dataset ? describeDataset(dataset) : 'no dataset'}`,
+      `signal: ${signal === 'nanos' ? 'wall-clock ns/op (this machine)' : 'op-count (hardware-free)'}` +
+        ` · engine: ${version || '—'} · ${new Date().toISOString()}`,
+    ];
+    renderSheet(shots, caption).toBlob((blob) => {
+      if (blob) downloadBlob('mr-data-structure-charts.png', blob);
+    });
+  };
+
   const exportAll = (kind: 'csv' | 'json') => {
     const views = [
       ...search,
@@ -185,7 +231,7 @@ export function CompareSection() {
   };
 
   return (
-    <section style={{ marginTop: 40 }}>
+    <section ref={sectionRef} style={{ marginTop: 40 }}>
       <h2 style={{ fontSize: 20, marginBottom: 4, borderBottom: '2px solid #eee', paddingBottom: 4 }}>
         2 · Compare — measured cost curves on <em>your</em> data
       </h2>
@@ -209,7 +255,9 @@ export function CompareSection() {
       <p style={{ color: '#555', marginBottom: 0 }}>Quick reference for the shapes you’ll read off the charts:</p>
       <ComplexityLadder />
 
-      {result ? (
+      {/* Either kind of run gets the controls. The signal selector especially: the string
+          section's whole argument is "switch to op-count and the key length drops out". */}
+      {result || stringResult ? (
         <p style={{ fontSize: 14, color: '#444', margin: '16px 0 0' }}>
           <label>
             <strong>Signal</strong>:{' '}
@@ -225,7 +273,10 @@ export function CompareSection() {
             <input type="checkbox" checked={showSpread} onChange={(e) => setShowSpread(e.target.checked)} /> rep spread (error bars)
           </label>{' '}
           <button onClick={() => exportAll('csv')} style={{ marginLeft: 12, fontSize: 12 }}>export CSV</button>{' '}
-          <button onClick={() => exportAll('json')} style={{ fontSize: 12 }}>export JSON</button>
+          <button onClick={() => exportAll('json')} style={{ fontSize: 12 }}>export JSON</button>{' '}
+          <button onClick={exportPng} style={{ fontSize: 12 }} title="every chart below, stacked into one image with its legend and this run's provenance">
+            export PNG
+          </button>
         </p>
       ) : (
         <Callout title="Measuring…" tone="info">
@@ -248,7 +299,7 @@ export function CompareSection() {
       {search.length > 0 && (
         <>
           <ul style={{ marginTop: 8 }}>{search.map((v) => <FitRow key={v.series.structure} v={v} />)}</ul>
-          <SweepChart views={search} signal={signal} showTheory={showTheory} showSpread={showSpread} shape={shape} />
+          <SweepChart name="search" views={search} signal={signal} showTheory={showTheory} showSpread={showSpread} shape={shape} />
           <SlopeChart views={search} />
           <Callout title="What to notice" tone="tip">
             The array (red) and the linked list (orange) both touch every element, so their cost rises
@@ -275,7 +326,7 @@ export function CompareSection() {
           <ul style={{ marginTop: 8 }}>
             {churn.map((v) => <FitRow key={`${v.series.structure}-${v.series.op}`} v={v} />)}
           </ul>
-          <SweepChart views={churn} signal={signal} showTheory={showTheory} showSpread={showSpread} shape={shape} />
+          <SweepChart name="churn" views={churn} signal={signal} showTheory={showTheory} showSpread={showSpread} shape={shape} />
           <SlopeChart views={churn} />
           <Callout title="What to notice" tone="tip">
             The unsorted array (red) shifts elements to keep its order, so its churn rises <strong>O(n)</strong>.
@@ -378,7 +429,7 @@ export function CompareSection() {
               />
             ))}
           </ul>
-          <SweepChart views={heapChurn} signal={signal} showTheory={showTheory} showSpread={showSpread} shape={shape} />
+          <SweepChart name="heap-churn" views={heapChurn} signal={signal} showTheory={showTheory} showSpread={showSpread} shape={shape} />
           <SlopeChart views={heapChurn} />
           <Callout title="What to notice" tone="tip">
             One add-and-remove pair costs <strong>O(log n)</strong> — the pink line stays nearly flat,
@@ -413,6 +464,7 @@ export function CompareSection() {
             ))}
           </ul>
           <SweepChart
+            name="heap-scan"
             views={[...heapScan, ...arrayScan]}
             signal={signal}
             showTheory={showTheory}
@@ -441,7 +493,7 @@ export function CompareSection() {
               <ul style={{ marginTop: 8 }}>
                 {stringSearch.map((v) => <FitRow key={v.series.structure} v={v} />)}
               </ul>
-              <SweepChart views={stringSearch} signal={signal} showTheory={showTheory} showSpread={showSpread} shape="random" />
+              <SweepChart name="string-search" views={stringSearch} signal={signal} showTheory={showTheory} showSpread={showSpread} shape="random" />
               <SlopeChart views={stringSearch} />
               <Callout title="What to notice" tone="tip">
                 The array (red) still rises in step with the number of keys and the hash set (blue) is
@@ -480,7 +532,7 @@ export function CompareSection() {
               <ul style={{ marginTop: 4 }}>
                 {stringChurn.map((v) => <FitRow key={`${v.series.structure}-${v.series.op}`} v={v} />)}
               </ul>
-              <SweepChart views={stringChurn} signal={signal} showTheory={showTheory} showSpread={showSpread} shape="random" />
+              <SweepChart name="string-churn" views={stringChurn} signal={signal} showTheory={showTheory} showSpread={showSpread} shape="random" />
               <SlopeChart views={stringChurn} />
               {stringSplit.length > 0 && (
                 <>

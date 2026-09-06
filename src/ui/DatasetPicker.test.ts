@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { buildDataset, describeDataset, DEFAULT_PICKER, GENERATORS, keyTypeOf } from './DatasetPicker';
+import {
+  buildDataset,
+  describeDataset,
+  DEFAULT_PICKER,
+  GENERATORS,
+  keyTypeOf,
+  PRESETS,
+  STRING_CORPUS_N,
+} from './DatasetPicker';
 
 describe('DatasetPicker.buildDataset', () => {
   it('builds every generator kind with the requested n, never de-duplicating', () => {
@@ -60,6 +68,31 @@ describe('DatasetPicker.buildDataset', () => {
     expect(describeDataset(fixed)).toMatch(/6 chars/);
     // Numeric captions are unchanged.
     expect(describeDataset(buildDataset({ ...DEFAULT_PICKER, n: 12 }))).not.toMatch(/chars/);
+  });
+
+  it('builds every preset, each carrying a complete state', () => {
+    for (const p of PRESETS) {
+      const d = buildDataset(p.state);
+      expect(d.size).toBe(p.state.n);
+      expect(d.keyType).toBe(keyTypeOf(p.state.kind));
+      expect(p.blurb.length).toBeGreaterThan(0);
+      // A preset must bring its own trimmed n: the `<select>`'s trim only fires on user
+      // interaction, so a string preset clicked cold would otherwise generate 100k keys
+      // the sweep never reaches.
+      if (keyTypeOf(p.state.kind) === 'string') expect(p.state.n).toBeLessThanOrEqual(STRING_CORPUS_N);
+    }
+    // The pair that makes the string run's second cost axis a two-click comparison.
+    const [short, long] = ['short-text', 'long-text'].map(
+      (id) => PRESETS.find((p) => p.id === id)!.state,
+    );
+    expect(long.minLen).toBeGreaterThan(short.maxLen);
+  });
+
+  it('keeps preset labels clear of the run button’s name (the browser gate clicks by text)', () => {
+    // scripts/verify-browser.mjs drives the run button with /run the sweeps/i, and these
+    // buttons sit above it in the DOM. A preset matching that phrase would steal the click.
+    for (const p of PRESETS) expect(p.label).not.toMatch(/run the sweeps/i);
+    expect(new Set(PRESETS.map((p) => p.id)).size).toBe(PRESETS.length);
   });
 
   it('describes provenance for captions', () => {

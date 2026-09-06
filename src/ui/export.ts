@@ -66,7 +66,16 @@ export function toJson(views: readonly SeriesView[], meta: Record<string, unknow
 /** Trigger a browser download of `text` as `filename` (no-op outside a DOM). */
 export function download(filename: string, text: string, type: string): void {
   if (typeof document === 'undefined') return;
-  const url = URL.createObjectURL(new Blob([text], { type }));
+  downloadBlob(filename, new Blob([text], { type }));
+}
+
+/**
+ * Trigger a browser download of an already-built {@link Blob} — the binary path, for the
+ * PNG sheet (`./png`), which has no text form to hand to {@link download}.
+ */
+export function downloadBlob(filename: string, blob: Blob): void {
+  if (typeof document === 'undefined') return;
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;

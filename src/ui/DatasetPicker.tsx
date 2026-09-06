@@ -92,6 +92,68 @@ export const DEFAULT_PICKER: PickerState = {
   maxLen: 8,
 };
 
+/**
+ * One-click demos (docs/PLAN.md §10 Phase 5, §6 "presets"): a named dataset plus the
+ * finding it produces, so the headline results are one click rather than three form fields
+ * and a guess at the right `n`.
+ *
+ * Each preset carries a **complete** {@link PickerState}, never a patch: a preset that
+ * selects the string corpus has to bring its own trimmed `n`, because the trim in the kind
+ * `<select>` only fires on user interaction and would leave a preset click generating a
+ * hundred thousand string keys the sweep never reaches.
+ *
+ * **Labels must not contain "run the sweeps".** `scripts/verify-browser.mjs` drives the run
+ * button by that exact phrase precisely because these buttons sit above it in the DOM; a
+ * preset named "run the sorted sweeps" would silently steal the gate's click. Pinned by
+ * `DatasetPicker.test.ts`.
+ */
+export interface Preset {
+  readonly id: string;
+  readonly label: string;
+  /** What the user will see once it finishes — the reason to click it. */
+  readonly blurb: string;
+  readonly state: PickerState;
+}
+
+export const PRESETS: readonly Preset[] = [
+  {
+    id: 'baseline',
+    label: 'the fair fight',
+    blurb: 'shuffled numbers — every structure at its textbook average, the baseline to read the rest against',
+    state: { ...DEFAULT_PICKER, kind: 'uniform', n: 100_000 },
+  },
+  {
+    id: 'bst-chain',
+    label: 'sorted data kills a naive BST',
+    blurb: 'the same keys in order: the plain tree collapses into a chain and its add/remove goes O(n), while the AVL rotates and holds',
+    state: { ...DEFAULT_PICKER, kind: 'sorted', n: 100_000 },
+  },
+  {
+    id: 'left-chain',
+    label: 'the mirror image',
+    blurb: 'reverse-sorted: the chain leans the other way, and the add/remove probe still catches it',
+    state: { ...DEFAULT_PICKER, kind: 'reverse-sorted', n: 100_000 },
+  },
+  {
+    id: 'duplicates',
+    label: 'a few keys dominate',
+    blurb: 'zipfian — like word counts or page hits, where most lookups are for the same handful of keys',
+    state: { ...DEFAULT_PICKER, kind: 'zipfian', n: 100_000 },
+  },
+  {
+    id: 'short-text',
+    label: 'text keys, short',
+    blurb: 'the string array and string hash set on 3–8 character keys',
+    state: { ...DEFAULT_PICKER, kind: 'string-corpus', n: STRING_CORPUS_N, minLen: 3, maxLen: 8 },
+  },
+  {
+    id: 'long-text',
+    label: 'text keys, long',
+    blurb: 'the same two structures on 30–40 character keys: the flat line stays flat and sits higher — O(1) in the number of keys, O(L) in the size of one',
+    state: { ...DEFAULT_PICKER, kind: 'string-corpus', n: STRING_CORPUS_N, minLen: 30, maxLen: 40 },
+  },
+];
+
 /** Build the dataset the picker describes. Throws with a user-readable message. */
 export function buildDataset(s: PickerState): Dataset {
   if (s.source === 'paste') {
@@ -162,22 +224,63 @@ export function DatasetPicker({
 }) {
   const [s, setS] = useState<PickerState>(initial);
   const [error, setError] = useState<string | null>(null);
-  const patch = (p: Partial<PickerState>) => setS((prev) => ({ ...prev, ...p }));
+  const [preset, setPreset] = useState<string | null>(null);
+  // Any hand edit means the form is no longer the preset that filled it in.
+  const patch = (p: Partial<PickerState>) => {
+    setPreset(null);
+    setS((prev) => ({ ...prev, ...p }));
+  };
 
-  const run = () => {
+  const start = (state: PickerState, presetId: string | null) => {
     try {
       setError(null);
-      onRun(buildDataset(s), s);
+      setPreset(presetId);
+      onRun(buildDataset(state), state);
     } catch (err) {
       setError((err as Error).message);
     }
   };
+  const run = () => start(s, null);
+  const runPreset = (p: Preset) => {
+    setS(p.state); // the form follows the preset, so it stays a starting point, not a black box
+    start(p.state, p.id);
+  };
+  const blurb = PRESETS.find((p) => p.id === preset)?.blurb;
 
   const hint = GENERATORS.find((g) => g.kind === s.kind)?.hint ?? '';
 
   return (
     <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: '10px 14px', margin: '8px 0', background: '#fafafa' }}>
       <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 14 }}>Dataset</div>
+
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
+          One click, one finding — each of these picks a dataset below and measures it:
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {PRESETS.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => runPreset(p)}
+              disabled={busy}
+              title={p.blurb}
+              style={{
+                fontSize: 12,
+                padding: '3px 9px',
+                cursor: busy ? 'wait' : 'pointer',
+                borderRadius: 12,
+                border: '1px solid ' + (preset === p.id ? '#4a7' : '#ccc'),
+                background: preset === p.id ? '#eef8f2' : '#fff',
+                fontWeight: preset === p.id ? 600 : 400,
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {blurb && <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>{blurb}</div>}
+      </div>
+
       <div style={{ marginBottom: 6 }}>
         <label style={field}>
           <input type="radio" checked={s.source === 'generate'} onChange={() => patch({ source: 'generate' })} /> generate

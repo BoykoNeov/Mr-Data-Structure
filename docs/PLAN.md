@@ -14,7 +14,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 2 | thin slice: array + hash set through both twins, §6.3 methodology, fitter, chart; string-key bench structures | ✅ done |
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
-| 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; CSV/JSON export | 🟡 first slice + string-key sweeps landed (see §10); presets, PNG export open |
+| 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
 | 6 | trie, skip list, graph; presets/demos; persistence; polish | ⬜ not started |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
@@ -914,10 +914,35 @@ insert/search/delete group on a shared key type.
     element costs a little more than the last. Risk R3 with a mechanism. The gate therefore
     asserts the slope band and the rise, as it already does for the sorted array's search,
     and the UI says why beside the chart. **No new deps.**
-  - **Open:** presets ("sorted data kills a naive BST" as one click); PNG export;
-    interleaved structure order per sweep point (still an open *question*, §13 — it changes
-    per-point thermal conditions, which is exactly what this gate's slope bands encode, so
-    it wants its own slice rather than a ride alongside other features).
+  - **Done (one-click presets, and a PNG of the charts):**
+    Six presets in the dataset panel (`PRESETS`), each a *complete* `PickerState` plus the
+    finding it produces — the fair fight, "sorted data kills a naive BST", its
+    reverse-sorted mirror, duplicate-heavy zipfian, and **text keys short vs long**, which
+    turns the string run's second cost axis into a two-click comparison (the flat line stays
+    flat and sits higher). Complete states, not patches: the `n`-trim on the kind selector
+    only fires on user interaction, so a preset must bring its own trimmed `n` or a click
+    from cold would generate 100 k string keys the sweep never reaches. Preset labels are
+    kept clear of the phrase "run the sweeps" — the browser gate clicks the run button by
+    that text and these buttons sit above it in the DOM — and a test pins that.
+    **PNG export** (`ui/png.ts`) stacks the charts the page is *currently* showing into one
+    image with their titles, legends and this run's provenance (dataset, key length, signal,
+    engine, timestamp). It composes rather than dumping a canvas, because uPlot renders its
+    legend as DOM: a raw `toDataURL` would export lines with nothing naming them. The layout
+    arithmetic is a pure function with its own tests (nothing overlaps, nothing falls off the
+    sheet, the furniture scales with the device pixel ratio — uPlot's canvas is already
+    DPR-scaled, so unscaled labels would come out microscopic on exactly the screens people
+    export from). Charts are found by a `data-chart` attribute rather than a callback prop,
+    which keeps them out of `SweepChart`'s effect dependencies (an inline arrow would rebuild
+    the whole plot every render) and yields them in DOM order, which is the stacking order.
+    Two bugs this slice surfaced and fixed: the controls bar (signal selector, exports) was
+    gated on the *numeric* result, so a string run lost the very selector its copy tells the
+    reader to use; and every chart's size axis was being rendered as **dates** — uPlot treats
+    the x series as UNIX timestamps unless told otherwise, so the sweep sizes printed as
+    "2:00am 1/1/70". **No new deps.**
+  - **Open:** interleaved structure order per sweep point — still an open *question* (§13),
+    not a committed feature. It changes the per-point thermal and frequency conditions, which
+    is exactly what this gate's slope bands encode, so it wants its own slice where a moved
+    band can only have one cause.
 
 - **Phase 6 — Specialized + polish.** Trie, skip list, graph; presets/demos
   (e.g. "sorted data kills a naive BST"); persistence of sessions; docs;
@@ -984,7 +1009,8 @@ insert/search/delete group on a shared key type.
 1. ~~Finish Phase 4: wire the sorted-array, linked-list and string mutation
    surfaces into the browser sweep.~~ **Done** — every bench twin is now measured
    in the browser, search and mutation.
-2. Phase 5 remainder: one-click presets; PNG export; the interleaving experiment
-   from §13 (its own slice — see the Phase 5 "Open" note in §10).
+2. ~~Phase 5 remainder: one-click presets; PNG export.~~ **Done.** The
+   interleaving experiment from §13 remains open, deliberately as its own slice —
+   it moves the conditions the gate's slope bands were calibrated under.
 3. Promote `verify:browser` to a blocking CI gate once its slope bands prove
    stable on shared runners.

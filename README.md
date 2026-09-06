@@ -17,12 +17,13 @@ measurements, held to identical behaviour by a cross-language conformance
 corpus. See [`docs/PLAN.md`](docs/PLAN.md) for the full design, the measurement
 methodology, and the phased roadmap.
 
-**Status:** Phases 0–4 complete — every Rust bench twin (the Linear family, the
+**Status:** Phases 0–5 complete — every Rust bench twin (the Linear family, the
 BST/AVL trees, the **min-heap**, and the **string-key** array and hash set) is
-wired into the browser sweep for **both** search and add/remove; Phase 5
-(comparison / analysis) has its first slices — the sweeps run on a **user-chosen
-dataset** (generators or pasted CSV/JSON), with a theoretical overlay, error bars,
-slope uncertainty, a local-slope panel and export; tree add/remove is probed at
+wired into the browser sweep for **both** search and add/remove, and the
+comparison layer is done: the sweeps run on a **user-chosen dataset** (generators
+or pasted CSV/JSON, or one of six **one-click presets**), with a theoretical
+overlay, error bars, slope uncertainty, a local-slope panel, and CSV / JSON / PNG
+export; tree add/remove is probed at
 **both ends** of the key range so a reverse-sorted chain can no longer report a
 misleading flat curve; the linked list's add/remove ships with the caveat it needs —
 its flat O(1) line is true only for a key the list just put at its own head, so the
