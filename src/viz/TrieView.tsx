@@ -21,9 +21,10 @@ import { trieNodeAtPath, type TrieModel, type TrieDisplayNode } from './model';
  * beside it. Reaching a node is not finding a key: a *proper prefix* of a stored key
  * walks the full depth and still reports absent. The active event drives the
  * highlight — the node just stepped onto
- * (amber), the parent whose child lookup missed (red — the walk stops there), a
- * freshly created node or a newly marked terminal (green), a cleared terminal
- * (red). `trie.prune` tints nothing: the node is already gone.
+ * (amber), the parent whose child lookup missed *and ended the walk* (red — a search
+ * or delete falling off the tree, never an insert, whose misses are the ordinary way
+ * a key gets stored), a freshly created node or a newly marked terminal (green), a
+ * cleared terminal (red). `trie.prune` tints nothing: the node is already gone.
  */
 
 const NODE_R = 15;
@@ -44,13 +45,18 @@ const TONE = {
 type Tone = keyof typeof TONE;
 
 /**
- * The label for a byte on an edge into a node: the character itself when it is
- * printable ASCII, else its hex value. A multi-byte character therefore shows up as
- * its bytes (`C3`, `A9` for `é`) — see the header; this is the honest rendering of
- * what the structure walks. Exported for the render test.
+ * The label for a byte on an edge into a node: the character itself when it draws a
+ * visible glyph, else its hex value. A multi-byte character therefore shows up as its
+ * bytes (`C3`, `A9` for `é`) — see the header; this is the honest rendering of what
+ * the structure walks.
+ *
+ * The floor is `0x21`, not `0x20`: a **space is a legitimate key** (the text box does
+ * not trim, see `parseStringKey`), and labelling it with a space would draw an empty
+ * circle — a node the user can see but not read. It is labelled `20` like every other
+ * byte with no glyph. Exported for the render test.
  */
 export function byteLabel(b: number): string {
-  return b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : b.toString(16).toUpperCase().padStart(2, '0');
+  return b >= 0x21 && b <= 0x7e ? String.fromCharCode(b) : b.toString(16).toUpperCase().padStart(2, '0');
 }
 
 /** Which node the active event highlights, and how — resolved by byte path against
@@ -65,8 +71,11 @@ function highlight(active: TrieEvent | undefined, model: TrieModel): { id: numbe
     case 'trie.enterRoot':
       return { id: model.root.id, tone: 'step' };
     case 'trie.step':
-      // A hit lands on the child; a miss stops at the node we were leaving.
-      return active.hit ? at([...active.path, active.byte], 'step') : at(active.path, 'miss');
+      // A hit lands on the child. A miss stays on the node we were leaving — red when
+      // it ends the walk (search/delete), green when the child is about to be created
+      // (insert), which is progress and must not read as failure.
+      if (active.hit) return at([...active.path, active.byte], 'step');
+      return at(active.path, active.creates ? 'hit' : 'miss');
     case 'trie.create':
     case 'trie.markTerminal':
       return at(active.path, 'hit');

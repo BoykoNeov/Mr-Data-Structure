@@ -224,6 +224,16 @@ describe('TrieView renders every frame without throwing', () => {
     expect(html).toContain('(empty)');
   });
 
+  it('labels a space key as 20, so a legitimate key is not an unreadable blank node', () => {
+    // `parseStringKey` accepts a space on purpose (Controls.test.ts); if the view
+    // labelled it with a space the user would get a circle with nothing in it.
+    const t = TrieStr.fromKeys(['a b']);
+    const html = renderToStaticMarkup(
+      createElement(TrieView, { model: trieModel(t.snapshot()), active: undefined }),
+    );
+    expect(html).toContain('>20<');
+  });
+
   it('labels a multi-byte character by its bytes, not as one node', () => {
     // The claim the seed exists to make: `é` is C3 A9, two levels, two labels.
     const t = TrieStr.fromKeys(['café']);

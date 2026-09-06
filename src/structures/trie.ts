@@ -89,7 +89,9 @@ export class TrieStr {
     for (const b of utf8.encode(key)) {
       ops += 1; // one child lookup
       let next = cur.children.get(b);
-      trace?.({ kind: 'trie.step', path: path.slice(), byte: b, hit: next !== undefined });
+      // A miss here is the ordinary case: the next event creates the child and the
+      // walk carries on, which is not what a miss means on a search or a delete.
+      trace?.({ kind: 'trie.step', path: path.slice(), byte: b, hit: next !== undefined, creates: next === undefined });
       path.push(b);
       if (next === undefined) {
         next = node();
@@ -122,7 +124,7 @@ export class TrieStr {
     for (const b of utf8.encode(target)) {
       ops += 1; // one child lookup
       const next: TrieNode | undefined = cur.children.get(b);
-      trace?.({ kind: 'trie.step', path: path.slice(), byte: b, hit: next !== undefined });
+      trace?.({ kind: 'trie.step', path: path.slice(), byte: b, hit: next !== undefined, creates: false });
       if (next === undefined) {
         trace?.({ kind: 'trie.result', found: false });
         return { found: false, ops };
@@ -169,7 +171,7 @@ export class TrieStr {
     }
     counter.ops += 1; // one child lookup
     const child = cur.children.get(key[i]);
-    trace?.({ kind: 'trie.step', path: [...key.subarray(0, i)], byte: key[i], hit: child !== undefined });
+    trace?.({ kind: 'trie.step', path: [...key.subarray(0, i)], byte: key[i], hit: child !== undefined, creates: false });
     if (child === undefined) return false;
     const removed = this.removeFrom(child, key, i + 1, counter, trace);
     if (removed && !child.terminal && child.children.size === 0) {

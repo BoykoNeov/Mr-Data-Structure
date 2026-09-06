@@ -553,14 +553,22 @@ export interface TrieEnterRoot {
 }
 
 /** Look up the child for `byte` at the node reached by `path` (one char-step — a
- * cost event). `hit` says whether that child existed: on a search or delete a miss
- * ends the walk; on an insert a miss is followed by `trie.create`. `path` addresses
- * the node being *left*, so the child is at `[...path, byte]`. */
+ * cost event). `path` addresses the node being *left*, so the child is at
+ * `[...path, byte]`.
+ *
+ * `hit` says whether that child existed. A miss means opposite things in the two
+ * directions, which `creates` disambiguates: on a **search or delete** the walk is
+ * over and the key is absent (`creates: false`); on an **insert** a missing child is
+ * the ordinary case — the very next event is `trie.create` and the walk carries on
+ * (`creates: true`). Without this the renderer would tint a perfectly normal insert
+ * step as a failure and the caption would call the key absent. `creates` is `false`
+ * whenever `hit` is true (nothing needs creating). */
 export interface TrieStep {
   readonly kind: 'trie.step';
   readonly path: readonly number[];
   readonly byte: number;
   readonly hit: boolean;
+  readonly creates: boolean;
 }
 
 /** Materialize the missing child node at `path` (the full path to the new node;

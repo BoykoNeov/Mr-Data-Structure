@@ -15,16 +15,25 @@ import { countCostEvents, type TrieEvent } from './events';
  * node, flipping a terminal flag, pruning — carry no char-step, exactly as the
  * Rust twin's `insert_generic` / `remove_key` count them.
  *
- * **The gate is chained to the Rust source of truth.** Rather than only a fresh
- * hand-written case list, the search/delete blocks below run the *same* keys and
+ * **The search and delete gates are chained to the Rust source of truth.** Rather
+ * than only a fresh hand-written case list, those blocks run the *same* keys and
  * probes as `conformance/corpus-str.txt`, whose `trie_search` / `trie_delete`
  * op-counts are generated from the Rust bench twin and already asserted by
  * `conformance-str.test.ts`. So `countCostEvents === ops` over those probes ties
  * the animation transitively to Rust, and — because the corpus test runs the same
  * ops *without* a tracer — also proves that passing a tracer perturbs no counter.
- * The hand-computed absolute totals at the end guard the one thing a
- * self-consistency gate cannot catch: a *symmetric* miscount, dropped from the
- * tracer and the counter at once.
+ *
+ * **Insert is deliberately weaker, and this comment is the record of that.** The
+ * corpus has no insert column, so the insert block below reuses the corpus keys but
+ * compares against `1 + L` computed here — the formula restated, not a Rust-generated
+ * number. It is forced by construction (an insert never falls off the tree, so it
+ * always walks the whole key, exactly as `insert_generic::<true>` counts it), and
+ * closing the gap properly means regenerating the corpus with a `trie_insert` column.
+ * Don't describe this block as chained to Rust; it isn't.
+ *
+ * The hand-computed absolute totals below guard the one thing a self-consistency
+ * gate cannot catch: a *symmetric* miscount, dropped from the tracer and the counter
+ * at once.
  */
 
 /** The corpus lines this file needs (`keys` / `probes`); the full parser lives in
@@ -69,6 +78,8 @@ describe('trie: cost-events == char-steps, over the Rust conformance corpus', ()
       }
     });
 
+    // NOT chained to Rust — see the header. The corpus keys are reused as inputs,
+    // but `1 + L` is the formula restated here, not a corpus column.
     it('insert: every probe’s stream carries exactly its op-count (1 + byte-length)', () => {
       const t = TrieStr.fromKeys(c.keys);
       for (const p of c.probes) {
@@ -151,6 +162,32 @@ describe('trie: absolute char-step totals (anchored, not just self-consistent)',
     expect(events.filter((e) => e.kind === 'trie.create')).toHaveLength(0);
     expect(events[events.length - 1]).toEqual({ kind: 'trie.markTerminal', path: [99, 97, 114], alreadyPresent: true });
     expect(t.size).toBe(1);
+  });
+});
+
+describe('trie: a miss on an insert is not a miss on a search', () => {
+  // Same `hit: false`, opposite meanings — the renderer tints one green and the
+  // other red, and the caption calls only one of them absent.
+  const steps = (events: readonly TrieEvent[]) =>
+    events.filter((e): e is Extract<TrieEvent, { kind: 'trie.step' }> => e.kind === 'trie.step');
+
+  it('an insert’s missing children are marked as about to be created', () => {
+    const t = TrieStr.fromKeys(['car']);
+    const { events, push } = trace();
+    t.insert('cat', push);
+    const missed = steps(events).filter((e) => !e.hit);
+    expect(missed).toHaveLength(1); // the 't'
+    expect(missed[0].creates).toBe(true);
+    expect(steps(events).filter((e) => e.hit).every((e) => e.creates === false)).toBe(true);
+  });
+
+  it('a search’s and a delete’s missing children end the walk instead', () => {
+    for (const op of ['search', 'delete'] as const) {
+      const t = TrieStr.fromKeys(['car']);
+      const { events, push } = trace();
+      t[op]('cat', push);
+      expect(steps(events).filter((e) => !e.hit).map((e) => e.creates)).toEqual([false]);
+    }
   });
 });
 

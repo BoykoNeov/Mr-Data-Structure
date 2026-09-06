@@ -195,8 +195,9 @@ function describeTrie(e: TrieEvent | undefined): string {
     case 'trie.enterRoot':
       return `walk "${e.key}" from the root — one char-step per UTF-8 byte`;
     case 'trie.step':
-      return e.hit
-        ? `byte '${byteLabel(e.byte)}' → follow that child (one char-step)`
+      if (e.hit) return `byte '${byteLabel(e.byte)}' → follow that child (one char-step)`;
+      return e.creates
+        ? `no child for '${byteLabel(e.byte)}' yet — the insert makes one and walks on`
         : `no child for '${byteLabel(e.byte)}' — the walk falls off here, so the key is absent`;
     case 'trie.create':
       return `create the node for '${byteLabel(e.path[e.path.length - 1])}' (the key extends the trie)`;

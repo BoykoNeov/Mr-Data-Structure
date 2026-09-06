@@ -1016,9 +1016,15 @@ insert/search/delete group on a shared key type.
     it happens.
     The honesty gate holds for search, insert **and** delete: the cost events are
     `trie.enterRoot` + `trie.step`, so `countCostEvents(stream) === op-count`
-    (`src/viz/trace.trie.test.ts`), and that test is **chained to the Rust source of
-    truth** — it runs the keys and probes of `conformance/corpus-str.txt`, whose counts are
-    generated from the bench twin, which also proves the tracer perturbs no counter.
+    (`src/viz/trace.trie.test.ts`). For **search and delete** that test is **chained to
+    the Rust source of truth** — it runs the keys and probes of
+    `conformance/corpus-str.txt`, whose counts are generated from the bench twin, which
+    also proves the tracer perturbs no counter. **Insert is not chained**: the corpus has
+    no insert column, so insert's `1 + L` is asserted against the formula directly. That
+    is weaker on purpose rather than by oversight — the count is forced by construction
+    (an insert never falls off the tree, so it always walks the whole key, exactly as
+    `insert_generic::<true>` counts it), and adding a `trie_insert` column means
+    regenerating the corpus from Rust, which is its own slice.
     The fold is asserted against `snapshot()` shape *and* `nodeCount()`, not just the key
     set: a reducer that dropped a prune event would still answer every membership question
     while leaving litter nodes on screen. **No new deps.**
