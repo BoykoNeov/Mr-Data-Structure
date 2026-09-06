@@ -37,8 +37,15 @@ Phase 6 has started with the **trie**, which puts a second flat line on that tex
 chart — flat for a reason that has nothing to do with hashing. A hash set reads the
 whole key once to work out where to jump; a trie takes one branch per byte and never
 hashes at all, so on one picture "constant in the number of keys" and "cheap" come
-apart. Skip list, graph, session persistence and the trie's own animation are still to
-come. The phase table is at the top of
+apart. The trie now also has **its own animation**, so the structure that made that
+claim can be watched making it: it is the first Explore tab with **text keys**, and
+it is drawn one node per **UTF-8 byte** rather than per character — `café` is five
+levels deep, and the two bytes of the `é` are two nodes labelled `C3` and `A9`,
+because that is what the benchmark actually walks. A ringed node marks where a stored
+key ends, which is the whole difference between reaching a node and finding a key:
+search `car` after deleting it and the walk still goes all the way down, and still
+comes back empty. Skip list, graph and session persistence are still to come. The
+phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 
@@ -69,7 +76,9 @@ The page has two parts, matching the two modes above:
 - **Explore** — pick a structure tab, click `insert` / `search` / `delete`, and
   use the play / pause / step / step-back / speed controls to walk through the
   animation one cost event at a time (the same comparisons, probes, shifts, and
-  rotations the benchmark counts).
+  rotations the benchmark counts). Eight tabs take a **number**; the **trie** tab
+  takes **text**, and counts char-steps instead — one for the root, one per byte of
+  the key it is given.
 - **Compare** — below the explorer, pick a **dataset** (a generator such as
   `uniform`, `sorted`, `reverse-sorted`, `near-sorted`, `gaussian`, `zipfian`,
   or paste your own CSV/JSON and name the key field) and run the sweeps. Every

@@ -120,6 +120,20 @@ tool call does not survive into the next (each call is a fresh process).
   searches. Don't add a tighter band to "prove it isn't logarithmic": a log-log slope is
   not comparable across two different size ladders, and the clock-free op-count test is
   the separation that actually holds.
+- **The trie's animation draws one node per UTF-8 *byte*, and a prefix search that
+  walks the full depth and reports "not found" is correct.** Both are the structure,
+  not the drawing: `café` is five levels because the twins walk `key.as_bytes()`, so
+  the `é` is two nodes labelled `C3` / `A9` (any non-printable byte is labelled in
+  hex) — collapsing them to one `é` node would animate a structure the benchmark
+  does not measure. And reaching a node is *not* finding a key: only the terminal ring
+  says a key ends there, so `search("car")` on a trie holding `cart` costs the full
+  `1 + L` char-steps and still misses. The seed
+  (`car`/`cart`/`cat`/`café`/`dog`, `VizPanel.tsx`) is chosen to put both facts on
+  screen, and `TriePanel`'s summary line names the prefix case when it happens. Don't
+  "fix" either one. Pinned by `src/viz/trace.trie.test.ts` (which runs the *Rust
+  corpus's* keys and probes, so the animation's counts are chained to the bench twin)
+  and the multi-byte label assertion in `views.render.test.ts`.
+
 - **The heap's churn key must stay `min − 1`** (`belowMin`). A heap has no
   delete-by-value, so the pair is insert + extract-min, and only a key below every
   stored key is the one the extract takes back; `max + 1` silently *drains* the

@@ -6,13 +6,15 @@ import { LinkedListF64, SinglyLinkedListF64, DoublyLinkedListF64 } from '../stru
 import { BstF64 } from '../structures/bst';
 import { AvlF64 } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent } from './events';
+import { TrieStr } from '../structures/trie';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList, type LinkedListModel,
   bstModel, foldBst, type BstModel,
   avlModel, foldAvl, type AvlModel,
   heapModel, foldHeap, type HeapModel,
+  trieModel, foldTrie, type TrieModel,
 } from './model';
 import * as P from './player';
 import { usePlayer } from './usePlayer';
@@ -23,6 +25,7 @@ import { LinkedListView } from './LinkedListView';
 import { BstView } from './BstView';
 import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
+import { TrieView, byteLabel } from './TrieView';
 import { Controls, type OpSpec } from './Controls';
 
 /**
@@ -37,7 +40,7 @@ import { Controls, type OpSpec } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst' | 'avl' | 'heap';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst' | 'avl' | 'heap' | 'trie';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
@@ -52,6 +55,15 @@ const BST_SEED = [50, 30, 70, 20, 40, 60, 80];
 const AVL_SEED = [50, 30, 70, 20, 40, 60, 80];
 // Built by sifting each key up; the result is a valid min-heap (root = 10).
 const HEAP_SEED = [50, 30, 70, 20, 40, 60, 10];
+// Every key here is a teaching decision (docs/PLAN.md §5): `car`/`cart`/`cat` share
+// a prefix, so a delete prunes *selectively* — deleting `cart` drops one node while
+// `ca` survives on two other keys' paths; `car` is a **proper prefix** of `cart`, so
+// searching `car` after deleting it walks the full depth and still misses (the
+// terminal ring is the difference); `café` is multi-byte, so its `é` occupies TWO
+// levels labelled `C3` / `A9` — the trie walks UTF-8 bytes, not characters, and
+// that fact previously lived only in docstrings; and `dog` gives the root a second
+// branch so the picture is a tree rather than a chain.
+const TRIE_SEED = ['car', 'cart', 'cat', 'café', 'dog'];
 
 type Op = 'search' | 'insert' | 'delete';
 type HeapOp = 'insert' | 'extractMin' | 'peek' | 'search';
@@ -172,6 +184,32 @@ function describeHeap(e: HeapEvent | undefined): string {
     case 'heap.replaceRoot': return 'move the last element to the root, then sift it down';
     case 'heap.peek': return `peek → minimum is ${e.value} (O(1), no change)`;
     case 'heap.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+/** Render a key's bytes the way the view labels its nodes, so a caption naming a
+ * byte and the node it highlights read the same (`é` → `C3` `A9`). */
+function describeTrie(e: TrieEvent | undefined): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'trie.enterRoot':
+      return `walk "${e.key}" from the root — one char-step per UTF-8 byte`;
+    case 'trie.step':
+      return e.hit
+        ? `byte '${byteLabel(e.byte)}' → follow that child (one char-step)`
+        : `no child for '${byteLabel(e.byte)}' — the walk falls off here, so the key is absent`;
+    case 'trie.create':
+      return `create the node for '${byteLabel(e.path[e.path.length - 1])}' (the key extends the trie)`;
+    case 'trie.markTerminal':
+      return e.alreadyPresent
+        ? 'a key already ends here → the set keeps one copy (no change)'
+        : 'mark this node terminal — a stored key ends here';
+    case 'trie.clearTerminal':
+      return 'clear the terminal flag — no key ends here any more';
+    case 'trie.prune':
+      return `prune the node for '${byteLabel(e.path[e.path.length - 1])}' — nothing ends there and nothing hangs off it`;
+    case 'trie.result':
+      return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
 
@@ -452,6 +490,64 @@ export function HeapPanel() {
   );
 }
 
+export function TriePanel() {
+  const ref = useRef<TrieStr | null>(null);
+  if (ref.current === null) ref.current = TrieStr.fromKeys(TRIE_SEED);
+  const [base, setBase] = useState<TrieModel>(() => trieModel(TrieStr.fromKeys(TRIE_SEED).snapshot()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<TrieEvent>();
+
+  const onOp = (op: Op, key: string) => {
+    const t = ref.current!;
+    const snapshot = trieModel(t.snapshot()); // before-state
+    const events: TrieEvent[] = [];
+    const push = (e: TrieEvent) => events.push(e);
+    if (op === 'search') {
+      const r = t.search(key, push);
+      // A walk that never fell off but still missed is the trie's own trap: the key
+      // is a *proper prefix* of a stored one. Say so rather than let "not found"
+      // after a full-depth walk look like a bug.
+      const fellOff = events.some((e) => e.kind === 'trie.step' && !e.hit);
+      const prefix = !r.found && !fellOff ? ' — the walk reached the last node, but no key ends there (a proper prefix is not a key)' : '';
+      setSummary(`search("${key}") → ${r.found ? 'found' : 'not found'} · ${r.ops} char-steps${prefix}`);
+    } else if (op === 'insert') {
+      const r = t.insert(key, push);
+      const created = events.filter((e) => e.kind === 'trie.create').length;
+      const dup = events.some((e) => e.kind === 'trie.markTerminal' && e.alreadyPresent);
+      setSummary(
+        `insert("${key}") → ${dup ? 'already present (set semantics)' : `${created} new node${created === 1 ? '' : 's'}`} · ${r.ops} char-steps`,
+      );
+    } else {
+      const r = t.delete(key, push);
+      const pruned = events.filter((e) => e.kind === 'trie.prune').length;
+      setSummary(
+        `delete("${key}") → ${r.found ? `removed, ${pruned} node${pruned === 1 ? '' : 's'} pruned` : 'absent'} · ${r.ops} char-steps`,
+      );
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldTrie(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>
+        {summary ||
+          'Trie (prefix tree) — string keys, one node per UTF-8 byte (café is five levels: the é is C3 A9). Cost is char-steps: the root plus one per byte looked up, so it depends on the key length and not at all on how many keys are stored. The inner ring marks a node where a stored key ends — try search("car"), then delete("car") and search it again.'}
+      </p>
+      <TrieView model={model} active={active} />
+      <Controls<TrieEvent, Op>
+        player={player}
+        keyKind="string"
+        onOp={onOp}
+        caption={describeTrie(active)}
+      />
+    </>
+  );
+}
+
 const tab = (selected: boolean): React.CSSProperties => ({
   padding: '6px 14px', fontSize: 14, cursor: 'pointer', borderRadius: 6,
   border: '1px solid ' + (selected ? '#4a90d9' : '#ccc'),
@@ -467,6 +563,7 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'bst', label: 'binary search tree' },
   { kind: 'avl', label: 'AVL tree' },
   { kind: 'heap', label: 'min-heap' },
+  { kind: 'trie', label: 'trie (text keys)' },
 ];
 
 function panelFor(kind: Kind) {
@@ -480,6 +577,7 @@ function panelFor(kind: Kind) {
     case 'bst': return <BstPanel />;
     case 'avl': return <AvlPanel />;
     case 'heap': return <HeapPanel />;
+    case 'trie': return <TriePanel />;
   }
 }
 

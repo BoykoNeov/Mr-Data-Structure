@@ -15,7 +15,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
-| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is wired end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate). Skip list, graph, session persistence, the trie's own step-animation, and performance polish are still open |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end: Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate, and now its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. Skip list, graph, session persistence and performance polish are still open |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
@@ -229,7 +229,9 @@ single `Float64Array`/`Int32Array`; strings → length-prefixed UTF-8 buffer).
 - **Per-family visuals:** arrays as cells with index + shift animation; lists as
   node+pointer chains; hash tables as bucket arrays with chains/probing and
   rehash animation; trees with rotation animations; heap as array *and* tree view;
-  trie as a character tree.
+  trie as a **byte** tree — one node per UTF-8 byte, not per character, because
+  that is what both twins walk; a terminal ring marks where a stored key ends,
+  which is what makes "reaching a node ≠ finding a key" visible (**built**, Phase 6).
 
 ---
 
@@ -995,9 +997,33 @@ insert/search/delete group on a shared key type.
     caches, where the hash set's single bucket jump drifts ~6× less. Risk R3 with a
     mechanism; the gate asserts the band and the rise, the UI explains the bend. **No new
     deps.**
-  - **Open:** skip list, graph, session persistence, the trie's own step-animation
-    (it has a teaching twin but no viz yet, so it is measured and not yet watchable),
-    presets/demos beyond the six that shipped in Phase 5, and performance polish.
+  - **Done (the trie's own step-animation — the measured structure becomes watchable):**
+    a `trie.*` event family, a display model + fold, `TrieView`, and a `TriePanel` tab, so
+    the trie is now the ninth Explore tab and the **first animated structure with string
+    keys**. Three things that made it more than a copy of the BST view:
+    **(a) the key input.** Every other panel types a number; `Controls` gained a
+    `keyKind` discriminant so the trie gets a text box and a `(op, string)` handler, with
+    the numeric path and its tests untouched.
+    **(b) one node per UTF-8 byte.** The view draws what the twins walk, so `café`
+    is *five* levels and the two bytes of `é` are two nodes labelled `C3` / `A9`. Any byte
+    outside printable ASCII is labelled in hex for that reason — the seed
+    (`car`/`cart`/`cat`/`café`/`dog`) exists to put that fact, previously only in
+    docstrings, on the screen.
+    **(c) the terminal ring**, drawn with an in-picture legend rather than only prose
+    beside it. It is the difference between "the walk reached this node" and "a key ends
+    here", i.e. why a **proper prefix** of a stored key costs the full depth and still
+    reports absent — the trie's own trap, and the one the panel's summary line names when
+    it happens.
+    The honesty gate holds for search, insert **and** delete: the cost events are
+    `trie.enterRoot` + `trie.step`, so `countCostEvents(stream) === op-count`
+    (`src/viz/trace.trie.test.ts`), and that test is **chained to the Rust source of
+    truth** — it runs the keys and probes of `conformance/corpus-str.txt`, whose counts are
+    generated from the bench twin, which also proves the tracer perturbs no counter.
+    The fold is asserted against `snapshot()` shape *and* `nodeCount()`, not just the key
+    set: a reducer that dropped a prune event would still answer every membership question
+    while leaving litter nodes on screen. **No new deps.**
+  - **Open:** skip list, graph, session persistence, presets/demos beyond the six that
+    shipped in Phase 5, and performance polish.
 
 ---
 
@@ -1065,5 +1091,7 @@ insert/search/delete group on a shared key type.
    it moves the conditions the gate's slope bands were calibrated under.
 3. Promote `verify:browser` to a blocking CI gate once its slope bands prove
    stable on shared runners.
-4. Phase 6 remainder: the trie's step-animation (it is measured but not yet
-   watchable), then the skip list and the graph, then session persistence.
+4. ~~Phase 6: the trie's step-animation.~~ **Done** — the trie is measured *and*
+   watchable, drawn one node per UTF-8 byte with a terminal ring for "a key ends
+   here".
+5. Phase 6 remainder: the skip list and the graph, then session persistence.

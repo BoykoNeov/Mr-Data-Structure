@@ -6,17 +6,19 @@ import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedLi
 import { BstF64 } from '../structures/bst';
 import { AvlF64 } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
+import { TrieStr } from '../structures/trie';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
 import { BstView } from './BstView';
 import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
-import { SortedPanel, LinkedPanel, BstPanel, AvlPanel, HeapPanel } from './VizPanel';
+import { TrieView } from './TrieView';
+import { SortedPanel, LinkedPanel, BstPanel, AvlPanel, HeapPanel, TriePanel } from './VizPanel';
 import {
   arrayModel, foldSortedArray, linkedModel, foldLinkedList, bstModel, foldBst,
-  avlModel, foldAvl, heapModel, foldHeap,
+  avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie,
 } from './model';
-import type { SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, Tracer } from './events';
+import type { SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, Tracer } from './events';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -185,6 +187,55 @@ describe('HeapView renders every frame without throwing', () => {
   });
 });
 
+describe('TrieView renders every frame without throwing', () => {
+  // The trie is the only n-ary view and the only one whose delete *removes* nodes
+  // mid-stream: the prune unwinding produces intermediate frames that exist
+  // nowhere else, and a bad byte path would crash there rather than at the end.
+  const cases: [string, string[], (t: TrieStr, tr: Tracer<TrieEvent>) => void][] = [
+    ['search found', ['car', 'cart', 'cat'], (t, tr) => t.search('cat', tr)],
+    ['search falls off at the first byte', ['car'], (t, tr) => t.search('zebra', tr)],
+    ['search a proper prefix (full depth, absent)', ['stack'], (t, tr) => t.search('stac', tr)],
+    ['insert into an empty trie', [], (t, tr) => t.insert('car', tr)],
+    ['insert a whole new branch', ['car'], (t, tr) => t.insert('dog', tr)],
+    ['insert extending a shared prefix', ['car'], (t, tr) => t.insert('cart', tr)],
+    ['insert a duplicate', ['car'], (t, tr) => t.insert('car', tr)],
+    ['insert a multi-byte key', ['car'], (t, tr) => t.insert('café', tr)],
+    ['delete that prunes one node', ['car', 'cart', 'cat'], (t, tr) => t.delete('cart', tr)],
+    ['delete that prunes a whole chain', ['car', 'dog'], (t, tr) => t.delete('dog', tr)],
+    ['delete a shared-prefix key (prunes nothing)', ['car', 'cart'], (t, tr) => t.delete('car', tr)],
+    ['delete absent', ['car', 'cat'], (t, tr) => t.delete('cow', tr)],
+    ['delete a multi-byte key', ['café', 'car'], (t, tr) => t.delete('café', tr)],
+    ['delete down to empty', ['dog'], (t, tr) => t.delete('dog', tr)],
+  ];
+  it.each(cases)('%s', (_label, build, op) => {
+    const t = TrieStr.fromKeys(build);
+    const before = trieModel(t.snapshot());
+    const events: TrieEvent[] = [];
+    op(t, (e) => events.push(e));
+    renderEveryFrame(before, events, foldTrie, (model, active) =>
+      renderToStaticMarkup(createElement(TrieView, { model, active })),
+    );
+  });
+
+  it('renders the empty trie', () => {
+    const html = renderToStaticMarkup(
+      createElement(TrieView, { model: trieModel(TrieStr.fromKeys([]).snapshot()), active: undefined }),
+    );
+    expect(html).toContain('(empty)');
+  });
+
+  it('labels a multi-byte character by its bytes, not as one node', () => {
+    // The claim the seed exists to make: `é` is C3 A9, two levels, two labels.
+    const t = TrieStr.fromKeys(['café']);
+    const html = renderToStaticMarkup(
+      createElement(TrieView, { model: trieModel(t.snapshot()), active: undefined }),
+    );
+    expect(html).toContain('C3');
+    expect(html).toContain('A9');
+    expect(html).not.toContain('é');
+  });
+});
+
 describe('new panels mount without throwing', () => {
   // The views above are pure SVG; the panels add the hook wiring (ref-held
   // structure, usePlayer, the singly↔doubly key-remount). A single SSR pass runs
@@ -208,5 +259,10 @@ describe('new panels mount without throwing', () => {
   });
   it('HeapPanel renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(HeapPanel))).toContain('<svg');
+  });
+  it('TriePanel renders its seeded SVG (and a text key box, not a number one)', () => {
+    const html = renderToStaticMarkup(createElement(TriePanel));
+    expect(html).toContain('<svg');
+    expect(html).toContain('type="text"');
   });
 });

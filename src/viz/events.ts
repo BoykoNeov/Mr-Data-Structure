@@ -524,6 +524,98 @@ export type HeapEvent =
   | HeapPeek
   | HeapResult;
 
+// ── Trie (docs/PLAN.md §8, "Specialized" — the only string-key structure with an
+// animation) ────────────────────────────────────────────────────────────────
+//
+// The trie is the first animated structure whose keys are **strings**, and the
+// first whose nodes are addressed by a path of **UTF-8 bytes** rather than by a
+// slot index or an L/R step. `path` is the full byte sequence from the root to
+// the node the event acts on — the trie's analog of {@link BstStep}[], and `[]`
+// is the root. A multi-byte character therefore occupies several levels, which
+// is what the view draws: one node per *byte*, not per character.
+//
+// **Cost metric — char-steps (docs/PLAN.md §8):** one step for entering the root
+// plus one per key byte whose child lookup is attempted, so a stored key of L
+// bytes costs `1 + L` and an absent key costs `1 + d` where d is the depth the
+// walk fell off at. The within-node child lookup (a binary search over ≤256
+// entries in Rust, a `Map` get in TS) is bounded by the alphabet and deliberately
+// **not** counted. So the two cost events are `trie.enterRoot` and `trie.step`,
+// and `countCostEvents(stream) === op-count` holds for **search, insert, AND
+// delete** (pinned in `src/viz/trace.trie.test.ts`, against the cross-language
+// string corpus). The structural events — creating a node, flipping the terminal
+// flag, pruning — carry no char-step, exactly as the Rust twin counts them.
+
+/** Enter the root to begin a walk (one char-step — a cost event; every trie op's
+ * count starts here). `key` is the whole key being walked, carried for the caption. */
+export interface TrieEnterRoot {
+  readonly kind: 'trie.enterRoot';
+  readonly key: string;
+}
+
+/** Look up the child for `byte` at the node reached by `path` (one char-step — a
+ * cost event). `hit` says whether that child existed: on a search or delete a miss
+ * ends the walk; on an insert a miss is followed by `trie.create`. `path` addresses
+ * the node being *left*, so the child is at `[...path, byte]`. */
+export interface TrieStep {
+  readonly kind: 'trie.step';
+  readonly path: readonly number[];
+  readonly byte: number;
+  readonly hit: boolean;
+}
+
+/** Materialize the missing child node at `path` (the full path to the new node;
+ * its parent is `path[0..-1]`, its byte is the last element). Insert only — the
+ * step that looked for it and missed came immediately before. No char-step. */
+export interface TrieCreate {
+  readonly kind: 'trie.create';
+  readonly path: readonly number[];
+}
+
+/** Mark the node at `path` as the end of a stored key (insert's final step).
+ * `alreadyPresent` is true when the flag was already set — the set semantics'
+ * duplicate collapse, where nothing changes. No char-step. */
+export interface TrieMarkTerminal {
+  readonly kind: 'trie.markTerminal';
+  readonly path: readonly number[];
+  readonly alreadyPresent: boolean;
+}
+
+/** Clear the terminal flag at `path` — the delete itself, before any pruning. The
+ * node survives this event; the `trie.prune` events that follow (if any) remove
+ * what the clearing left useless. No char-step. */
+export interface TrieClearTerminal {
+  readonly kind: 'trie.clearTerminal';
+  readonly path: readonly number[];
+}
+
+/** Unlink the node at `path`, which is guaranteed to be a **leaf** left neither
+ * terminal nor a parent (`is_prunable` in the Rust twin). Emitted deepest-first as
+ * the delete unwinds, so each one removes a leaf and never a subtree — the reducer
+ * relies on that and would otherwise silently accept a malformed stream. No
+ * char-step. */
+export interface TriePrune {
+  readonly kind: 'trie.prune';
+  readonly path: readonly number[];
+}
+
+/** Terminal marker for a search/delete: whether the key was present. Not a cost
+ * event. Note the trie's own trap — a walk can reach a node without finding a key,
+ * because a *proper prefix* of a stored key costs the full depth and still reports
+ * `found: false`. */
+export interface TrieResult {
+  readonly kind: 'trie.result';
+  readonly found: boolean;
+}
+
+export type TrieEvent =
+  | TrieEnterRoot
+  | TrieStep
+  | TrieCreate
+  | TrieMarkTerminal
+  | TrieClearTerminal
+  | TriePrune
+  | TrieResult;
+
 // ── Union + cost tagging ────────────────────────────────────────────────────
 
 export type VizEvent =
@@ -533,7 +625,8 @@ export type VizEvent =
   | LinkedListEvent
   | BstEvent
   | AvlEvent
-  | HeapEvent;
+  | HeapEvent
+  | TrieEvent;
 export type VizEventKind = VizEvent['kind'];
 
 /** Sink the teaching impls emit into. Typed per family at the call site
@@ -565,6 +658,11 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   'heap.compare',
   'heap.scan',
   'heap.swap',
+  // Trie: char-steps (docs/PLAN.md §8) — entering the root, plus one per key byte
+  // looked up. The structural events (create / terminal flags / prune) carry no
+  // char-step, so the gate holds for search, insert, AND delete.
+  'trie.enterRoot',
+  'trie.step',
 ]);
 
 /** Count the cost-bearing events in a stream (the op-count it represents). */

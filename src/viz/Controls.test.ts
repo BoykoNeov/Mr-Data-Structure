@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { opNeedsValue, parseKey, dispatchFor, enterSpecFor, type OpSpec } from './Controls';
+import {
+  opNeedsValue, parseKey, parseStringKey, dispatchFor, dispatchStringFor, enterSpecFor, type OpSpec,
+} from './Controls';
 
 /**
  * The op-dispatch decision of the step `Controls` (docs/PLAN.md §5). The
@@ -89,5 +91,45 @@ describe('enterSpecFor: Enter picks search, else the first key-taking op', () =>
   it('is undefined when every op is a no-key op (Enter does nothing)', () => {
     const ops: readonly OpSpec<'peek'>[] = [{ op: 'peek', label: 'peek', needsValue: false }];
     expect(enterSpecFor(ops)).toBeUndefined();
+  });
+});
+
+describe('parseStringKey (the trie’s text box)', () => {
+  it('rejects only a truly empty box', () => {
+    expect(parseStringKey('').valid).toBe(false);
+    // Whitespace is a legitimate key here, unlike in the numeric box where it
+    // would arrive as NaN — so it is NOT trimmed away.
+    expect(parseStringKey(' ')).toEqual({ valid: true, value: ' ' });
+  });
+  it('accepts anything else verbatim, including text a number box would reject', () => {
+    expect(parseStringKey('café')).toEqual({ valid: true, value: 'café' });
+    expect(parseStringKey('0')).toEqual({ valid: true, value: '0' });
+    expect(parseStringKey('abc')).toEqual({ valid: true, value: 'abc' });
+  });
+});
+
+describe('dispatchStringFor', () => {
+  type TrieOp = 'search' | 'insert' | 'delete';
+  const OPS: readonly OpSpec<TrieOp>[] = [
+    { op: 'insert', label: 'insert' },
+    { op: 'search', label: 'search' },
+    { op: 'delete', label: 'delete' },
+  ];
+
+  it('dispatches the typed text unchanged', () => {
+    expect(dispatchStringFor(OPS[1], 'cart')).toEqual({ op: 'search', value: 'cart' });
+  });
+  it('suppresses a key-taking op on an empty box', () => {
+    expect(dispatchStringFor(OPS[0], '')).toBeNull();
+  });
+  it('falls back to the empty string, never 0, for a no-key op', () => {
+    // No string structure declares one today; the helper stays total so a later
+    // one cannot dispatch a number into a string handler.
+    const noKey: OpSpec<'drain'> = { op: 'drain', label: 'drain', needsValue: false };
+    expect(dispatchStringFor(noKey, '')).toEqual({ op: 'drain', value: '' });
+  });
+  it('passes text that the numeric dispatcher would reject', () => {
+    expect(dispatchFor(OPS[1], 'cart')).toBeNull();
+    expect(dispatchStringFor(OPS[1], 'cart')).toEqual({ op: 'search', value: 'cart' });
   });
 });

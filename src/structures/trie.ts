@@ -25,7 +25,26 @@
  * an insert+delete pair returns the trie to exactly its previous shape.
  */
 
+import type { Tracer, TrieEvent } from '../viz/events';
 import type { SearchResult } from './dynArray';
+
+/** Result of an insert: the char-steps walked to place the key (`1 + L`, always —
+ * an insert walks the whole key whether or not the nodes already existed). Mirrors
+ * the Rust twin's `insert_generic::<true>` count. */
+export interface InsertResult {
+  readonly ops: number;
+}
+
+/** An immutable snapshot of the trie's shape — the byte that reaches a node (null
+ * at the root), its terminal flag, and its children in ascending byte order — used
+ * to seed the renderer's display model (`src/viz/model.ts`). Carries no animation
+ * ids; the model assigns those. */
+export interface TrieShape {
+  /** The byte labelling the edge into this node; `null` only at the root. */
+  readonly byte: number | null;
+  readonly terminal: boolean;
+  readonly children: readonly TrieShape[];
+}
 
 const utf8 = new TextEncoder();
 const fromUtf8 = new TextDecoder();
@@ -56,21 +75,36 @@ export class TrieStr {
     return this.count;
   }
 
-  /** Walk the key's bytes, creating the nodes that are missing; mark the last terminal. */
-  insert(key: string): void {
+  /**
+   * Walk the key's bytes, creating the nodes that are missing; mark the last
+   * terminal. Costs `1 + L` char-steps unconditionally — unlike search and delete,
+   * an insert never falls off the tree, it extends it. Duplicates collapse (set
+   * semantics), and a duplicate insert still walks and still costs.
+   */
+  insert(key: string, trace?: Tracer<TrieEvent>): InsertResult {
+    let ops = 1; // entering the root
+    trace?.({ kind: 'trie.enterRoot', key });
+    const path: number[] = [];
     let cur = this.root;
     for (const b of utf8.encode(key)) {
+      ops += 1; // one child lookup
       let next = cur.children.get(b);
+      trace?.({ kind: 'trie.step', path: path.slice(), byte: b, hit: next !== undefined });
+      path.push(b);
       if (next === undefined) {
         next = node();
         cur.children.set(b, next);
+        trace?.({ kind: 'trie.create', path: path.slice() });
       }
       cur = next;
     }
+    const alreadyPresent = cur.terminal;
     if (!cur.terminal) {
       cur.terminal = true;
       this.count += 1;
     }
+    trace?.({ kind: 'trie.markTerminal', path, alreadyPresent });
+    return { ops };
   }
 
   /**
@@ -80,14 +114,25 @@ export class TrieStr {
    * an absent key sharing no prefix is the trie's cheapest case and one derived by
    * changing a stored key's last character is its dearest.
    */
-  search(target: string): SearchResult {
+  search(target: string, trace?: Tracer<TrieEvent>): SearchResult {
     let ops = 1; // entering the root
+    trace?.({ kind: 'trie.enterRoot', key: target });
+    const path: number[] = [];
     let cur: TrieNode | undefined = this.root;
     for (const b of utf8.encode(target)) {
       ops += 1; // one child lookup
-      cur = cur.children.get(b);
-      if (cur === undefined) return { found: false, ops };
+      const next: TrieNode | undefined = cur.children.get(b);
+      trace?.({ kind: 'trie.step', path: path.slice(), byte: b, hit: next !== undefined });
+      if (next === undefined) {
+        trace?.({ kind: 'trie.result', found: false });
+        return { found: false, ops };
+      }
+      path.push(b);
+      cur = next;
     }
+    // Reaching the last node is not finding a key: a *proper prefix* of a stored
+    // key walks its full depth and still reports absent (`stac` under `stack`).
+    trace?.({ kind: 'trie.result', found: cur.terminal });
     return { found: cur.terminal, ops };
   }
 
@@ -96,30 +141,40 @@ export class TrieStr {
    * parent. Returns whether a key was removed, plus the same char-step count a
    * search over the key would cost.
    */
-  delete(target: string): SearchResult {
+  delete(target: string, trace?: Tracer<TrieEvent>): SearchResult {
     const counter = { ops: 1 }; // entering the root
-    const removed = this.removeFrom(this.root, utf8.encode(target), 0, counter);
+    trace?.({ kind: 'trie.enterRoot', key: target });
+    const bytes = utf8.encode(target);
+    const removed = this.removeFrom(this.root, bytes, 0, counter, trace);
     if (removed) this.count -= 1;
+    trace?.({ kind: 'trie.result', found: removed });
     return { found: removed, ops: counter.ops };
   }
 
+  /** The prune unwinds on the way *back up*, so `trie.prune` events are emitted
+   * deepest-first and each one removes a node that is by then a childless
+   * non-terminal leaf — never a subtree. The display reducer relies on that. */
   private removeFrom(
     cur: TrieNode,
     key: Uint8Array,
     i: number,
     counter: { ops: number },
+    trace?: Tracer<TrieEvent>,
   ): boolean {
     if (i === key.length) {
       if (!cur.terminal) return false;
       cur.terminal = false;
+      trace?.({ kind: 'trie.clearTerminal', path: [...key] });
       return true;
     }
     counter.ops += 1; // one child lookup
     const child = cur.children.get(key[i]);
+    trace?.({ kind: 'trie.step', path: [...key.subarray(0, i)], byte: key[i], hit: child !== undefined });
     if (child === undefined) return false;
-    const removed = this.removeFrom(child, key, i + 1, counter);
+    const removed = this.removeFrom(child, key, i + 1, counter, trace);
     if (removed && !child.terminal && child.children.size === 0) {
       cur.children.delete(key[i]);
+      trace?.({ kind: 'trie.prune', path: [...key.subarray(0, i + 1)] });
     }
     return removed;
   }
@@ -142,6 +197,21 @@ export class TrieStr {
     };
     walk(this.root);
     return out;
+  }
+
+  /**
+   * An immutable shape snapshot for the renderer's display model, children in
+   * ascending byte order (the same order {@link keysInOrder} walks).
+   */
+  snapshot(): TrieShape {
+    const walk = (cur: TrieNode, byte: number | null): TrieShape => ({
+      byte,
+      terminal: cur.terminal,
+      children: [...cur.children.keys()]
+        .sort((x, y) => x - y)
+        .map((b) => walk(cur.children.get(b)!, b)),
+    });
+    return walk(this.root, null);
   }
 
   /**

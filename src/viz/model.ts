@@ -15,8 +15,10 @@
 
 import type {
   ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
+  TrieEvent,
 } from './events';
 import type { BstShape } from '../structures/bst';
+import type { TrieShape } from '../structures/trie';
 
 /** A stored array cell with a stable identity for animation. */
 export interface Cell {
@@ -422,4 +424,117 @@ export function reduceHeap(m: HeapModel, e: HeapEvent): HeapModel {
 
 export function foldHeap(initial: HeapModel, events: readonly HeapEvent[]): HeapModel {
   return events.reduce(reduceHeap, initial);
+}
+
+// ── Trie (docs/PLAN.md §8, "Specialized") ───────────────────────────────────
+// The only animated structure with *string* keys, and the only n-ary tree. Nodes
+// are addressed by a path of UTF-8 **bytes** from the root (the trie's analog of
+// the BST's `'L'|'R'` steps); `[]` is the root, which — unlike the BST's — always
+// exists, even when the trie is empty. Children are kept in ascending byte order,
+// matching both twins' iteration order, so the drawing reads left→right
+// lexicographically.
+
+/** A trie node in the display model: the byte on the edge that reaches it (`null`
+ * only at the root), whether a stored key ends here, and its children in ascending
+ * byte order. The `id` is stable across frames so the renderer can transition a
+ * node as its siblings' subtree widths shift it sideways. */
+export interface TrieDisplayNode {
+  readonly id: number;
+  readonly byte: number | null;
+  readonly terminal: boolean;
+  readonly children: readonly TrieDisplayNode[];
+}
+
+/** The trie's display state: the (always present) root plus the next free id. */
+export interface TrieModel {
+  readonly root: TrieDisplayNode;
+  readonly nextId: number;
+}
+
+/** Build the initial trie model from the structure's shape snapshot, assigning a
+ * fresh id to each node (pre-order — only uniqueness matters). */
+export function trieModel(shape: TrieShape): TrieModel {
+  let id = 0;
+  const walk = (s: TrieShape): TrieDisplayNode => {
+    const self = id++;
+    return { id: self, byte: s.byte, terminal: s.terminal, children: s.children.map(walk) };
+  };
+  const root = walk(shape);
+  return { root, nextId: id };
+}
+
+/** Apply `edit` to the node reached by the byte `path`, path-copying the spine so
+ * untouched subtrees are shared. A `[]` path edits the root. A path step whose byte
+ * has no child leaves the model untouched (defensive — a valid stream never
+ * produces one). */
+function editTrieAtPath(
+  node: TrieDisplayNode,
+  path: readonly number[],
+  edit: (target: TrieDisplayNode) => TrieDisplayNode,
+): TrieDisplayNode {
+  if (path.length === 0) return edit(node);
+  const [b, ...rest] = path;
+  const i = node.children.findIndex((c) => c.byte === b);
+  if (i === -1) return node; // invalid path (never produced by a valid stream)
+  const children = node.children.slice();
+  children[i] = editTrieAtPath(children[i], rest, edit);
+  return { ...node, children };
+}
+
+/** Fold one trie event into the model. `create` materializes the child the walk
+ * missed, `markTerminal`/`clearTerminal` flip the "a key ends here" flag, and
+ * `prune` unlinks a node.
+ *
+ * **`prune` removes a child, never a subtree** — by construction the teaching impl
+ * only emits it for a node left neither terminal nor a parent (the Rust twin's
+ * `is_prunable`), deepest-first as the delete unwinds. Splicing a whole subtree
+ * here would make the reducer silently accept a malformed stream instead of
+ * mirroring the structure. Steps / enterRoot / result are highlight-only. */
+export function reduceTrie(m: TrieModel, e: TrieEvent): TrieModel {
+  switch (e.kind) {
+    case 'trie.create': {
+      // The new node's own path; its parent is `path[0..-1]`, its byte the last.
+      const parent = e.path.slice(0, -1);
+      const byte = e.path[e.path.length - 1];
+      const child: TrieDisplayNode = { id: m.nextId, byte, terminal: false, children: [] };
+      const root = editTrieAtPath(m.root, parent, (t) => ({
+        ...t,
+        // Splice in ascending byte order so the drawing stays lexicographic.
+        children: [...t.children, child].sort((x, y) => (x.byte ?? -1) - (y.byte ?? -1)),
+      }));
+      return { root, nextId: m.nextId + 1 };
+    }
+    case 'trie.markTerminal':
+      return { root: editTrieAtPath(m.root, e.path, (t) => ({ ...t, terminal: true })), nextId: m.nextId };
+    case 'trie.clearTerminal':
+      return { root: editTrieAtPath(m.root, e.path, (t) => ({ ...t, terminal: false })), nextId: m.nextId };
+    case 'trie.prune': {
+      const parent = e.path.slice(0, -1);
+      const byte = e.path[e.path.length - 1];
+      const root = editTrieAtPath(m.root, parent, (t) => ({
+        ...t,
+        children: t.children.filter((c) => c.byte !== byte),
+      }));
+      return { root, nextId: m.nextId };
+    }
+    // highlight-only: enterRoot / step / result — no structural change.
+    default:
+      return m;
+  }
+}
+
+export function foldTrie(initial: TrieModel, events: readonly TrieEvent[]): TrieModel {
+  return events.reduce(reduceTrie, initial);
+}
+
+/** Resolve a byte path to the node it addresses, or `undefined` if it runs off the
+ * trie (defensive — the renderer then highlights nothing). Used by
+ * {@link ./TrieView} to turn a step/create/prune event's path into a node to tint. */
+export function trieNodeAtPath(m: TrieModel, path: readonly number[]): TrieDisplayNode | undefined {
+  let cur: TrieDisplayNode | undefined = m.root;
+  for (const b of path) {
+    cur = cur.children.find((c) => c.byte === b);
+    if (cur === undefined) return undefined;
+  }
+  return cur;
 }

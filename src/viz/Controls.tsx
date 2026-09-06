@@ -8,11 +8,18 @@ import type { PlayerControls } from './usePlayer';
  * plus a speed slider and a step counter. The active-step caption explains what the
  * highlighted frame is doing.
  *
- * The op buttons are configurable ({@link ControlsProps.ops}) so each structure can
- * declare its own op set (docs/PLAN.md §4.1): the default is the canonical
- * insert / search / delete trio, while e.g. the heap declares insert / peek /
- * extract-min / search. An op with `needsValue: false` (extract-min, peek) runs
- * without a typed-in key.
+ * The op buttons are configurable (the `ops` prop) so each structure can declare
+ * its own op set (docs/PLAN.md §4.1): the default is the canonical insert / search
+ * / delete trio, while e.g. the heap declares insert / peek / extract-min / search.
+ * An op with `needsValue: false` (extract-min, peek) runs without a typed-in key.
+ *
+ * The **key type** is a prop too, because the trie's keys are strings and every
+ * other animated structure's are numbers (docs/PLAN.md §8). `keyKind: 'string'`
+ * swaps the number box for a text box and hands `onOp` a string; omitting it keeps
+ * the numeric default, so the seven numeric panels are untouched. The two paths are
+ * separate parse/dispatch helpers rather than one `string | number` — the numeric
+ * one rejects text that would arrive as `NaN`, and the string one has no such
+ * failure mode.
  */
 
 const btn: React.CSSProperties = {
@@ -50,6 +57,15 @@ export function parseKey(text: string): { readonly valid: boolean; readonly valu
   return { valid: text.trim() !== '' && Number.isFinite(value), value };
 }
 
+/** Parse the key input in **string** mode: any non-empty text is a key, so this
+ * has no `NaN` trap of its own. Whitespace is *not* trimmed — a key may legitimately
+ * start or end with a space. The one key the box cannot express is the empty string
+ * (a valid trie key, and terminal at the root); an empty box means "nothing typed",
+ * and that reading has to win. */
+export function parseStringKey(text: string): { readonly valid: boolean; readonly value: string } {
+  return { valid: text.length > 0, value: text };
+}
+
 /**
  * Decide what a click / Enter on `spec` dispatches given the current input, or
  * `null` to suppress it. A key-taking op with no valid key is suppressed; a
@@ -66,27 +82,61 @@ export function dispatchFor<O extends string>(
   return { op: spec.op, value: valid ? value : 0 };
 }
 
+/** {@link dispatchFor} for **string** keys: the blank fallback for a
+ * `needsValue: false` op is `''` rather than `0`. No string structure declares such
+ * an op today (the trie's are the canonical trio), but the helper stays total so a
+ * later one cannot dispatch `undefined`. */
+export function dispatchStringFor<O extends string>(
+  spec: OpSpec<O>,
+  text: string,
+): { readonly op: O; readonly value: string } | null {
+  const { valid, value } = parseStringKey(text);
+  if (opNeedsValue(spec) && !valid) return null;
+  return { op: spec.op, value: valid ? value : '' };
+}
+
 /** Which op the Enter key triggers: `search` if the structure has it, else the
  * first key-taking op (so Enter never fires a no-key op like extract-min). */
 export function enterSpecFor<O extends string>(ops: readonly OpSpec<O>[]): OpSpec<O> | undefined {
   return ops.find((o) => o.op === 'search') ?? ops.find(opNeedsValue);
 }
 
-interface ControlsProps<E, O extends string = DefaultOp> {
+interface ControlsBase<E, O extends string> {
   readonly player: PlayerControls<E>;
-  readonly onOp: (op: O, value: number) => void;
   readonly caption: string;
   /** Op buttons to show; defaults to the canonical insert / search / delete. */
   readonly ops?: readonly OpSpec<O>[];
 }
 
-export function Controls<E, O extends string = DefaultOp>({ player, onOp, caption, ops }: ControlsProps<E, O>) {
+/** Numeric keys (the default, seven structures) or string keys (the trie). The
+ * discriminant is what types `onOp`'s value — there is no `string | number` to
+ * unpack at the call site. */
+export type ControlsProps<E, O extends string = DefaultOp> =
+  | (ControlsBase<E, O> & {
+      readonly keyKind?: 'number';
+      readonly onOp: (op: O, value: number) => void;
+    })
+  | (ControlsBase<E, O> & {
+      readonly keyKind: 'string';
+      readonly onOp: (op: O, value: string) => void;
+    });
+
+export function Controls<E, O extends string = DefaultOp>(props: ControlsProps<E, O>) {
+  const { player, caption, ops } = props;
+  const stringKeys = props.keyKind === 'string';
   const opList = ops ?? (DEFAULT_OPS as readonly OpSpec<O>[]);
   const [text, setText] = useState('');
-  const { valid } = parseKey(text);
+  const { valid } = stringKeys ? parseStringKey(text) : parseKey(text);
+  // `props` is read whole (not destructured) so the discriminant still narrows
+  // `onOp` to the matching value type inside each branch.
   const run = (spec: OpSpec<O>) => {
-    const d = dispatchFor(spec, text);
-    if (d) onOp(d.op, d.value);
+    if (props.keyKind === 'string') {
+      const d = dispatchStringFor(spec, text);
+      if (d) props.onOp(d.op, d.value);
+    } else {
+      const d = dispatchFor(spec, text);
+      if (d) props.onOp(d.op, d.value);
+    }
   };
   const enterSpec = enterSpecFor(opList);
 
@@ -99,12 +149,12 @@ export function Controls<E, O extends string = DefaultOp>({ player, onOp, captio
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
-          type="number"
+          type={stringKeys ? 'text' : 'number'}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && enterSpec) run(enterSpec); }}
           placeholder="key"
-          style={{ width: 90, padding: '4px 6px', fontSize: 13 }}
+          style={{ width: stringKeys ? 140 : 90, padding: '4px 6px', fontSize: 13 }}
         />
         {opList.map((spec) => (
           <button

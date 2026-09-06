@@ -6,13 +6,15 @@ import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedLi
 import { BstF64, type BstShape } from '../structures/bst';
 import { AvlF64, type AvlShape } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent } from './events';
+import { TrieStr, type TrieShape } from '../structures/trie';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList,
   bstModel, foldBst, type BstDisplayNode,
   avlModel, foldAvl, type AvlDisplayNode,
   heapModel, foldHeap,
+  trieModel, foldTrie, type TrieModel, type TrieDisplayNode,
 } from './model';
 
 /**
@@ -427,5 +429,91 @@ describe('heap fold mirrors the structure', () => {
       h.extractMin((e) => events.push(e));
       expect(values(foldHeap(before, events))).toEqual(h.toArray());
     }
+  });
+});
+
+describe('trie fold mirrors the structure', () => {
+  /** The folded model with its animation ids stripped — directly comparable to the
+   * structure's own `snapshot()`. Shape equality is the strongest statement
+   * available: it pins the key set, the *node* set, and the byte ordering at once.
+   * The key set alone would not: a reducer that dropped or misordered prune events
+   * still answers every membership question correctly while the folded tree carries
+   * litter nodes the real structure has already reclaimed. */
+  const shapeOf = (n: TrieDisplayNode): TrieShape => ({
+    byte: n.byte,
+    terminal: n.terminal,
+    children: n.children.map(shapeOf),
+  });
+
+  const nodeCount = (n: TrieDisplayNode): number =>
+    1 + n.children.reduce((acc, c) => acc + nodeCount(c), 0);
+
+  const ids = (n: TrieDisplayNode): number[] => [n.id, ...n.children.flatMap(ids)];
+
+  const runFold = (build: string[], op: (t: TrieStr, push: (e: TrieEvent) => void) => void) => {
+    const t = TrieStr.fromKeys(build);
+    const before = trieModel(t.snapshot());
+    const events: TrieEvent[] = [];
+    op(t, (e) => events.push(e));
+    return { t, before, events };
+  };
+
+  /** Fold the whole stream and assert the picture *is* the structure — shape, node
+   * count, key set — then assert every intermediate frame is renderable (ids stay
+   * unique, which is what a React key collision would break). */
+  const expectMirrors = (t: TrieStr, before: TrieModel, events: readonly TrieEvent[]) => {
+    const after = foldTrie(before, events);
+    expect(shapeOf(after.root)).toEqual(t.snapshot());
+    expect(nodeCount(after.root)).toBe(t.nodeCount());
+    for (let f = 0; f <= events.length; f++) {
+      const frameIds = ids(foldTrie(before, events.slice(0, f)).root);
+      expect(new Set(frameIds).size).toBe(frameIds.length);
+    }
+  };
+
+  const CASES: [string, string[], (t: TrieStr, push: (e: TrieEvent) => void) => void][] = [
+    ['search leaves the trie unchanged', ['car', 'cat'], (t, p) => t.search('car', p)],
+    ['search that falls off the tree', ['car'], (t, p) => t.search('zebra', p)],
+    ['search a proper prefix (full depth, still absent)', ['stack'], (t, p) => t.search('stac', p)],
+    ['insert into an empty trie', [], (t, p) => t.insert('car', p)],
+    ['insert a whole new branch', ['car'], (t, p) => t.insert('dog', p)],
+    ['insert extending a shared prefix', ['car'], (t, p) => t.insert('cart', p)],
+    ['insert a duplicate (nothing created)', ['car'], (t, p) => t.insert('car', p)],
+    ['insert a multi-byte key', ['car'], (t, p) => t.insert('café', p)],
+    ['delete that prunes one node', ['car', 'cart', 'cat'], (t, p) => t.delete('cart', p)],
+    ['delete that prunes a whole chain', ['car', 'dog'], (t, p) => t.delete('dog', p)],
+    ['delete a proper prefix (prunes nothing)', ['car', 'cart'], (t, p) => t.delete('car', p)],
+    ['delete an absent key', ['car', 'cat'], (t, p) => t.delete('cow', p)],
+    ['delete a multi-byte key', ['café', 'car'], (t, p) => t.delete('café', p)],
+    ['delete down to empty', ['dog'], (t, p) => t.delete('dog', p)],
+  ];
+
+  it.each(CASES)('%s', (_label, build, op) => {
+    const { t, before, events } = runFold(build, op);
+    expectMirrors(t, before, events);
+  });
+
+  it('litter would be invisible to the key set — so the node count is the assertion', () => {
+    // A guard on the guard: after deleting `dog` from {car, dog}, the key set is
+    // {car} whether or not the three `dog` nodes were pruned. Only the node count
+    // separates the two, which is why `expectMirrors` checks it.
+    const { t, before, events } = runFold(['car', 'dog'], (s, p) => s.delete('dog', p));
+    const after = foldTrie(before, events);
+    expect(nodeCount(after.root)).toBe(t.nodeCount());
+    expect(nodeCount(after.root)).toBe(nodeCount(before.root) - 3); // d, o, g reclaimed
+  });
+
+  it('a churn pair returns the picture to exactly the shape it started in', () => {
+    // The measurement's precondition (docs/METHODOLOGY.md §2.5), folded: an
+    // insert+delete of a derived key nets zero nodes on screen too.
+    const t = TrieStr.fromKeys(['one', 'two', 'three']);
+    const start = trieModel(t.snapshot());
+    const events: TrieEvent[] = [];
+    const push = (e: TrieEvent) => events.push(e);
+    t.insert('thref', push);
+    t.delete('thref', push);
+    const after = foldTrie(start, events);
+    expect(shapeOf(after.root)).toEqual(shapeOf(start.root));
+    expect(shapeOf(after.root)).toEqual(t.snapshot());
   });
 });
