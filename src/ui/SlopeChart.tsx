@@ -45,7 +45,9 @@ export function SlopeChart({ views }: SlopeChartProps) {
       title: 'local log-log slope — the empirical exponent on each interval',
       width: widthOf(host),
       height: 260,
-      scales: { x: { distr: 3 }, y: { range: [lo, hi] } },
+      // `time: false` for the same reason as SweepChart: without it uPlot renders the size
+      // axis as dates, because its default x series is a UNIX timestamp.
+      scales: { x: { distr: 3, time: false }, y: { range: [lo, hi] } },
       axes: [{ label: 'n (interval midpoint)' }, { label: 'Δln(cost) / Δln(n)' }],
       series: [
         { label: 'n' },

@@ -32,6 +32,15 @@ interface SweepChartProps {
   readonly shape?: InputShape;
   /** Draw the per-point rep spread (min→max across timed reps) as error bars (§6.5). */
   readonly showSpread?: boolean;
+  /**
+   * Names this chart for the PNG export (`./png`), which stacks the charts a section is
+   * currently showing into one image. It is published as a `data-chart` attribute rather
+   * than handed up through a callback on purpose: a callback prop would join this
+   * component's effect dependencies, so an inline arrow from the parent would rebuild the
+   * whole uPlot instance on every render. The attribute is a stable contract, and querying
+   * it also yields the charts in **DOM order**, which is the order the sheet stacks them in.
+   */
+  readonly name?: string;
 }
 
 const yValue = (signal: Signal) => (p: SweepPoint) =>
@@ -77,7 +86,14 @@ export function seriesLabel(v: SeriesView): string {
  * uPlot is imperative, so the chart is (re)built whenever the data or options
  * change, torn down on unmount, and resized with the window.
  */
-export function SweepChart({ views, signal, showTheory = true, shape = 'random', showSpread = true }: SweepChartProps) {
+export function SweepChart({
+  views,
+  signal,
+  showTheory = true,
+  shape = 'random',
+  showSpread = true,
+  name,
+}: SweepChartProps) {
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -132,7 +148,10 @@ export function SweepChart({ views, signal, showTheory = true, shape = 'random',
       title: signal === 'nanos' ? 'cost — ns / op (median of reps; bars = min→max)' : 'cost — operations / op',
       width: widthOf(host),
       height: 440,
-      scales: { x: { distr: 3 }, y: { distr: 3 } }, // 3 = logarithmic
+      // 3 = logarithmic. `time: false` is load-bearing, not boilerplate: uPlot treats the
+      // x series as UNIX timestamps by default, so the size axis rendered every n as a
+      // date ("2:00am 1/1/70") — the sweep sizes are counts, not instants.
+      scales: { x: { distr: 3, time: false }, y: { distr: 3 } },
       axes: [
         { label: 'n (size)' },
         { label: signal === 'nanos' ? 'ns / op' : 'ops / op' },
@@ -165,5 +184,5 @@ export function SweepChart({ views, signal, showTheory = true, shape = 'random',
     };
   }, [views, signal, showTheory, shape, showSpread]);
 
-  return <div ref={hostRef} />;
+  return <div ref={hostRef} data-chart={name} />;
 }
