@@ -9,7 +9,16 @@ import init, {
   SortedArrayF64,
   LinkedListF64,
   MinHeapF64,
+  ArrayStr,
+  HashSetStr,
 } from '../../bench-engine/pkg/bench_engine.js';
+import { encodeStringKeys } from '../data/marshal';
+import {
+  buildStringProbes,
+  churnKeyFor,
+  decodeStringKeys,
+  prefixOf,
+} from './stringWorkload';
 import {
   measureSweep,
   measureMutationFd,
@@ -84,6 +93,141 @@ function searchRunnerFactory(
       run: (k) => s.search_n(k),
       opCountPerOp: () => s.search_counted() / probes.length,
       dispose: () => s.free(),
+    };
+  };
+}
+
+// ── String keys (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5) ──────────────
+//
+// The string twins run the same algorithms on a different key type, and they need one
+// thing the numeric side gets for free: a key **guaranteed absent** from the stored
+// prefix. For f64 keys that is `max + 1`. Strings have no such arithmetic, so the workload
+// is *derived from the data* — see `absentLike` in ./stringWorkload for why the derivation
+// is not merely "make it long". The derivation lives there, and is unit-tested there,
+// because it is a measurement decision rather than plumbing; this file keeps the timing.
+
+/**
+ * The string search surface — the offsets+UTF-8 mirror of {@link SearchStruct}.
+ * `ArrayStr` and `HashSetStr` satisfy it structurally.
+ */
+interface StringSearchStruct {
+  set_probes(offsets: Uint32Array, bytes: Uint8Array): void;
+  search_n(k: number): number;
+  search_counted(): number;
+  free(): void;
+}
+type StringSearchStructCtor = new (
+  offsets: Uint32Array,
+  bytes: Uint8Array,
+  n: number,
+) => StringSearchStruct;
+
+/** The string mutation surface — the offsets+UTF-8 mirror of {@link MutationStruct}. */
+interface StringMutationStruct {
+  set_churn_key(key: string): void;
+  churn_n(k: number): number;
+  churn_counted(): number;
+  free(): void;
+}
+interface StringMutationStatics {
+  build_insert_n(offsets: Uint32Array, bytes: Uint8Array, n: number): number;
+  build_insert_counted(offsets: Uint32Array, bytes: Uint8Array, n: number): number;
+  build_then_teardown_n(offsets: Uint32Array, bytes: Uint8Array, n: number): number;
+  teardown_counted(offsets: Uint32Array, bytes: Uint8Array, n: number): number;
+}
+type StringMutationStructCtor = (new (
+  offsets: Uint32Array,
+  bytes: Uint8Array,
+  n: number,
+) => StringMutationStruct) &
+  StringMutationStatics;
+
+/** A string search runner (docs/PLAN.md §6.3), the mirror of {@link searchRunnerFactory}. */
+function stringSearchRunnerFactory(
+  Ctor: StringSearchStructCtor,
+  offsets: Uint32Array,
+  bytes: Uint8Array,
+): OpRunnerFactory {
+  return (n) => {
+    const prefix = prefixOf(offsets, bytes, n);
+    const s = new Ctor(prefix.offsets, prefix.bytes, n);
+    const probes = buildStringProbes(decodeStringKeys(offsets, bytes, n));
+    const encoded = encodeStringKeys(probes);
+    s.set_probes(encoded.offsets, encoded.bytes);
+    return {
+      run: (k) => s.search_n(k),
+      opCountPerOp: () => s.search_counted() / probes.length,
+      dispose: () => s.free(),
+    };
+  };
+}
+
+/**
+ * String churn runner: build to n once (untimed), set one derived absent key, then time
+ * `k` insert+delete pairs that hold size at n — the mirror of {@link churnRunnerFactory}.
+ *
+ * There is no {@link ChurnKeyPicker} seam here because there is nothing to pick between:
+ * both string structures are position-uniform (the array appends and then scans for the
+ * key; the hash set hashes to a bucket wherever the key sits), exactly as their numeric
+ * twins are, and neither keeps its keys in sorted order. What *does* matter is that the
+ * key looks like the corpus rather than like a sentinel, and that its *length* is typical
+ * of the corpus rather than inherited from whichever row happened to arrive first — both
+ * of which are `churnKeyFor`'s job (./stringWorkload).
+ */
+function stringChurnRunnerFactory(
+  Ctor: StringMutationStructCtor,
+  offsets: Uint32Array,
+  bytes: Uint8Array,
+): OpRunnerFactory {
+  return (n) => {
+    const prefix = prefixOf(offsets, bytes, n);
+    const s = new Ctor(prefix.offsets, prefix.bytes, n);
+    s.set_churn_key(churnKeyFor(decodeStringKeys(offsets, bytes, n)));
+    return {
+      run: (k) => s.churn_n(k),
+      opCountPerOp: () => s.churn_counted(),
+      dispose: () => s.free(),
+    };
+  };
+}
+
+/** String build runner (insert side) — the mirror of {@link buildRunnerFactory}. */
+function stringBuildRunnerFactory(
+  Ctor: StringMutationStatics,
+  offsets: Uint32Array,
+  bytes: Uint8Array,
+): OpRunnerFactory {
+  return (n) => {
+    const { offsets: off, bytes: byt } = prefixOf(offsets, bytes, n);
+    const cumulativeOps = Ctor.build_insert_counted(off, byt, n);
+    return {
+      run: (k) => {
+        let acc = 0;
+        for (let i = 0; i < k; i++) acc += Ctor.build_insert_n(off, byt, n);
+        return acc;
+      },
+      opCountPerOp: () => cumulativeOps,
+    };
+  };
+}
+
+/** String build+teardown runner (delete side) — mirror of {@link buildTeardownRunnerFactory}. */
+function stringBuildTeardownRunnerFactory(
+  Ctor: StringMutationStatics,
+  offsets: Uint32Array,
+  bytes: Uint8Array,
+): OpRunnerFactory {
+  return (n) => {
+    const { offsets: off, bytes: byt } = prefixOf(offsets, bytes, n);
+    const cumulativeOps =
+      Ctor.build_insert_counted(off, byt, n) + Ctor.teardown_counted(off, byt, n);
+    return {
+      run: (k) => {
+        let acc = 0;
+        for (let i = 0; i < k; i++) acc += Ctor.build_then_teardown_n(off, byt, n);
+        return acc;
+      },
+      opCountPerOp: () => cumulativeOps,
     };
   };
 }
@@ -472,6 +616,89 @@ const api = {
       opts,
     );
     return [{ structure: 'heap', op: 'churn', points: churn }, fd.insert, fd.delete];
+  },
+  /**
+   * Run the §6.3 **search** measurement on **string keys** — the unsorted array and the
+   * hash set, both storing `String` rather than `f64` (docs/PLAN.md §4.2, §8). `offsets`
+   * and `bytes` are the marshalled offsets+UTF-8 buffer (transferred in by the caller);
+   * each sweep point measures an order-preserving prefix, as the numeric sweeps do.
+   *
+   * These two series are read against **each other**, never against the numeric run: a
+   * comparison here walks bytes and a hash here reads the whole key, so the unit of work
+   * differs (docs/METHODOLOGY.md §2.5). What the pair buys that the numeric run cannot is
+   * the **second cost axis** — key length L. Both classes below are in n; toggling the
+   * UI's signal selector shows the hash set's op-count flat and identical to its numeric
+   * twin's while its wall-clock carries the per-byte hashing cost.
+   */
+  async runStringSweep(
+    offsets: Uint32Array,
+    bytes: Uint8Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const arraystr = measureSweep(
+      sizes,
+      stringSearchRunnerFactory(ArrayStr, offsets, bytes),
+      now,
+      opts,
+    );
+    const hashsetstr = measureSweep(
+      sizes,
+      stringSearchRunnerFactory(HashSetStr, offsets, bytes),
+      now,
+      opts,
+    );
+    return [
+      { structure: 'arraystr', op: 'search', points: arraystr },
+      { structure: 'hashsetstr', op: 'search', points: hashsetstr },
+    ];
+  },
+  /**
+   * Run the §6.3 size-mutating measurement on **string keys** for the same two structures:
+   * the churn primary plus the finite-difference insert/delete split, three series each.
+   * Keep `sizes` modest — the string array's ordered delete makes its teardown O(n²), and
+   * every comparison in it is a byte-wise one.
+   *
+   * The churn key is *derived from the corpus* — a stored key of median length with its
+   * last character changed, checked absent against the prefix — rather than being a long
+   * sentinel, so the array's scan pays the same per-byte comparison cost it pays on real
+   * keys (`churnKeyFor` / `absentLike` in ./stringWorkload). `offsets`/`bytes` are
+   * transferred in by the caller.
+   */
+  async runStringMutationSweep(
+    offsets: Uint32Array,
+    bytes: Uint8Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const structures: ReadonlyArray<[StructureId, StringMutationStructCtor]> = [
+      ['arraystr', ArrayStr as unknown as StringMutationStructCtor],
+      ['hashsetstr', HashSetStr as unknown as StringMutationStructCtor],
+    ];
+    const out: SweepSeries[] = [];
+    for (const [structure, Ctor] of structures) {
+      const churn = measureSweep(
+        sizes,
+        stringChurnRunnerFactory(Ctor, offsets, bytes),
+        now,
+        opts,
+      );
+      out.push({ structure, op: 'churn', points: churn });
+      const fd = measureMutationFd(
+        structure,
+        sizes,
+        stringBuildRunnerFactory(Ctor, offsets, bytes),
+        stringBuildTeardownRunnerFactory(Ctor, offsets, bytes),
+        now,
+        opts,
+      );
+      out.push(fd.insert, fd.delete);
+    }
+    return out;
   },
 };
 

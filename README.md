@@ -17,17 +17,19 @@ measurements, held to identical behaviour by a cross-language conformance
 corpus. See [`docs/PLAN.md`](docs/PLAN.md) for the full design, the measurement
 methodology, and the phased roadmap.
 
-**Status:** Phases 0–3 complete; Phase 4 (Rust bench twins) now has every
-structure — the Linear family, the BST/AVL trees and the **min-heap** — and every
-one of them is wired into the browser sweep for **both** search and add/remove,
-leaving only the string-key structures Rust-only; Phase 5 (comparison / analysis)
-has its first slice — the sweeps run on a **user-chosen dataset** (generators or
-pasted CSV/JSON), with a theoretical overlay, error bars, slope uncertainty, a
-local-slope panel and export; tree add/remove is probed at **both ends** of the key
-range so a reverse-sorted chain can no longer report a misleading flat curve; and
-the linked list's add/remove ships with the caveat it needs — its flat O(1) line is
-true only for a key the list just put at its own head, so the O(n) cost of removing
-a key already stored is shown beside it rather than left off the page. The phase table is at the top of
+**Status:** Phases 0–4 complete — every Rust bench twin (the Linear family, the
+BST/AVL trees, the **min-heap**, and the **string-key** array and hash set) is
+wired into the browser sweep for **both** search and add/remove; Phase 5
+(comparison / analysis) has its first slices — the sweeps run on a **user-chosen
+dataset** (generators or pasted CSV/JSON), with a theoretical overlay, error bars,
+slope uncertainty, a local-slope panel and export; tree add/remove is probed at
+**both ends** of the key range so a reverse-sorted chain can no longer report a
+misleading flat curve; the linked list's add/remove ships with the caveat it needs —
+its flat O(1) line is true only for a key the list just put at its own head, so the
+O(n) cost of removing a key already stored is shown beside it rather than left off
+the page; and a **text-key dataset** runs its own two structures, where the same
+classes hold in the number of keys while a second cost axis — the key's length —
+shows up as a flat line that sits higher the longer the keys are. The phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 

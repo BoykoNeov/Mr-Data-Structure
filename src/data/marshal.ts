@@ -37,8 +37,17 @@ export function marshalKeys(dataset: Dataset): MarshalledKeys {
   if (dataset.keyType === 'number') {
     return { keyType: 'number', values: Float64Array.from(dataset.keys) };
   }
+  return encodeStringKeys(dataset.keys);
+}
 
-  const encoded = dataset.keys.map((k) => encoder.encode(k));
+/**
+ * The string half of {@link marshalKeys}, on a plain key list rather than a
+ * {@link Dataset}. The bench worker needs it for the workloads it *derives* —
+ * the probe set and the churn key are strings it builds itself, and they cross
+ * into WASM through the same offsets+UTF-8 layout the dataset does.
+ */
+export function encodeStringKeys(keys: readonly string[]): StringKeyBuffer {
+  const encoded = keys.map((k) => encoder.encode(k));
   const total = encoded.reduce((sum, b) => sum + b.length, 0);
   const offsets = new Uint32Array(encoded.length + 1);
   const bytes = new Uint8Array(total);
@@ -57,9 +66,27 @@ export function marshalKeys(dataset: Dataset): MarshalledKeys {
  */
 export function unmarshalKeys(m: MarshalledKeys): number[] | string[] {
   if (m.keyType === 'number') return Array.from(m.values);
-  const out: string[] = [];
-  for (let i = 0; i + 1 < m.offsets.length; i++) {
-    out.push(decoder.decode(m.bytes.subarray(m.offsets[i], m.offsets[i + 1])));
+  return decodeStringKeys(m.offsets, m.bytes);
+}
+
+/**
+ * Decode the first `n` keys of an offsets+UTF-8 buffer back to JS strings — the
+ * mirror of the `decode_keys` the Rust side runs on the same bytes.
+ *
+ * The bench worker needs this on the *prefix* it is about to measure: a string
+ * workload can only be built from the keys themselves (a probe or churn key must
+ * be provably absent from what is stored, and there is no `max + 1` for strings).
+ * Decoding is untimed setup, outside every measured region.
+ */
+export function decodeStringKeys(
+  offsets: Uint32Array,
+  bytes: Uint8Array,
+  n: number = offsets.length - 1,
+): string[] {
+  const count = Math.max(0, Math.min(n, offsets.length - 1));
+  const out: string[] = new Array(count);
+  for (let i = 0; i < count; i++) {
+    out[i] = decoder.decode(bytes.subarray(offsets[i], offsets[i + 1]));
   }
   return out;
 }

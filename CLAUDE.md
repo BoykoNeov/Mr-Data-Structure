@@ -56,7 +56,11 @@ tool call does not survive into the next (each call is a fresh process).
   asserts sub-linear BST churn, which only holds on shuffled input. The gate then
   drives the picker to **reverse-sorted** for a second pass and asserts the
   opposite there (BST churn O(n), AVL still sub-linear) — the regression guard for
-  the two-key churn probe, METHODOLOGY §4.1. Keep both passes.
+  the two-key churn probe, METHODOLOGY §4.1. A **third pass** then drives it to
+  `string-corpus`. That one runs **last** on purpose and reads only
+  `__stringSweepProof` / `__stringMutationProof`: a string run never sets the numeric
+  globals, so an assert placed after it would silently re-read the reverse-sorted pass.
+  Keep all three passes, in that order.
 - **The min-heap is deliberately kept off the shared Compare charts** (PLAN §8,
   risk R6): its op set is insert / peek / extract-min, not insert / search /
   delete, so `registry.ts` exposes `CANONICAL_STRUCTURES` / `isCanonical` and the
@@ -72,6 +76,17 @@ tool call does not survive into the next (each call is a fresh process).
   don't "fix" it with a different key (none exists), and don't ship it without the
   caveat box + the O(n) delete-by-value curve beside it. `verify:browser` pins both
   halves.
+- **A string probe/churn key is derived from the data, never invented.** There is no
+  `max + 1` for strings, and the tempting substitute — a key longer than every stored
+  key, absent by construction — biases the two string structures in *opposite*
+  directions: Rust compares string slices length-first, so a uniquely long key bails out
+  of every array comparison on the length check (understating the per-byte scan) while
+  making the hash set's pass read more bytes than a real key would (overstating its
+  constant). `absentLike` (`src/bench/engine.worker.ts`) therefore takes a stored key and
+  changes its last character, checked absent against a `Set` of the decoded prefix. The
+  long-key form is the documented fallback only. Related: `prefixOf` exists because
+  wasm-bindgen copies the slice it is handed on **every** call — hand a timed static call
+  the whole corpus and the copy, not the structure, sets the curve.
 - **The heap's churn key must stay `min − 1`** (`belowMin`). A heap has no
   delete-by-value, so the pair is insert + extract-min, and only a key below every
   stored key is the one the extract takes back; `max + 1` silently *drains* the

@@ -13,8 +13,8 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 1 | data layer: import, type detection, generators, marshalling | ✅ done |
 | 2 | thin slice: array + hash set through both twins, §6.3 methodology, fitter, chart; string-key bench structures | ✅ done |
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
-| 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | 🟡 every numeric bench twin built **and wired into the browser sweep**, search *and* mutation; only the string-key structures remain Rust-only (tracked as a Phase 5 open item) |
-| 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; CSV/JSON export | 🟡 first slice landed (see §10); string-key sweep, presets, PNG export open |
+| 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
+| 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; CSV/JSON export | 🟡 first slice + string-key sweeps landed (see §10); presets, PNG export open |
 | 6 | trie, skip list, graph; presets/demos; persistence; polish | ⬜ not started |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
@@ -36,7 +36,12 @@ key range, so a reverse-sorted chain can no longer report a flat O(1) curve
 set — insert / peek / extract-min, its add+remove pair reading O(log n) and its
 "search" the deliberate O(n) scan that shows a heap is not a lookup structure —
 and is kept off the shared charts, since comparing it to the others would be
-comparing different operations (§8, risk R6).
+comparing different operations (§8, risk R6). With **string keys** the array and
+hash set keep their classes — O(n) scan, O(1) lookup — and gain a second cost
+axis the classes cannot express: *hashing a string costs more than hashing a
+number while staying just as flat* (14.1 ns vs 4.2 ns on one gate run), and
+raising the key-length control lifts that flat line again without tilting it —
+O(1) in the number of keys, O(L) in the size of one (METHODOLOGY §2.5).
 
 ---
 
@@ -870,8 +875,49 @@ insert/search/delete group on a shared key type.
     noted in the gate so nobody adds one by accident. The whole gate still runs in ~13 s.
     `runSweeps.test.ts`'s fake engine now returns all four structures and asserts the list's
     class disagreement survives the pipeline. **No new deps.**
-  - **Open:** string-key sweep wiring; presets ("sorted data kills a naive BST"
-    as one click); PNG export; interleaved structure order per sweep point.
+  - **Done (string-key sweeps — the last Rust-only structures reach the browser):**
+    `ArrayStr` and `HashSetStr` had the full timed surface in Rust since Phase 2 and no way
+    into the UI; they now have their own engine calls (`runStringSweep`,
+    `runStringMutationSweep`), their own registry entries (`arraystr`, `hashsetstr`), their
+    own picker generator (**random string keys**, with the key-length range exposed) and
+    their own Compare section. A dataset is numeric *or* textual, so a run drives one set of
+    structures or the other: `runAllSweeps` and `runStringSweeps` are separate entry points
+    returning **separate types**, and `runSweeps.test.ts` pins that a numeric result never
+    carries a string-keyed series. Two structures are comparable only when they share the op
+    set *and* the key type — `isCanonical` is only the first half, and its JSDoc now says so.
+    The string twins deliberately **reuse their numeric twin's colour** (same structure, other
+    key type; they can never share a chart), pinned by `registry.test.ts` so the duplicate
+    isn't "fixed".
+    Two measurement decisions carry this slice, both in `engine.worker.ts`:
+    **(1) the absent probe/churn key is derived from the corpus**, not invented. There is no
+    `max + 1` for strings, and the obvious substitute — a key longer than every stored key —
+    is wrong in *two directions at once*: Rust compares string slices length-first, so a
+    uniquely long key bails out of every array comparison on the length check (understating
+    the per-byte scan this section exists to show) while making the hash set read more bytes
+    than a real key would (overstating its constant). Opposite biases on the one chart that
+    compares the two. The key is instead a stored key with its last character changed,
+    verified absent against a `Set` of the decoded prefix (untimed). **(2) every timed static
+    call gets the offsets+bytes *prefix* for its own n** (`prefixOf`), because wasm-bindgen
+    copies the slice it is handed on each call — passing the whole corpus while measuring
+    n = 250 would put a constant full-corpus copy inside every timed region.
+    On the real clock (`verify:browser` gained a **third pass**, run last, on its own globals
+    since a string run never sets the numeric ones): string array search rises **O(n)**
+    (slope 1.02 ± 0.03, R² 0.9995, 1998× over the ladder) and string hash-set search stays
+    **O(1)** (slope 0.04); string array churn rises (slope 0.94) while string hash-set churn
+    stays flat (0.05). And the claim the numeric run cannot make — **hashing a string costs
+    more than hashing a number** (14.1 ns vs 4.2 ns on the same gate run) *while both stay
+    flat*: the class is in n, the constant is in the key length L. The picker's key-length
+    range makes that second axis a thing the user can move.
+    One honest wrinkle, pinned rather than papered over: the string array's scan is labelled
+    **O(n log n)** about as often as O(n), because its *tail* slope runs above 1 (1.16) — a
+    `Vec<String>` holds pointers to heap bytes, so a 20 k scan loses cache locality and each
+    element costs a little more than the last. Risk R3 with a mechanism. The gate therefore
+    asserts the slope band and the rise, as it already does for the sorted array's search,
+    and the UI says why beside the chart. **No new deps.**
+  - **Open:** presets ("sorted data kills a naive BST" as one click); PNG export;
+    interleaved structure order per sweep point (still an open *question*, §13 — it changes
+    per-point thermal conditions, which is exactly what this gate's slope bands encode, so
+    it wants its own slice rather than a ride alongside other features).
 
 - **Phase 6 — Specialized + polish.** Trie, skip list, graph; presets/demos
   (e.g. "sorted data kills a naive BST"); persistence of sessions; docs;
@@ -935,11 +981,10 @@ insert/search/delete group on a shared key type.
 
 ## 14. Next steps
 
-1. Finish Phase 4: wire the sorted-array and linked-list *mutation* surfaces into
-   the browser sweep (both are built and clock-free-proven in Rust; only the sweep
-   wiring is missing), and the string structures. The churn-key selector the worker
-   now takes (`aboveMax` / `belowMin`) is the seam those need.
-2. Phase 5 remainder: string-key sweep; one-click presets; PNG export; the
-   interleaving experiment from §13.
+1. ~~Finish Phase 4: wire the sorted-array, linked-list and string mutation
+   surfaces into the browser sweep.~~ **Done** — every bench twin is now measured
+   in the browser, search and mutation.
+2. Phase 5 remainder: one-click presets; PNG export; the interleaving experiment
+   from §13 (its own slice — see the Phase 5 "Open" note in §10).
 3. Promote `verify:browser` to a blocking CI gate once its slope bands prove
    stable on shared runners.

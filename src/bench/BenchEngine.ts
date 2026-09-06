@@ -96,6 +96,38 @@ export interface BenchEngine {
     opts?: MeasureOptions,
   ): Promise<SweepSeries[]>;
 
+  /**
+   * Measure `search` across a size sweep on **string keys** (docs/PLAN.md §4.2, §8) —
+   * two {@link SweepSeries}, tagged `'arraystr'` and `'hashsetstr'`. `offsets`/`bytes`
+   * are the marshalled offsets+UTF-8 key buffer, and the engine may transfer (consume)
+   * both, so callers must not reuse them.
+   *
+   * A separate call from {@link runSweep} for a reason stronger than tagging: a string
+   * dataset cannot build an f64 structure at all, and the two runs' curves are not
+   * comparable even when both are on the chart — one comparison walks bytes, the other
+   * compares two doubles (docs/METHODOLOGY.md §2.5).
+   */
+  runStringSweep(
+    offsets: Uint32Array,
+    bytes: Uint8Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
+  /**
+   * Measure the size-mutating ops across a size sweep on **string keys** — six
+   * {@link SweepSeries} (`churn`, `insert`, `delete` for each of `'arraystr'` and
+   * `'hashsetstr'`). Keep `sizes` modest: the string array's ordered delete gives it an
+   * O(n²) teardown, with a byte-wise comparison at every step. As with the other sweeps,
+   * the engine may transfer (consume) both buffers.
+   */
+  runStringMutationSweep(
+    offsets: Uint32Array,
+    bytes: Uint8Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
   /** Release the worker / underlying resources. */
   dispose(): void;
 }

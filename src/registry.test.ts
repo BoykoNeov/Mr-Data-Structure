@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { REGISTRY, STRUCTURES, CANONICAL_STRUCTURES, isCanonical, theoreticalClass } from './registry';
+import {
+  REGISTRY,
+  STRUCTURES,
+  STRING_STRUCTURES,
+  CANONICAL_STRUCTURES,
+  isCanonical,
+  theoreticalClass,
+} from './registry';
 import type { StructureId } from './bench/measure';
 
 /**
@@ -10,8 +17,29 @@ describe('structure registry', () => {
   it('covers every StructureId exactly once, with a distinct colour each', () => {
     const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap'];
     for (const id of ids) expect(REGISTRY[id].id).toBe(id);
+    // STRUCTURES is the *numeric* catalogue — the one the shared charts draw from.
     expect(STRUCTURES.map((s) => s.id).sort()).toEqual([...ids].sort());
+    expect(STRUCTURES.every((s) => s.keyType === 'number')).toBe(true);
     expect(new Set(STRUCTURES.map((s) => s.color)).size).toBe(STRUCTURES.length);
+  });
+
+  it('keeps the string twins in their own catalogue, sharing their numeric twin’s hue', () => {
+    expect(STRING_STRUCTURES.map((s) => s.id)).toEqual(['arraystr', 'hashsetstr']);
+    expect(STRING_STRUCTURES.every((s) => s.keyType === 'string')).toBe(true);
+    expect(new Set(STRING_STRUCTURES.map((s) => s.color)).size).toBe(STRING_STRUCTURES.length);
+    // The shared hue is deliberate: it is the *same structure* seen through a different
+    // key type, and the two can never appear on one chart (a run is all-numeric or
+    // all-string). Don't "fix" the duplicate — the pairing is the teaching point.
+    expect(REGISTRY.arraystr.color).toBe(REGISTRY.array.color);
+    expect(REGISTRY.hashsetstr.color).toBe(REGISTRY.hashset.color);
+    // Same op set as their twins (so `isCanonical` is true), same classes *in n* — the
+    // extra O(L) in key length is a constant the classes cannot express (METHODOLOGY §2.5).
+    expect(isCanonical('arraystr')).toBe(true);
+    expect(theoreticalClass('arraystr', 'search')).toBe(theoreticalClass('array', 'search'));
+    expect(theoreticalClass('hashsetstr', 'search')).toBe(theoreticalClass('hashset', 'search'));
+    // ...but they are not in the numeric catalogue the shared charts iterate.
+    expect(STRUCTURES.map((s) => s.id)).not.toContain('arraystr');
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).not.toContain('hashsetstr');
   });
 
   it('pins the §8 search classes: O(n) scan/walk, O(log n) binary search, O(1) hash', () => {

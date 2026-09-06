@@ -2,7 +2,12 @@ import type { BenchEngine } from '../bench/BenchEngine';
 import { fitComplexity } from '../bench/fit';
 import type { MeasureOptions, SweepSeries } from '../bench/measure';
 import { geometricSweep } from '../bench/sweep';
-import { marshalKeys, type Dataset, type NumberDataset } from '../data';
+import {
+  marshalKeys,
+  type Dataset,
+  type NumberDataset,
+  type StringDataset,
+} from '../data';
 import { REGISTRY, isCanonical, type InputShape } from '../registry';
 import type { SeriesView, Signal } from '../ui/SweepChart';
 import { inputShapeOf } from './shape';
@@ -56,6 +61,16 @@ export const SEARCH_OPTS: MeasureOptions = { targetRelStddev: 0.05, maxReps: 9 }
  * at 8 lands near the useful batch immediately; adaptive reps still handle noisy points.
  */
 export const HEAP_OPTS: MeasureOptions = { ...MUT_OPTS, baseBatch: 8 };
+
+/**
+ * The **string** sweep's own bounds, deliberately not a reuse of the numeric ones. Every
+ * operation here carries a second cost factor — the key length L — so the same n is more
+ * work: a scan compares bytes rather than two doubles, and the array's ordered delete is
+ * O(n²) of those comparisons *plus* a `String` move per shifted slot. These caps keep a
+ * string run in the same wall-clock ballpark as a numeric one rather than the same n.
+ */
+export const STRING_SWEEP_MAX = 20_000;
+export const STRING_MUT_MAX = 2_000;
 
 /** What one full Compare run produces. */
 export interface CompareResult {
@@ -154,7 +169,17 @@ interface ProofWindow {
   __bstMutationProof?: SweepProof[];
   __avlMutationProof?: SweepProof[];
   __heapMutationProof?: SweepProof[];
-  __compareMeta?: { order: unknown; size: number; shape: InputShape };
+  /** The string run's mirrors; `__stringMutationProof` is set last (see {@link runStringSweeps}). */
+  __stringSweepProof?: SweepProof[];
+  __stringMutationProof?: SweepProof[];
+  __compareMeta?: {
+    order: unknown;
+    size: number;
+    shape: InputShape;
+    keyType: 'number' | 'string';
+    /** Mean UTF-8 bytes per key — the string run's second cost axis, 0 for a numeric run. */
+    meanKeyBytes: number;
+  };
 }
 
 /** Sweep sizes for a dataset: the geometric ladder, capped by the dataset size. */
@@ -164,7 +189,19 @@ export function sizesFor(dataset: Dataset, min: number, max: number): number[] {
 
 function numericOrThrow(dataset: Dataset): NumberDataset {
   if (dataset.keyType !== 'number') {
-    throw new Error('the comparison sweep needs numeric keys (string structures are Rust-only for now)');
+    // Not a limitation any more — a routing error. String keys have their own sweep
+    // ({@link runStringSweeps}) because they drive different structures.
+    throw new Error('this sweep needs numeric keys; string keys run runStringSweeps');
+  }
+  if (dataset.size < SWEEP_MIN) {
+    throw new Error(`need at least ${SWEEP_MIN} keys to sweep (got ${dataset.size})`);
+  }
+  return dataset;
+}
+
+function stringOrThrow(dataset: Dataset): StringDataset {
+  if (dataset.keyType !== 'string') {
+    throw new Error('this sweep needs string keys; numeric keys run runAllSweeps');
   }
   if (dataset.size < SWEEP_MIN) {
     throw new Error(`need at least ${SWEEP_MIN} keys to sweep (got ${dataset.size})`);
@@ -177,6 +214,28 @@ function keyBuffer(dataset: NumberDataset): Float64Array {
   const m = marshalKeys(dataset);
   if (m.keyType !== 'number') throw new Error('expected numeric keys');
   return m.values;
+}
+
+/** A fresh transferable offsets+UTF-8 pair — likewise consumed by each engine call. */
+function stringBuffers(dataset: StringDataset): { offsets: Uint32Array; bytes: Uint8Array } {
+  const m = marshalKeys(dataset);
+  if (m.keyType !== 'string') throw new Error('expected string keys');
+  return { offsets: m.offsets, bytes: m.bytes };
+}
+
+/**
+ * Mean UTF-8 bytes per key — the string run's **second cost axis**. Both structures are
+ * O(1) or O(n) *in n*, and additionally O(L) in this number: it is what separates the
+ * wall-clock curve from the op-count curve on the same run (docs/METHODOLOGY.md §2.5).
+ *
+ * Takes the *offsets* rather than the dataset on purpose: the caller already has a
+ * marshalled buffer in hand, and re-marshalling a large corpus just to read its last
+ * offset would be a full extra encode of every key. Read it before handing the buffer to
+ * the engine — the engine transfers (detaches) it.
+ */
+export function meanKeyBytes(offsets: Uint32Array): number {
+  const n = offsets.length - 1;
+  return n > 0 ? offsets[n] / n : 0;
 }
 
 /**
@@ -214,10 +273,87 @@ export async function runAllSweeps(
   onStatus('running min-heap mutation sweep…');
   const heap = (await engine.runHeapMutationSweep(keyBuffer(data), mutationSizes, HEAP_OPTS)).map((s) => toView(s));
   if (win) {
-    win.__compareMeta = { order: data.order, size: data.size, shape };
+    win.__compareMeta = {
+      order: data.order,
+      size: data.size,
+      shape,
+      keyType: 'number',
+      meanKeyBytes: 0,
+    };
     // Set last, so the runtime gate can poll this one global as the "all sweeps done" signal.
     win.__heapMutationProof = toProof(heap);
   }
 
   return { search, mutation, trees: [...bst, ...avl], heap, shape, searchSizes, mutationSizes };
+}
+
+/** What one full **string-key** Compare run produces (see {@link runStringSweeps}). */
+export interface StringCompareResult {
+  /** `search` on the string array and the string hash set. */
+  readonly search: readonly SeriesView[];
+  /** churn + finite-difference insert/delete for both — six series. */
+  readonly mutation: readonly SeriesView[];
+  readonly searchSizes: readonly number[];
+  readonly mutationSizes: readonly number[];
+  /** Mean UTF-8 bytes per key: the run's key-length axis (see {@link meanKeyBytes}). */
+  readonly meanKeyBytes: number;
+}
+
+/**
+ * Run every **string-key** sweep on `dataset` — the string twins of the array and the hash
+ * set (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5) — reporting progress through
+ * `onStatus` and mirroring the results onto `window` for the runtime gate.
+ *
+ * A deliberately separate entry point from {@link runAllSweeps}, not a branch inside it.
+ * A string dataset cannot build an f64 structure, so there is no run in which both sets of
+ * curves exist; and even side by side they would not be comparable, since a string
+ * comparison walks bytes while an f64 comparison is one instruction. The two results are
+ * therefore different types, and no chart takes both.
+ *
+ * What this run shows that the numeric one cannot: the classes are the same — O(n) scan,
+ * O(1) hash — but they hold **in n only**. The same structures also pay O(L) in the key
+ * length, which is why the run reports {@link StringCompareResult.meanKeyBytes} and why
+ * the op-count and wall-clock signals separate here (the op-count curve is the numeric
+ * twin's; the wall-clock one carries the bytes).
+ */
+export async function runStringSweeps(
+  engine: BenchEngine,
+  dataset: Dataset,
+  onStatus: (s: string) => void = () => {},
+  win: ProofWindow | undefined = typeof window === 'undefined' ? undefined : (window as ProofWindow),
+): Promise<StringCompareResult> {
+  const data = stringOrThrow(dataset);
+  const searchSizes = sizesFor(data, SWEEP_MIN, STRING_SWEEP_MAX);
+  const mutationSizes = sizesFor(data, Math.min(MUT_MIN, data.size), STRING_MUT_MAX);
+
+  onStatus('running string-key search sweep…');
+  const sb = stringBuffers(data);
+  const search = (await engine.runStringSweep(sb.offsets, sb.bytes, searchSizes, SEARCH_OPTS)).map(
+    (s) => toView(s),
+  );
+  if (win) win.__stringSweepProof = toProof(search);
+
+  onStatus('running string-key mutation sweep…');
+  const mb = stringBuffers(data);
+  // Read the key-length axis off this buffer *before* the call transfers it away.
+  const bytesPerKey = meanKeyBytes(mb.offsets);
+  const mutation = (
+    await engine.runStringMutationSweep(mb.offsets, mb.bytes, mutationSizes, MUT_OPTS)
+  ).map((s) => toView(s));
+
+  if (win) {
+    win.__compareMeta = {
+      order: data.order,
+      size: data.size,
+      // The overlay's shape flag is about *numeric* order degenerating a tree; neither
+      // string structure is order-sensitive, so a string run is always the average case.
+      shape: 'random',
+      keyType: 'string',
+      meanKeyBytes: bytesPerKey,
+    };
+    // Set last — the "string run done" signal for scripts/verify-browser.mjs.
+    win.__stringMutationProof = toProof(mutation);
+  }
+
+  return { search, mutation, searchSizes, mutationSizes, meanKeyBytes: bytesPerKey };
 }

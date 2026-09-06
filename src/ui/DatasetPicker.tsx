@@ -4,6 +4,7 @@ import {
   generateNearSorted,
   generateReverseSorted,
   generateSorted,
+  generateStringCorpus,
   generateUniform,
   generateZipfian,
   importCsv,
@@ -22,7 +23,14 @@ import {
  * is unit-testable without a DOM; the component is a thin form over it.
  */
 
-export type GeneratorKind = 'uniform' | 'sorted' | 'reverse-sorted' | 'near-sorted' | 'gaussian' | 'zipfian';
+export type GeneratorKind =
+  | 'uniform'
+  | 'sorted'
+  | 'reverse-sorted'
+  | 'near-sorted'
+  | 'gaussian'
+  | 'zipfian'
+  | 'string-corpus';
 
 export interface PickerState {
   readonly source: 'generate' | 'paste';
@@ -33,16 +41,45 @@ export interface PickerState {
   readonly text: string;
   /** Key field for multi-column pastes (blank ⇒ single-column default). */
   readonly keyField: string;
+  /** Shortest generated key, in characters (string-corpus only). */
+  readonly minLen: number;
+  /** Longest generated key, in characters (string-corpus only) — the run's second cost axis. */
+  readonly maxLen: number;
 }
 
-export const GENERATORS: ReadonlyArray<{ kind: GeneratorKind; label: string; hint: string }> = [
-  { kind: 'uniform', label: 'uniform random integers', hint: 'the neutral baseline — every structure at its textbook average' },
-  { kind: 'sorted', label: 'sorted (ascending)', hint: 'the classic worst case: a naive BST degenerates to a chain' },
-  { kind: 'reverse-sorted', label: 'reverse-sorted (descending)', hint: 'the mirror worst case (a left-leaning chain)' },
-  { kind: 'near-sorted', label: 'nearly sorted', hint: 'sorted with a few random swaps — real logs and ids often look like this' },
-  { kind: 'gaussian', label: 'gaussian floats', hint: 'clustered around a mean; floats, not integers' },
-  { kind: 'zipfian', label: 'zipfian (duplicate-heavy)', hint: 'a few keys dominate — how word counts and page hits are distributed' },
+export const GENERATORS: ReadonlyArray<{
+  kind: GeneratorKind;
+  label: string;
+  hint: string;
+  /** Which structures this dataset can drive — the numeric catalogue, or the string twins. */
+  keyType: 'number' | 'string';
+}> = [
+  { kind: 'uniform', label: 'uniform random integers', hint: 'the neutral baseline — every structure at its textbook average', keyType: 'number' },
+  { kind: 'sorted', label: 'sorted (ascending)', hint: 'the classic worst case: a naive BST degenerates to a chain', keyType: 'number' },
+  { kind: 'reverse-sorted', label: 'reverse-sorted (descending)', hint: 'the mirror worst case (a left-leaning chain)', keyType: 'number' },
+  { kind: 'near-sorted', label: 'nearly sorted', hint: 'sorted with a few random swaps — real logs and ids often look like this', keyType: 'number' },
+  { kind: 'gaussian', label: 'gaussian floats', hint: 'clustered around a mean; floats, not integers', keyType: 'number' },
+  { kind: 'zipfian', label: 'zipfian (duplicate-heavy)', hint: 'a few keys dominate — how word counts and page hits are distributed', keyType: 'number' },
+  {
+    kind: 'string-corpus',
+    label: 'random string keys',
+    hint: 'text keys, like ids and names — runs the string array and string hash set; key length is a second cost axis',
+    keyType: 'string',
+  },
 ];
+
+/** The generator's declared key type — which sweep the run will take. */
+export function keyTypeOf(kind: GeneratorKind): 'number' | 'string' {
+  return GENERATORS.find((g) => g.kind === kind)?.keyType ?? 'number';
+}
+
+/**
+ * A string corpus is heavier per key than an f64 one (every comparison walks bytes, and
+ * marshalling copies the text), and its sweep caps out lower anyway
+ * (`STRING_SWEEP_MAX`), so switching to string keys trims an oversized `n` rather than
+ * generating a hundred thousand keys the sweep will never reach.
+ */
+export const STRING_CORPUS_N = 20_000;
 
 export const DEFAULT_PICKER: PickerState = {
   source: 'generate',
@@ -51,6 +88,8 @@ export const DEFAULT_PICKER: PickerState = {
   seed: 7,
   text: '',
   keyField: '',
+  minLen: 3,
+  maxLen: 8,
 };
 
 /** Build the dataset the picker describes. Throws with a user-readable message. */
@@ -70,14 +109,43 @@ export function buildDataset(s: PickerState): Dataset {
     case 'near-sorted': return generateNearSorted(n, Math.ceil(n / 20), 0, s.seed);
     case 'gaussian': return generateGaussian(n, 0, 1000, s.seed);
     case 'zipfian': return generateZipfian(n, Math.max(1, Math.ceil(n / 10)), 1, s.seed);
+    case 'string-corpus': {
+      const min = Math.max(1, Math.floor(s.minLen));
+      return generateStringCorpus(n, min, Math.max(min, Math.floor(s.maxLen)), undefined, s.seed);
+    }
   }
 }
 
-/** A short human label for a dataset's provenance (chart captions, exports). */
+/**
+ * A short human label for a dataset's provenance (chart captions, exports).
+ *
+ * String datasets carry their **key length** too. It is the string run's second cost axis
+ * (docs/METHODOLOGY.md §2.5) — the same structures on 3–8 character keys and on 30–40
+ * character ones produce two flat lines at different heights — so without it two exported
+ * runs are indistinguishable in the one field a reader uses to tell them apart.
+ */
 export function describeDataset(d: Dataset): string {
   const o = d.order;
-  if (o.kind === 'as-loaded') return `your data — ${d.size.toLocaleString()} ${d.keyType} keys, as loaded`;
-  return `${o.kind} — ${d.size.toLocaleString()} ${d.keyType} keys` + ('seed' in o ? ` (seed ${o.seed})` : '');
+  const lengths = d.keyType === 'string' ? `, ${keyLengthNote(d.keys)}` : '';
+  if (o.kind === 'as-loaded') {
+    return `your data — ${d.size.toLocaleString()} ${d.keyType} keys${lengths}, as loaded`;
+  }
+  return (
+    `${o.kind} — ${d.size.toLocaleString()} ${d.keyType} keys${lengths}` +
+    ('seed' in o ? ` (seed ${o.seed})` : '')
+  );
+}
+
+/** `3–8 chars` for a varied corpus, `4 chars` when every key is the same length. */
+function keyLengthNote(keys: readonly string[]): string {
+  let min = Infinity;
+  let max = 0;
+  for (const k of keys) {
+    if (k.length < min) min = k.length;
+    if (k.length > max) max = k.length;
+  }
+  if (!Number.isFinite(min)) return '0 chars';
+  return min === max ? `${max} chars` : `${min}–${max} chars`;
 }
 
 const field: React.CSSProperties = { fontSize: 13, marginRight: 12 };
@@ -123,7 +191,19 @@ export function DatasetPicker({
         <div>
           <label style={field}>
             kind{' '}
-            <select value={s.kind} onChange={(e) => patch({ kind: e.target.value as GeneratorKind })} style={input}>
+            <select
+              value={s.kind}
+              onChange={(e) => {
+                const kind = e.target.value as GeneratorKind;
+                // Switching to string keys also trims an oversized n — see STRING_CORPUS_N.
+                patch(
+                  keyTypeOf(kind) === 'string'
+                    ? { kind, n: Math.min(s.n, STRING_CORPUS_N) }
+                    : { kind },
+                );
+              }}
+              style={input}
+            >
               {GENERATORS.map((g) => (
                 <option key={g.kind} value={g.kind}>{g.label}</option>
               ))}
@@ -139,7 +219,25 @@ export function DatasetPicker({
             <input type="number" value={s.seed} style={{ ...input, width: 60 }}
               onChange={(e) => patch({ seed: Number(e.target.value) })} />
           </label>
+          {keyTypeOf(s.kind) === 'string' && (
+            <label style={field}>
+              key length{' '}
+              <input type="number" min={1} max={64} value={s.minLen} style={{ ...input, width: 55 }}
+                onChange={(e) => patch({ minLen: Number(e.target.value) })} />
+              {' – '}
+              <input type="number" min={1} max={64} value={s.maxLen} style={{ ...input, width: 55 }}
+                onChange={(e) => patch({ maxLen: Number(e.target.value) })} />
+              {' chars'}
+            </label>
+          )}
           <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>{hint}</div>
+          {keyTypeOf(s.kind) === 'string' && (
+            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+              Try running once at 3–8 characters and again at 30–40: the hash set’s line stays just as
+              flat — it is still O(1) in the number of keys — but the whole line <em>lifts</em>, because
+              hashing reads every byte. That gap is the cost the textbook class doesn’t mention.
+            </div>
+          )}
         </div>
       ) : (
         <div>
@@ -155,8 +253,9 @@ export function DatasetPicker({
             <input value={s.keyField} onChange={(e) => patch({ keyField: e.target.value })} style={{ ...input, width: 120 }} />
           </label>
           <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-            Numeric keys only for now (string structures exist in the engine but aren’t wired into the sweep yet).
-            Order is preserved — that’s the point: a sorted column behaves differently from a shuffled one.
+            Numeric <em>or</em> text keys — a numeric column runs the seven numeric structures, a text
+            column runs the string array and string hash set. Order is preserved — that’s the point: a
+            sorted column behaves differently from a shuffled one.
           </div>
         </div>
       )}

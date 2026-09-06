@@ -3,10 +3,12 @@ import { createBenchEngine } from '../bench/wasmBenchEngine';
 import type { BenchEngine } from '../bench/BenchEngine';
 import {
   runAllSweeps,
+  runStringSweeps,
   toView,
   canonicalSearch,
   heapSearch,
   type CompareResult,
+  type StringCompareResult,
 } from '../compare/runSweeps';
 import type { Dataset } from '../data';
 import { REGISTRY } from '../registry';
@@ -49,6 +51,9 @@ export function CompareSection() {
   const [busy, setBusy] = useState(true);
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [result, setResult] = useState<CompareResult | null>(null);
+  // A run measures one key type or the other, never both (docs/METHODOLOGY.md §2.5), so
+  // exactly one of these two is non-null at any time.
+  const [stringResult, setStringResult] = useState<StringCompareResult | null>(null);
   const [signal, setSignal] = useState<Signal>('nanos');
   const [showTheory, setShowTheory] = useState(true);
   const [showSpread, setShowSpread] = useState(true);
@@ -60,8 +65,13 @@ export function CompareSection() {
     setDataset(d);
     try {
       await engine.ready();
-      const r = await runAllSweeps(engine, d, setStatus);
-      setResult(r);
+      if (d.keyType === 'string') {
+        setResult(null);
+        setStringResult(await runStringSweeps(engine, d, setStatus));
+      } else {
+        setStringResult(null);
+        setResult(await runAllSweeps(engine, d, setStatus));
+      }
       setStatus('ready');
     } catch (err) {
       setStatus('error: ' + (err as Error).message);
@@ -127,13 +137,49 @@ export function CompareSection() {
     [result, signal],
   );
 
+  // The string run (docs/METHODOLOGY.md §2.5): its own two structures, its own section.
+  const stringSearch = useMemo(
+    () => (stringResult?.search ?? []).map((v) => toView(v.series, signal)),
+    [stringResult, signal],
+  );
+  const stringChurn = useMemo(
+    () =>
+      (stringResult?.mutation ?? [])
+        .filter((v) => v.series.op === 'churn')
+        .map((v) => toView(v.series, signal)),
+    [stringResult, signal],
+  );
+  const stringSplit = useMemo(
+    () =>
+      (stringResult?.mutation ?? [])
+        .filter((v) => v.series.op !== 'churn')
+        .map((v) => toView(v.series, signal)),
+    [stringResult, signal],
+  );
+
   const shape = result?.shape ?? 'random';
   const sortedNote = shape === 'sorted';
   const reverse = dataset?.order.kind === 'reverse-sorted';
 
   const exportAll = (kind: 'csv' | 'json') => {
-    const views = [...search, ...churn, ...split, ...heapScan, ...heapChurn, ...heapSplit];
-    const meta = { dataset: dataset ? describeDataset(dataset) : null, order: dataset?.order, signal, engine: version };
+    const views = [
+      ...search,
+      ...churn,
+      ...split,
+      ...heapScan,
+      ...heapChurn,
+      ...heapSplit,
+      ...stringSearch,
+      ...stringChurn,
+      ...stringSplit,
+    ];
+    const meta = {
+      dataset: dataset ? describeDataset(dataset) : null,
+      order: dataset?.order,
+      signal,
+      engine: version,
+      ...(stringResult ? { meanKeyBytes: stringResult.meanKeyBytes } : {}),
+    };
     if (kind === 'csv') download('mr-data-structure-sweep.csv', toCsv(views), 'text/csv');
     else download('mr-data-structure-sweep.json', toJson(views, meta), 'application/json');
   };
@@ -188,6 +234,10 @@ export function CompareSection() {
         </Callout>
       )}
 
+      {/* A numeric run and a string run are mutually exclusive, so each set of sections —
+          headings included — is gated on its own result rather than on its series list. */}
+      {result && (
+        <>
       <h3 style={h3}>Search — the cost of finding a key</h3>
       <p style={{ color: '#555', marginTop: 0 }}>
         Four structures look up a key four different ways: the unsorted array scans from the front, the
@@ -369,6 +419,90 @@ export function CompareSection() {
             showSpread={showSpread}
             shape={shape}
           />
+        </>
+      )}
+        </>
+      )}
+
+      {stringResult && (
+        <>
+          <h3 style={h3}>Text keys — the same structures, a second cost axis</h3>
+          <p style={{ color: '#555', marginTop: 0 }}>
+            Your keys are text, so this run measured the two structures built to store text: the same
+            unsorted array and the same hash set, comparing and hashing <em>strings</em> instead of
+            numbers. The shapes below are the ones you would expect — the array scans, the hash set
+            jumps — but a number is one machine word and a key of{' '}
+            <strong>{stringResult.meanKeyBytes.toFixed(1)} bytes</strong> (this corpus’s average) is
+            not. Everything here costs what the textbook says <em>in the number of keys</em>, and
+            something extra per byte of the key on top.
+          </p>
+          {stringSearch.length > 0 && (
+            <>
+              <ul style={{ marginTop: 8 }}>
+                {stringSearch.map((v) => <FitRow key={v.series.structure} v={v} />)}
+              </ul>
+              <SweepChart views={stringSearch} signal={signal} showTheory={showTheory} showSpread={showSpread} shape="random" />
+              <SlopeChart views={stringSearch} />
+              <Callout title="What to notice" tone="tip">
+                The array (red) still rises in step with the number of keys and the hash set (blue) is
+                still flat — the classes don’t change when the keys become text, because those classes
+                only ever counted <em>how many keys</em> get looked at. What changes is the price of
+                looking at one. Switch the <strong>Signal</strong> selector to op-count: the hash set’s
+                curve there is exactly its numeric twin’s, one hash and a short chain walk, flat.
+                Switch back to wall-clock and the same flat line sits higher, because that one hash
+                reads every byte of the key. Then re-run with the key-length boxes set to 30–40
+                characters: the line lifts again without tilting. That is the honest reading of
+                “O(1)” — constant in the number of keys, linear in the size of one.
+              </Callout>
+              <Callout title="Why the array’s label may say n·log n" tone="caveat">
+                The array’s scan is linear in the number of keys — the slope above sits at about 1,
+                with a very tight fit. Its label still comes out as the next class up about as often
+                as not, and that is the wall clock telling the truth about memory rather than the
+                fitter failing. An array of numbers holds its keys inline; an array of text holds
+                <em>pointers</em> to text stored elsewhere, so a scan of 20,000 keys jumps around
+                memory and each element costs a little more than the last. That gentle upward bend is
+                what the label is reacting to. Switch to op-count and the curve is exactly straight:
+                one comparison per element, no memory in it (docs/PLAN.md risk R3).
+              </Callout>
+            </>
+          )}
+
+          {stringChurn.length > 0 && (
+            <>
+              <p style={{ color: '#555', marginBottom: 4 }}>
+                <strong>Add and remove, on text keys.</strong> Same churn method as above: at a fixed
+                size, insert one key and remove it again, so n stays put. The key we cycle is taken
+                from your own data with its last character changed — not a long sentinel — so the
+                array pays the same byte-by-byte comparison it would pay on a real key. (A sentinel
+                longer than every stored key would be rejected on the length check alone, which would
+                have made the array look cheaper and the hash set dearer at the same time.)
+              </p>
+              <ul style={{ marginTop: 4 }}>
+                {stringChurn.map((v) => <FitRow key={`${v.series.structure}-${v.series.op}`} v={v} />)}
+              </ul>
+              <SweepChart views={stringChurn} signal={signal} showTheory={showTheory} showSpread={showSpread} shape="random" />
+              <SlopeChart views={stringChurn} />
+              {stringSplit.length > 0 && (
+                <>
+                  <p style={{ color: '#555', marginBottom: 4 }}>
+                    <strong>Cross-check — the per-operation split</strong> (the same finite-difference
+                    method as the numeric run: difference the cumulative build and teardown times).
+                  </p>
+                  <ul style={{ marginTop: 4 }}>
+                    {stringSplit.map((v) => <FitRow key={`${v.series.structure}-${v.series.op}`} v={v} />)}
+                  </ul>
+                </>
+              )}
+              <Callout title="Why these two and not the other five" tone="caveat">
+                Only the array and the hash set have string-key bench twins in the engine, so a text
+                dataset measures two structures rather than seven. And these curves are read against
+                each other only — never against the numeric charts, even though the operations have
+                the same names. One run’s comparison is a byte-wise walk over a key; the other’s is a
+                single instruction on a double. Putting them on one chart would be reading two
+                different units off one axis.
+              </Callout>
+            </>
+          )}
         </>
       )}
 

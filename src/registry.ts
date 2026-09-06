@@ -28,6 +28,14 @@ export interface StructureInfo {
   readonly id: StructureId;
   readonly label: string;
   readonly family: Family;
+  /**
+   * The key *type* this bench twin stores. Two structures are only comparable
+   * when they share both the op set ({@link isCanonical}) **and** this: a
+   * string-keyed scan pays per byte of the key, so lining its curve up against
+   * an f64 scan would compare two different units of work. A Compare run is
+   * therefore all-numeric or all-string, never mixed (docs/METHODOLOGY.md §2.5).
+   */
+  readonly keyType: 'number' | 'string';
   /** Chart colour (tab10), stable across every chart so a structure is always the same hue. */
   readonly color: string;
   /** The unit the op-count signal counts for this structure (§2.3, §6.4). */
@@ -55,6 +63,7 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     id: 'array',
     label: 'unsorted array',
     family: 'linear',
+    keyType: 'number',
     color: '#d62728',
     costMetric: 'comparisons + shifts',
     mechanism: 'scans from the front; delete shifts the tail left to close the gap',
@@ -66,6 +75,7 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     id: 'll',
     label: 'linked list',
     family: 'linear',
+    keyType: 'number',
     color: '#ff7f0e',
     costMetric: 'node-visits',
     mechanism: 'walks node by node from the head; insert is an O(1) head prepend',
@@ -77,6 +87,7 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     id: 'sarr',
     label: 'sorted array',
     family: 'linear',
+    keyType: 'number',
     color: '#2ca02c',
     costMetric: 'comparisons + shifts',
     mechanism: 'binary-searches; insert/delete shift the tail to keep order',
@@ -88,6 +99,7 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     id: 'hashset',
     label: 'hash set',
     family: 'hashing',
+    keyType: 'number',
     color: '#1f77b4',
     costMetric: 'hashes + chain probes',
     mechanism: 'hashes straight to a bucket; separate chaining, load-factor rehash',
@@ -99,6 +111,7 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     id: 'bst',
     label: 'binary search tree',
     family: 'tree',
+    keyType: 'number',
     color: '#9467bd',
     costMetric: 'comparisons',
     mechanism: 'descends left/right by comparison; no rebalancing, so sorted input makes a chain',
@@ -110,6 +123,7 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     id: 'avl',
     label: 'AVL tree',
     family: 'tree',
+    keyType: 'number',
     color: '#8c564b',
     costMetric: 'comparisons + rotations',
     mechanism: 'a BST that rotates to stay height-balanced on any input order',
@@ -143,6 +157,7 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     id: 'heap',
     label: 'min-heap',
     family: 'heap',
+    keyType: 'number',
     color: '#e377c2',
     costMetric: 'comparisons + swaps',
     mechanism: 'keeps the smallest key at the root of a complete tree; sifts up on insert, down on extract',
@@ -150,9 +165,50 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     worst: { search: ON, insert: OLOG, delete: OLOG, churn: OLOG },
     shapeSensitive: false,
   },
+  /**
+   * The **string-key twins** (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5). Same
+   * algorithms as `array` / `hashset`, same classes *in n* — and a second cost axis the
+   * numeric structures do not have: the **key length L**. Every class below is in n only.
+   * A string comparison walks bytes and a string hash reads the whole key, so both
+   * structures pay O(L) per operation on top; that shows as the flat line sitting
+   * *higher* on a long-key corpus while its slope stays 0 (O(1) in n, O(L) in the key).
+   *
+   * **They deliberately share their numeric twin's colour**, because they are the same
+   * structure seen through a different key type, and the two can never appear on one
+   * chart: a Compare run is all-numeric or all-string (see {@link StructureInfo.keyType}).
+   * Pinned by `registry.test.ts` so nobody "fixes" the duplicate hue.
+   */
+  arraystr: {
+    id: 'arraystr',
+    label: 'unsorted array (string keys)',
+    family: 'linear',
+    keyType: 'string',
+    color: '#d62728',
+    costMetric: 'key comparisons + shifts',
+    mechanism: 'scans from the front comparing whole keys; delete shifts the tail left',
+    average: { search: ON, insert: O1, delete: ON, churn: ON },
+    worst: { search: ON, insert: ON, delete: ON, churn: ON },
+    shapeSensitive: false,
+  },
+  hashsetstr: {
+    id: 'hashsetstr',
+    label: 'hash set (string keys)',
+    family: 'hashing',
+    keyType: 'string',
+    color: '#1f77b4',
+    costMetric: 'hashes + chain probes',
+    mechanism: 'hashes the key’s bytes straight to a bucket; separate chaining, load-factor rehash',
+    average: { search: O1, insert: O1, delete: O1, churn: O1 },
+    worst: { search: ON, insert: ON, delete: ON, churn: ON },
+    shapeSensitive: false,
+  },
 };
 
-/** Every registered structure, in catalogue order (§8: linear, hashing, trees, heaps). */
+/**
+ * Every **numeric-key** structure, in catalogue order (§8: linear, hashing, trees, heaps)
+ * — the catalogue the shared Compare charts are drawn from. The string twins live in
+ * {@link STRING_STRUCTURES}, because a run measures one key type or the other.
+ */
 export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.array,
   REGISTRY.ll,
@@ -174,7 +230,29 @@ export const CANONICAL_STRUCTURES: readonly StructureInfo[] = STRUCTURES.filter(
   (s) => s.id !== 'heap',
 );
 
-/** Whether `id` is on the canonical op set (see {@link CANONICAL_STRUCTURES}). */
+/**
+ * The **string-key** catalogue (docs/PLAN.md §4.2, §8): the two bench twins that store
+ * string keys. A Compare run drives *one* key type — a string dataset cannot build an
+ * f64 structure and an f64 dataset has nothing to say about byte-wise comparison — so
+ * these are rendered in their own section and never merged with {@link STRUCTURES}.
+ */
+export const STRING_STRUCTURES: readonly StructureInfo[] = [
+  REGISTRY.arraystr,
+  REGISTRY.hashsetstr,
+];
+
+/**
+ * Whether `id` is on the canonical op set — insert / search / delete on a key
+ * (see {@link CANONICAL_STRUCTURES}). True for the string twins: they do the same three
+ * operations.
+ *
+ * **Sharing a chart needs two things, and this is only one of them.** The other is the
+ * same {@link StructureInfo.keyType}: `arraystr` is canonical, yet its curve must never
+ * be drawn beside `array`'s, because one comparison walks bytes and the other compares
+ * two f64s. In practice the split is structural — a numeric run and a string run produce
+ * different result objects and are pinned apart by `runSweeps.test.ts` — but if you ever
+ * filter a merged list, filter on both.
+ */
 export function isCanonical(id: StructureId): boolean {
   return id !== 'heap';
 }

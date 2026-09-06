@@ -131,6 +131,73 @@ not only on op-counts, and regimes 6 and 7 are where that matters most:
   `scripts/verify-browser.mjs` pins both halves so the pair cannot silently
   drift back to a single reassuring line.
 
+### 2.5 String keys: a second cost axis, and a probe that must not be a sentinel
+
+Every structure above stores `f64` keys, where a comparison is one instruction
+and a hash mixes one 64-bit word. The **string twins** — `arraystr` and
+`hashsetstr`, the same unsorted array and separate-chaining hash set over
+`String` — keep the same classes *in n* and add a second cost factor the classes
+cannot express: the **key length L**. A scan compares bytes; a hash reads every
+byte. So `O(1)` here means constant in the number of keys and linear in the size
+of one, and the tool shows the difference rather than asserting it:
+
+- **Two signals separate on the same run.** The op-count curve (hashes +
+  chain-steps) is identical to the numeric twin's — flat, one hash, a short
+  chain walk. The wall-clock curve is flat too, but *higher*, and it lifts again
+  when the key-length control is raised without its slope changing. That gap is
+  L, isolated by the pair of signals of §1.
+- **The two runs never share a chart.** A dataset is numeric or textual, so a
+  Compare run drives one set of structures or the other and the results are
+  separate types (`CompareResult` vs `StringCompareResult`). Two structures are
+  comparable only when they share the op set *and* the key type; `isCanonical`
+  covers the first half only.
+
+**The probe/churn key is derived from the data, not invented.** The numeric
+sweeps get a guaranteed-absent key from arithmetic (`max + 1`, `min − 1`, §4.1).
+Strings have no such arithmetic, and the obvious substitute — a key longer than
+every stored key, absent by construction — is *wrong here*, in two directions at
+once. Rust compares string slices length-first, so a uniquely long key:
+
+- makes every array comparison bail out in O(1) on the length check, understating
+  exactly the per-byte scan cost this section exists to show; while
+- making the hash set's pass read more bytes than a real key would, overstating
+  its constant.
+
+Opposite biases on the one chart whose purpose is to compare the two. The
+absent key is therefore a **stored key with its last character changed**,
+verified absent against a `Set` of the decoded prefix (untimed setup) — so it
+carries the corpus's own length and shape. The long-key form survives only as
+the fallback for a corpus that exhausts its alphabet at that length.
+
+The churn key takes that mutation from a key of **median length**, not from
+`keys[0]`. The cycled key inherits its seed's length, and on imported data the
+first row is an accident of ordering: a corpus that happens to begin with a
+one-character key would otherwise cycle a one-character key, and the measured
+mutation *constant* would move with row order rather than with the structure.
+The numeric side has no equivalent exposure, since `max + 1` and `min − 1` are
+properties of the whole prefix. `src/bench/stringWorkload.ts` holds the code, the
+reasons, and the tests that pin them — deliberately outside the worker, which
+cannot be unit-tested, and which should hold the timing rather than the decisions.
+
+One more measurement detail specific to the two-buffer marshal layout: every
+timed static call (`build_insert_n` and friends) is handed the offsets+bytes
+*prefix* for the point's `n`, never the whole corpus. wasm-bindgen copies the
+slice it is given into WASM memory on each call, so passing the full buffer while
+measuring n = 250 would put a constant, full-corpus copy inside every timed
+region and flatten the curve into noise. That is `prefixOf`, the two-buffer
+equivalent of the numeric side's `keys.subarray(0, n)`.
+
+One measured wrinkle worth stating, since the chart shows it: the string array's
+scan is fitted as **O(n log n)** about as often as O(n), on a slope of 1.02 ±
+0.03 with R² 0.9995. Its *tail* slope runs above 1 (≈ 1.16) because a
+`Vec<String>` stores pointers to heap-allocated bytes — as n grows the scan
+chases further and each element costs a little more than the last. That is risk
+R3 with a mechanism behind it, not a fitter defect, and the numeric array (whose
+f64s sit inline) shows no such drift. The browser gate therefore asserts the
+slope band and the rise rather than the label, as it already does for the sorted
+array's search, and the UI says why beside the chart. The op-count signal —
+comparisons per probe — is exactly linear either way.
+
 ## 3. Reading a curve — the fitter (`src/bench/fit.ts`)
 
 The **log-log slope** is the headline (PLAN §2.3): on log-log axes `y ∝ nᵏ` is a
@@ -327,4 +394,9 @@ Ordered by how much they can mislead a reader today.
 | on **reverse-sorted** input the BST's *measured* churn curve reads O(n) (slope ≈ 1.00, R² 1.000) while the AVL stays sub-linear (≈ 0.16) — the wall-clock half of §4.1, which a right-spine-only probe read as flat | `scripts/verify-browser.mjs`, second pass (drives the picker to reverse-sorted) | real |
 | the min-heap on the real clock: search reads **O(n)** (slope ≈ 0.97, ratio ≈ 6400×) with no lookup shortcut, and churn stays **sub-linear** (≈ 0.13 uniform, ≈ 0.11 reverse-sorted — a heap cannot degenerate) | `scripts/verify-browser.mjs`, both passes | real |
 | extract-min costs **more per operation** than insert at the top of the sweep (asserted > 1.3×; measured 7.5× and 10.6×) — a *cost* claim, not a growth claim, for the reason in §4 hurdle 2 | `scripts/verify-browser.mjs` | real |
+| the absent probe/churn key is genuinely absent, **length-preserving**, and takes its length from a median key rather than from `keys[0]` — the guard against reintroducing the sentinel bias of §2.5 | `src/bench/stringWorkload.test.ts` | none |
+| `prefixOf`'s two-buffer views round-trip to exactly the first n keys, and share the caller's buffer (no copy) | same | none |
+| **string keys on the real clock:** array search rises O(n) (slope ≈ 1.02 ± 0.03, R² 0.9995, ratio ≈ 2000×) while hash-set search stays O(1) (≈ 0.04); array churn rises (≈ 0.94), hash-set churn flat (≈ 0.05) | `scripts/verify-browser.mjs`, third pass (drives the picker to `string-corpus`) | real |
+| **the second cost axis:** hashing a *string* key costs more per op than hashing a number (14.1 ns vs 4.2 ns on one run) **while both stay flat** — O(1) in the number of keys, O(L) in the size of one | `scripts/verify-browser.mjs` | real |
+| **deliberately not asserted:** the string array's *class label*, which comes out O(n log n) as often as O(n) because its tail slope runs above 1 (pointer-chasing, §2.5). The slope band and the rise are asserted instead, as for the sorted array's search | — | — |
 | **deliberately not asserted:** the *class labels* on the heap's two finite-difference halves. They are noise-dominated and have been seen to mislabel (§4 hurdles 2 and 7); the clock-free op-count proofs carry those claims instead | — | — |

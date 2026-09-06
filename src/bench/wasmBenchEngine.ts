@@ -82,6 +82,37 @@ class WasmBenchEngine implements BenchEngine {
     return this.api.runHeapMutationSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts);
   }
 
+  runStringSweep(
+    offsets: Uint32Array,
+    bytes: Uint8Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    // Both halves of the string key buffer are transferred (docs/PLAN.md risk R7) —
+    // detaches `offsets` and `bytes` here.
+    return this.api.runStringSweep(
+      Comlink.transfer(offsets, [offsets.buffer]),
+      Comlink.transfer(bytes, [bytes.buffer]),
+      sizes,
+      opts,
+    );
+  }
+
+  runStringMutationSweep(
+    offsets: Uint32Array,
+    bytes: Uint8Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    // Both halves transferred (docs/PLAN.md risk R7) — detaches them here.
+    return this.api.runStringMutationSweep(
+      Comlink.transfer(offsets, [offsets.buffer]),
+      Comlink.transfer(bytes, [bytes.buffer]),
+      sizes,
+      opts,
+    );
+  }
+
   dispose(): void {
     this.worker.terminate();
   }

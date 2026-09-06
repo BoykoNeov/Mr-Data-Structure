@@ -22,8 +22,22 @@
  * deliberate O(n) scan contrast), so it is compared only within its own group and
  * never merged into the canonical charts — enforced in the UI, not here
  * (docs/PLAN.md §8, risk R6).
+ *
+ * `arraystr` / `hashsetstr` are the **string-key** twins of `array` / `hashset`.
+ * They run the same three operations, but on a different key *type*, so they are
+ * comparable to each other and never to the numeric structures: a run is either
+ * numeric or string, never both (docs/PLAN.md §4.2, docs/METHODOLOGY.md §2.5).
  */
-export type StructureId = 'array' | 'hashset' | 'bst' | 'avl' | 'sarr' | 'll' | 'heap';
+export type StructureId =
+  | 'array'
+  | 'hashset'
+  | 'bst'
+  | 'avl'
+  | 'sarr'
+  | 'll'
+  | 'heap'
+  | 'arraystr'
+  | 'hashsetstr';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).

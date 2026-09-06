@@ -27,6 +27,9 @@ let heap = null;
 let revBst = null;
 let revAvl = null;
 let revHeap = null;
+let strSearch = null;
+let strMutation = null;
+let strMeta = null;
 let meta = null;
 let text = '(no text captured)';
 const checks = [];
@@ -337,7 +340,9 @@ try {
     window.__heapMutationProof = undefined;
   });
   await page.locator('select').first().selectOption('reverse-sorted');
-  await page.getByRole('button', { name: /run|sweep/i }).first().click();
+  // Name the run button exactly: the panel also carries one-click preset buttons, and a
+  // looser /run|sweep/ would match whichever of those happens to come first in the DOM.
+  await page.getByRole('button', { name: /run the sweeps/i }).first().click();
   await page.waitForFunction(
     () =>
       window.__heapMutationProof !== undefined ||
@@ -392,6 +397,110 @@ try {
     }
   }
 
+  // ── Third pass: the same page, driven onto **string keys** ──
+  //
+  // A dataset of text keys drives a different set of structures entirely — the string
+  // array and the string hash set (docs/PLAN.md §4.2, docs/METHODOLOGY.md §2.5) — so this
+  // pass proves a path the numeric ones cannot: that the offsets+UTF-8 marshal layout
+  // survives worker → WASM at runtime, and that the classes hold when a "comparison" stops
+  // being one instruction on a double and becomes a walk over bytes.
+  //
+  // It runs **last** and asserts only its own globals. The numeric proofs above are read
+  // before this point and are deliberately not reset: a string run never sets them, so an
+  // assert placed after this pass would read the reverse-sorted pass's numbers.
+  await page.evaluate(() => {
+    window.__stringSweepProof = undefined;
+    window.__stringMutationProof = undefined;
+  });
+  await page.locator('select').first().selectOption('string-corpus');
+  await page.getByRole('button', { name: /run the sweeps/i }).first().click();
+  await page.waitForFunction(
+    () =>
+      window.__stringMutationProof !== undefined ||
+      /status:\s*error/.test(document.body.innerText),
+    { timeout: 150000 },
+  );
+  strSearch = await page.evaluate(() => window.__stringSweepProof ?? null);
+  strMutation = await page.evaluate(() => window.__stringMutationProof ?? null);
+  strMeta = await page.evaluate(() => window.__compareMeta ?? null);
+
+  want('string-key run measured', strMeta && strMeta.keyType === 'string');
+  if (strMeta) {
+    // The second cost axis, reported so the "O(1) in n, O(L) in the key" claim beside the
+    // chart is backed by a number from the run rather than by assertion.
+    want(
+      `string run reports its mean key size (${(strMeta.meanKeyBytes ?? 0).toFixed(1)} bytes > 0)`,
+      strMeta.meanKeyBytes > 0,
+    );
+  }
+  if (strSearch) {
+    const aStr = strSearch.find((p) => p.structure === 'arraystr');
+    const hStr = strSearch.find((p) => p.structure === 'hashsetstr');
+    want('two string search series measured', strSearch.length === 2 && aStr && hStr);
+    if (aStr) {
+      const ratio = aStr.lastNanos / aStr.firstNanos;
+      // The slope band and the rise, NOT the label — deliberately, and for a measured
+      // reason. The scan is linear in the number of keys (slope 1.02 ± 0.03, R² 0.9995),
+      // but its *tail* slope runs a little above 1 (1.16), because a `Vec<String>` holds
+      // pointers to heap-allocated bytes: as n grows the scan chases further and each
+      // element costs more than the last. The fitter reads that gentle upward curvature as
+      // the neighbouring class and labels the series O(n log n) — risk R3, the same reason
+      // the sorted array's search is asserted on its band rather than its label. The
+      // numeric array, whose f64s sit inline in the buffer, has no such drift and does
+      // label O(n). The op-count signal (comparisons per probe) is exactly linear either
+      // way; this is the wall clock reporting a real memory effect.
+      want(
+        `string array search slope ~1 (${aStr.slope.toFixed(2)} in 0.7..1.4)`,
+        aStr.slope >= 0.7 && aStr.slope <= 1.4,
+      );
+      want(
+        `string array search fitted at or above linear (${aStr.best})`,
+        aStr.best === 'O(n)' || aStr.best === 'O(n log n)',
+      );
+      want(`string array search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
+    }
+    if (hStr) {
+      const ratio = hStr.lastNanos / hStr.firstNanos;
+      want('string hash-set search labelled O(1)', hStr.best === 'O(1)');
+      want(`string hash-set search slope ~0 (< 0.4)`, hStr.slope < 0.4);
+      want(`string hash-set search stays flat (ratio ${ratio.toFixed(1)} < 10)`, ratio < 10);
+    }
+    // The claim the numeric run cannot make: the class is in n, but the *constant* is in
+    // the key length. A string hash lookup must cost more per op than the f64 one on the
+    // same machine and the same run of the gate — it reads every byte of the key, where the
+    // numeric hash mixes a single 64-bit word. (Cost claim at one size only; the flat class
+    // is asserted separately above. `proof` is the first, uniform, numeric pass.)
+    const numericHash = proof && proof.find((p) => p.structure === 'hashset');
+    if (hStr && numericHash) {
+      want(
+        `hashing a string key costs more than hashing a number (${hStr.lastNanos.toFixed(1)} > ${numericHash.lastNanos.toFixed(1)} ns), both flat`,
+        hStr.lastNanos > numericHash.lastNanos && hStr.slope < 0.4 && numericHash.slope < 0.4,
+      );
+    }
+  }
+  if (strMutation) {
+    const find = (st, op) => strMutation.find((m) => m.structure === st && m.op === op);
+    const aChurn = find('arraystr', 'churn');
+    const hChurn = find('hashsetstr', 'churn');
+    want('six string mutation series measured', strMutation.length === 6);
+    if (aChurn) {
+      // The churn key is derived from the corpus (a stored key with its last character
+      // changed), *not* a sentinel longer than every stored key: Rust compares string
+      // slices length-first, so a uniquely-long key would bail out of every comparison in
+      // O(1) and understate this very curve. See `absentLike` in engine.worker.ts.
+      want(
+        `string array churn rises (slope ${aChurn.slope.toFixed(2)} > 0.6)`,
+        aChurn.slope > 0.6,
+      );
+    }
+    if (hChurn) {
+      want(
+        `string hash-set churn stays flat (|slope| ${Math.abs(hChurn.slope).toFixed(2)} < 0.6)`,
+        Math.abs(hChurn.slope) < 0.6,
+      );
+    }
+  }
+
   ok = checks.length > 0 && checks.every((c) => c.pass);
 } catch (err) {
   logs.push(`[harness] ${err.message}`);
@@ -433,9 +542,21 @@ if (revAvl) {
   console.log('--- avl mutation proof (reverse-sorted) ---');
   console.log(JSON.stringify(revAvl, null, 2));
 }
+if (strSearch) {
+  console.log('--- string search proof ---');
+  console.log(JSON.stringify(strSearch, null, 2));
+}
+if (strMutation) {
+  console.log('--- string mutation proof ---');
+  console.log(JSON.stringify(strMutation, null, 2));
+}
 if (meta) {
-  console.log('--- compare meta ---');
+  console.log('--- compare meta (uniform pass) ---');
   console.log(JSON.stringify(meta));
+}
+if (strMeta) {
+  console.log('--- compare meta (string pass) ---');
+  console.log(JSON.stringify(strMeta));
 }
 if (checks.length) {
   console.log('--- checks ---');

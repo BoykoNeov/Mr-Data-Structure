@@ -4,15 +4,19 @@ import type { SweepPoint, SweepSeries, StructureId, SweepOp } from '../bench/mea
 import { generateSorted, generateUniform, generateStringCorpus, makeDataset } from '../data';
 import {
   runAllSweeps,
+  runStringSweeps,
   sizesFor,
   toProof,
   toView,
   canonicalSearch,
   heapSearch,
   MUT_MAX,
+  STRING_MUT_MAX,
+  STRING_SWEEP_MAX,
   SWEEP_MAX,
   SWEEP_MIN,
 } from './runSweeps';
+import { REGISTRY } from '../registry';
 import { inputShapeOf, isMonotone } from './shape';
 
 /**
@@ -78,6 +82,19 @@ function fakeEngine(log: string[]): BenchEngine {
     runHeapMutationSweep: async (_k, sizes) => {
       log.push(`heap:${sizes.length}`);
       return mutTrio('heap', sizes, (n) => Math.log2(n));
+    },
+    // The string twins run the same shapes as their numeric counterparts — the point of
+    // the string run is the *constant* (bytes per key), which a fake clock cannot carry.
+    runStringSweep: async (offsets, bytes, sizes) => {
+      log.push(`strsearch:${offsets.length - 1}:${bytes.length}:${sizes.length}`);
+      return [
+        series('arraystr', 'search', sizes, (n) => n),
+        series('hashsetstr', 'search', sizes, () => 3),
+      ];
+    },
+    runStringMutationSweep: async (_o, _b, sizes) => {
+      log.push(`strmut:${sizes.length}`);
+      return [...mutTrio('arraystr', sizes, (n) => n), ...mutTrio('hashsetstr', sizes, () => 2)];
     },
     dispose: () => {},
   };
@@ -151,9 +168,67 @@ describe('runAllSweeps', () => {
     expect((win.__compareMeta as { shape: string }).shape).toBe('sorted');
   });
 
-  it('rejects string keys and too-small datasets with a clear message', async () => {
+  it('routes string keys to the other entry point, and rejects too-small datasets', async () => {
     await expect(runAllSweeps(fakeEngine([]), generateStringCorpus(100))).rejects.toThrow(/numeric keys/);
     await expect(runAllSweeps(fakeEngine([]), generateSorted(5))).rejects.toThrow(/at least 10 keys/);
+    await expect(runStringSweeps(fakeEngine([]), generateSorted(100))).rejects.toThrow(/string keys/);
+    await expect(runStringSweeps(fakeEngine([]), generateStringCorpus(5))).rejects.toThrow(/at least 10 keys/);
+  });
+
+  it('never puts a string-keyed structure in a numeric result (docs/METHODOLOGY.md §2.5)', async () => {
+    const r = await runAllSweeps(fakeEngine([]), generateUniform(5_000, 0, 5_000, true, 1));
+    const every = [...r.search, ...r.mutation, ...r.trees, ...r.heap];
+    // Sharing a chart takes the same op set *and* the same key type. The two runs produce
+    // different result objects precisely so no chart can be handed a mixture.
+    expect(every.every((v) => REGISTRY[v.series.structure].keyType === 'number')).toBe(true);
+  });
+});
+
+describe('runStringSweeps', () => {
+  it('drives both string sweeps on its own bounds and publishes its own proofs', async () => {
+    const log: string[] = [];
+    const statuses: string[] = [];
+    const win: Record<string, unknown> = {};
+    const dataset = generateStringCorpus(50_000, 4, 4, 'abcdefgh', 3);
+
+    const r = await runStringSweeps(fakeEngine(log), dataset, (s) => statuses.push(s), win);
+
+    // The string caps, not the numeric ones: every op here carries the key length too.
+    expect(r.searchSizes[r.searchSizes.length - 1]).toBe(STRING_SWEEP_MAX);
+    expect(r.mutationSizes[r.mutationSizes.length - 1]).toBe(STRING_MUT_MAX);
+    expect(statuses).toHaveLength(2);
+    // Each engine call gets its own freshly marshalled (transferable) buffer pair.
+    expect(log).toEqual([
+      `strsearch:50000:200000:${r.searchSizes.length}`,
+      `strmut:${r.mutationSizes.length}`,
+    ]);
+
+    expect(r.search.map((v) => v.series.structure)).toEqual(['arraystr', 'hashsetstr']);
+    expect(r.search[0].fit.best).toBe('O(n)');
+    expect(r.search[1].fit.best).toBe('O(1)');
+    expect(r.mutation.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
+      'arraystr.churn', 'arraystr.insert', 'arraystr.delete',
+      'hashsetstr.churn', 'hashsetstr.insert', 'hashsetstr.delete',
+    ]);
+    // The second cost axis, reported alongside the classes: 4 chars ⇒ 4 UTF-8 bytes.
+    expect(r.meanKeyBytes).toBe(4);
+
+    expect(Object.keys(win)).toEqual([
+      '__stringSweepProof',
+      '__compareMeta',
+      '__stringMutationProof',
+    ]);
+    expect(win.__compareMeta).toMatchObject({ keyType: 'string', shape: 'random', meanKeyBytes: 4 });
+    // The numeric gate globals stay untouched, so a string run can never be mistaken for
+    // a numeric one that happens to be missing sweeps.
+    expect(win.__sweepProof).toBeUndefined();
+    expect(win.__heapMutationProof).toBeUndefined();
+  });
+
+  it('colours each string twin as its numeric twin, and fits per signal', () => {
+    const v = toView(series('arraystr', 'search', [10, 100, 1000], (n) => n), 'opcount');
+    expect(v.fit.best).toBe('O(n)');
+    expect(v.color).toBe(REGISTRY.array.color);
   });
 });
 
