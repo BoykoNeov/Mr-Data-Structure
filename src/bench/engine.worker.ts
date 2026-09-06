@@ -449,6 +449,16 @@ const api = {
     // dropping through express lanes it can splice in O(1) — the same class, opposite
     // mutation costs, both visible on the churn chart below (docs/PLAN.md §8).
     //
+    // One bias to read that pair with, and it is the shared probe set's, not the skip
+    // list's: `buildProbes` puts its 64 absent probes at `max + 1 …`, which for the skip
+    // list is the *cheapest* query it has — the rightmost staircase runs out of forward
+    // links, and a null costs no comparison, where a mid-range absent key fails one per
+    // level. So half this series' workload is its best case and its constant reads low
+    // against the sorted array's, for which the same probes are the worst case. The slope
+    // is unaffected (a fixed per-level saving, not a function of n), and the probes stay
+    // shared anyway — retuning them per structure is what would end the comparison
+    // (docs/METHODOLOGY.md §4 hurdle 9, the same call hurdle 11 makes for the trie).
+    //
     // The **min-heap** is measured on the same size ladder by the same runner, but it is
     // NOT a fifth competitor: a heap has no search shortcut, so this is the deliberate
     // O(n)-scan *contrast* (docs/PLAN.md §8, risk R6). Measuring it here buys

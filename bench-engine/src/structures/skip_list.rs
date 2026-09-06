@@ -41,7 +41,7 @@
 //!
 //! The honest caveat, stated rather than buried (docs/METHODOLOGY.md §2.6): the
 //! probabilistic guarantee is now over the **key distribution** rather than over a coin.
-//! A key set adversarially chosen to collide in `trailing_zeros(mix_f64(k))` would build a
+//! A key set adversarially chosen to collide in `trailing_zeros(splitmix64(...))` would build a
 //! degenerate list, exactly as sorted input degenerates a naive BST — the same class of
 //! statement, and on-theme for a tool that measures the user's own data.
 //!
@@ -393,11 +393,14 @@ impl SkipListF64 {
     ///   (what search and delete need — they act on the first occurrence);
     /// - `true` ⇒ advance while `value <= target`, stopping *after* the last equal key
     ///   (what insert needs, so a new equal lands behind the equals already stored).
+    /// `update` is `None` for a plain search, which wants only the predecessor: nothing
+    /// downstream reads the per-level record, and the timed hot path should not be paying
+    /// for a 24-word scratch array it never looks at. `insert` and `delete` pass `Some`.
     fn descend<const COUNT: bool, const PAST_EQUAL: bool>(
         &self,
         target: f64,
         ops: &mut u64,
-        update: &mut [u32; MAX_LEVEL],
+        mut update: Option<&mut [u32; MAX_LEVEL]>,
     ) -> u32 {
         let mut cur = HEAD;
         let mut i = self.level;
@@ -414,7 +417,9 @@ impl SkipListF64 {
                     break;
                 }
             }
-            update[i] = cur;
+            if let Some(u) = update.as_deref_mut() {
+                u[i] = cur;
+            }
         }
         cur
     }
@@ -423,8 +428,7 @@ impl SkipListF64 {
     /// that could hold it. Counts one op per node inspected, the final equality test
     /// included — so a miss just past the end of the list costs one op less than a hit.
     fn find<const COUNT: bool>(&self, key: f64, ops: &mut u64) -> bool {
-        let mut update = [HEAD; MAX_LEVEL];
-        let cur = self.descend::<COUNT, false>(key, ops, &mut update);
+        let cur = self.descend::<COUNT, false>(key, ops, None);
         match self.fwd(cur, 0) {
             Some(nx) => {
                 if COUNT {
@@ -444,7 +448,7 @@ impl SkipListF64 {
         // every level the list does not yet use — a taller-than-current tower links
         // straight off the sentinel.
         let mut update = [HEAD; MAX_LEVEL];
-        let _ = self.descend::<COUNT, true>(key, ops, &mut update);
+        let _ = self.descend::<COUNT, true>(key, ops, Some(&mut update));
 
         let height = tower_height(key);
         if height > self.level {
@@ -464,7 +468,7 @@ impl SkipListF64 {
     /// (the R1 contract). Returns whether a key was removed.
     fn delete<const COUNT: bool>(&mut self, key: f64, ops: &mut u64) -> bool {
         let mut update = [HEAD; MAX_LEVEL];
-        let cur = self.descend::<COUNT, false>(key, ops, &mut update);
+        let cur = self.descend::<COUNT, false>(key, ops, Some(&mut update));
 
         let target = match self.fwd(cur, 0) {
             Some(nx) => nx,

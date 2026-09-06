@@ -470,7 +470,23 @@ Ordered by how much they can mislead a reader today.
    The curves are still honest per structure, but "n" means input size.
 9. **Probe mix is fixed** at 64 present + 64 absent. A present-only or
    absent-only workload changes the array's constant (n/2 vs n) and the
-   chain-walk length in the hash set, not the class.
+   chain-walk length in the hash set, not the class. The absent block is
+   `max + 1 … max + 64`, and the **skip list** is the one structure for which
+   that is the *cheap* end rather than the dear one: an above-max probe walks
+   the rightmost staircase and pays **nothing** for running out of forward links
+   (the loop breaks on a null, not on a failed comparison), where a mid-range
+   absent key fails one comparison per level on the way down. The committed
+   corpus shows the size of it — in the `deep` case, probe `200` (above max)
+   costs 1 node-visit and probe `3` (mid-range absent) costs 12 — and the same
+   asymmetry is measured from the other side by
+   `skip_list::tests::neither_churn_end_changes_the_reported_class` (29 ops at
+   the low end vs 17 at the high). So half the skip list's measured search
+   workload is its best case, and its search *constant* reads low against the
+   sorted array it now shares a class with on the chart. The **slope is
+   unaffected** — the effect is a fixed per-level saving, not a function of n —
+   and the probes stay shared regardless, for the reason hurdle 11 gives for the
+   trie: a chart where each line gets a workload tuned to suit it stops being a
+   comparison.
 10. **No cross-machine comparability.** Wall-clock results are labelled as
    measured on *this* machine and browser; nothing is normalised across
    machines (PLAN §13, by choice).
