@@ -56,6 +56,17 @@ tool call does not survive into the next (each call is a fresh process).
   suite reported 1.2× against a > 1.3× band, and 2.1× on its own moments later. A
   single failing ratio check with everything else green is a scheduling artefact, not
   a regression — re-run it alone before chasing it.
+- **Contention is not the only way the gate flakes — check for a stale preview server
+  first.** `scripts/verify-browser.mjs` hard-codes `http://localhost:4173`, so the gate
+  measures whatever answers on that port, not necessarily the server it just started.
+  Before `preview.strictPort` was set (`vite.config.ts`), a preview whose port was taken
+  fell forward to 4174, 4175, … and printed the new port while the gate went on reading
+  4173 — silently benchmarking *another session's* server. On 2026-09-06 that produced 24
+  orphaned previews on one dev box holding 4173–4196, because a backgrounded
+  `npm run preview` is **two** processes and killing the npm wrapper leaves the vite child
+  alive (`.github/workflows/ci.yml` still does this). strictPort now turns the collision
+  into a hard `Port 4173 is already in use` — if you see that, hunt the leftover server
+  rather than switching ports. Kill it by the PID you started, never by image name.
 - `verify:browser` needs Playwright's pinned Chromium; in a sandbox with a
   pre-installed one, set `VERIFY_CHROMIUM=/path/to/chrome`.
 - The Compare default auto-run (what the browser gate measures first) is **one
