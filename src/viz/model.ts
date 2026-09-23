@@ -15,7 +15,7 @@
 
 import type {
   ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
-  TrieEvent,
+  TrieEvent, SkipListEvent,
 } from './events';
 import type { BstShape } from '../structures/bst';
 import type { TrieShape } from '../structures/trie';
@@ -537,4 +537,74 @@ export function trieNodeAtPath(m: TrieModel, path: readonly number[]): TrieDispl
     if (cur === undefined) return undefined;
   }
   return cur;
+}
+
+// ── Skip list (docs/PLAN.md §8, "Specialized") ───────────────────────────────
+// A linked structure drawn as a grid: nodes left→right in ascending (level-0)
+// order, each occupying `height` stacked lanes. The express lanes are NOT stored —
+// they are **derived** from height + order (a correct skip list has a node on lane
+// `i` iff its height > `i`), which is faithful because the teaching twin always
+// builds a correct list, and cheaper than carrying per-level links. `skipLevelKeys`
+// re-derives the lanes and `model.test.ts` pins it equal to `SkipListF64.levelKeys()`,
+// tying the drawing to the express-lane dimension the conformance corpus guards (a
+// mis-linked lane still answers every query correctly while being O(n)). Nodes are
+// addressed by their level-0 index; the head sentinel is `-1` and is not stored.
+
+/** A stored skip-list node in the display model: its key, its tower height (the
+ * number of lanes it occupies), and a stable id so the renderer can transition it
+ * sideways as an insert/delete shifts its neighbours. */
+export interface SkipDisplayNode {
+  readonly id: number;
+  readonly value: number;
+  readonly height: number;
+}
+
+/** The skip list's display state: nodes in ascending level-0 order, plus the next
+ * free id. */
+export interface SkipModel {
+  readonly nodes: readonly SkipDisplayNode[];
+  readonly nextId: number;
+}
+
+/** Build the initial skip model from the structure's snapshot (value + real tower
+ * height per node, in level-0 order), assigning a fresh id to each node. */
+export function skipModel(snapshot: readonly { value: number; height: number }[]): SkipModel {
+  return {
+    nodes: snapshot.map((s, id) => ({ id, value: s.value, height: s.height })),
+    nextId: snapshot.length,
+  };
+}
+
+/** Fold one skip-list event into the model. `insert` splices a new node at its
+ * level-0 index; `remove` unlinks the node at its index. Enter / inspect / laneEnd /
+ * removeTarget / result are highlight-only (the view derives the highlight from the
+ * active event, and the express lanes from the folded heights + order). */
+export function reduceSkip(m: SkipModel, e: SkipListEvent): SkipModel {
+  switch (e.kind) {
+    case 'skip.insert': {
+      const node: SkipDisplayNode = { id: m.nextId, value: e.value, height: e.height };
+      const nodes = [...m.nodes.slice(0, e.index), node, ...m.nodes.slice(e.index)];
+      return { nodes, nextId: m.nextId + 1 };
+    }
+    case 'skip.remove':
+      return { nodes: m.nodes.filter((_, i) => i !== e.index), nextId: m.nextId };
+    // highlight-only: enter / inspect / laneEnd / removeTarget / result — no structural change.
+    default:
+      return m;
+  }
+}
+
+export function foldSkip(initial: SkipModel, events: readonly SkipListEvent[]): SkipModel {
+  return events.reduce(reduceSkip, initial);
+}
+
+/** The keys visible on each lane, level 0 first — derived from height + order, the
+ * shape a correct skip list has. Mirrors `SkipListF64.levelKeys()`; `model.test.ts`
+ * pins the two equal so the drawing is chained to the express-lane dimension the
+ * conformance corpus guards. Used by {@link ./SkipListView} to lay out the lanes. */
+export function skipLevelKeys(m: SkipModel): number[][] {
+  const top = m.nodes.reduce((mx, n) => Math.max(mx, n.height), 0);
+  const out: number[][] = [];
+  for (let i = 0; i < top; i++) out.push(m.nodes.filter((n) => n.height > i).map((n) => n.value));
+  return out;
 }

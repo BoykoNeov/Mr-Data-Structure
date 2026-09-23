@@ -7,7 +7,8 @@ import { BstF64 } from '../structures/bst';
 import { AvlF64 } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent } from './events';
+import { SkipListF64 } from '../structures/skipList';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList, type LinkedListModel,
@@ -15,6 +16,7 @@ import {
   avlModel, foldAvl, type AvlModel,
   heapModel, foldHeap, type HeapModel,
   trieModel, foldTrie, type TrieModel,
+  skipModel, foldSkip, type SkipModel,
 } from './model';
 import * as P from './player';
 import { usePlayer } from './usePlayer';
@@ -26,6 +28,7 @@ import { BstView } from './BstView';
 import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
 import { TrieView, byteLabel } from './TrieView';
+import { SkipListView } from './SkipListView';
 import { Controls, type OpSpec } from './Controls';
 
 /**
@@ -40,7 +43,7 @@ import { Controls, type OpSpec } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst' | 'avl' | 'heap' | 'trie';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst' | 'avl' | 'heap' | 'trie' | 'skiplist';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
@@ -64,6 +67,14 @@ const HEAP_SEED = [50, 30, 70, 20, 40, 60, 10];
 // that fact previously lived only in docstrings; and `dog` gives the root a second
 // branch so the picture is a tree rather than a chain.
 const TRIE_SEED = ['car', 'cart', 'cat', 'café', 'dog'];
+// Each height here is a teaching decision, but an indirect one: a skip list's tower
+// heights are a pure function of the keys (docs/PLAN.md §8 — a hash, not a coin), so
+// this seed was chosen by computing them. It yields a four-lane staircase — `220` is a
+// height-4 tower whose top lane skips straight from the head to the far right, while
+// `10` and the two `50`s live only on level 0 — and the **duplicate 50** shows the
+// multiset keeping equal keys in insertion order along the bottom lane. Change a key
+// and the shape changes with it; that is the point of hash-derived heights.
+const SKIP_SEED = [10, 30, 40, 50, 50, 90, 220, 270];
 
 type Op = 'search' | 'insert' | 'delete';
 type HeapOp = 'insert' | 'extractMin' | 'peek' | 'search';
@@ -210,6 +221,45 @@ function describeTrie(e: TrieEvent | undefined): string {
     case 'trie.prune':
       return `prune the node for '${byteLabel(e.path[e.path.length - 1])}' — nothing ends there and nothing hangs off it`;
     case 'trie.result':
+      return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+/** The caption is op-agnostic — it reads the comparison's direction from the value vs
+ * the target rather than being told which op is running, so `advance`/`stop` word
+ * themselves correctly whether the descent used `<` (search/delete) or `≤` (insert). */
+function describeSkip(e: SkipListEvent | undefined): string {
+  if (!e) return '';
+  const col = (i: number) => (i < 0 ? 'the head' : `node [${i}]`);
+  switch (e.kind) {
+    case 'skip.enter':
+      return e.topLevel < 0
+        ? `"${e.key}" — the list is empty, nothing to walk`
+        : `start at the head on the top express lane (level ${e.topLevel})`;
+    case 'skip.inspect': {
+      const rel = e.value < e.target ? '<' : e.value > e.target ? '>' : '=';
+      if (e.outcome === 'advance')
+        return `compare ${e.value} ${rel} ${e.target} → smaller, move right along level ${e.level}`;
+      if (e.outcome === 'stop')
+        return e.level > 0
+          ? `compare ${e.value} ${rel} ${e.target} → not smaller, drop to level ${e.level - 1}`
+          : `compare ${e.value} ${rel} ${e.target} → not smaller; this is the candidate on the base list`;
+      if (e.outcome === 'found')
+        return `equality test on the same node: ${e.value} = ${e.target} → found ✓`;
+      // notFound — the level-0 equality test on the node the descent stopped at
+      return `equality test on the same node: ${e.value} ≠ ${e.target} → not found ✗`;
+    }
+    case 'skip.laneEnd':
+      return e.level > 0
+        ? `level ${e.level} ends after ${col(e.at)} — drop to level ${e.level - 1} (no comparison)`
+        : `the base list ends after ${col(e.at)} — the key is not here (no comparison)`;
+    case 'skip.insert':
+      return `splice ${e.value} at position ${e.index} — its tower is ${e.height} level${e.height === 1 ? '' : 's'} tall (set by the key's hash, not a coin)`;
+    case 'skip.removeTarget':
+      return `found ${col(e.index)} — now unlink it from every level it occupies`;
+    case 'skip.remove':
+      return 'unlinked — the express lanes above it close up';
+    case 'skip.result':
       return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
@@ -549,6 +599,49 @@ export function TriePanel() {
   );
 }
 
+export function SkipListPanel() {
+  const ref = useRef<SkipListF64 | null>(null);
+  if (ref.current === null) ref.current = SkipListF64.fromKeys(SKIP_SEED);
+  const [base, setBase] = useState<SkipModel>(() => skipModel(SkipListF64.fromKeys(SKIP_SEED).snapshot()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<SkipListEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const s = ref.current!;
+    const snapshot = skipModel(s.snapshot()); // before-state
+    const events: SkipListEvent[] = [];
+    const push = (e: SkipListEvent) => events.push(e);
+    if (op === 'search') {
+      const r = s.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} node-visits`);
+    } else if (op === 'insert') {
+      const r = s.insert(value, push);
+      const ins = events.find((e) => e.kind === 'skip.insert');
+      const h = ins && ins.kind === 'skip.insert' ? ins.height : 1;
+      setSummary(`insert(${value}) → tower height ${h} · ${r.ops} node-visits (the link surgery is free)`);
+    } else {
+      const r = s.delete(value, push);
+      setSummary(`delete(${value}) → ${r.removed ? 'removed' : 'absent'} · ${r.ops} node-visits`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldSkip(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>
+        {summary ||
+          'Skip list — a sorted linked list (level 0) with hash-built express lanes above it, so search is O(log n) with nothing to rebalance. Each tower’s height comes from its key’s hash, not a coin, so the shape is a pure function of the keys. Its cost is uneven: a search past the largest key (try 999) rides the top lane and is its cheapest query, while a mid-range miss (try 100) pays about one comparison per level — half a benchmark’s absent probes land in the cheap end (docs/METHODOLOGY.md §4).'}
+      </p>
+      <SkipListView model={model} active={active} />
+      <Controls player={player} onOp={onOp} caption={describeSkip(active)} />
+    </>
+  );
+}
+
 const tab = (selected: boolean): React.CSSProperties => ({
   padding: '6px 14px', fontSize: 14, cursor: 'pointer', borderRadius: 6,
   border: '1px solid ' + (selected ? '#4a90d9' : '#ccc'),
@@ -565,6 +658,7 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'avl', label: 'AVL tree' },
   { kind: 'heap', label: 'min-heap' },
   { kind: 'trie', label: 'trie (text keys)' },
+  { kind: 'skiplist', label: 'skip list' },
 ];
 
 function panelFor(kind: Kind) {
@@ -579,6 +673,7 @@ function panelFor(kind: Kind) {
     case 'avl': return <AvlPanel />;
     case 'heap': return <HeapPanel />;
     case 'trie': return <TriePanel />;
+    case 'skiplist': return <SkipListPanel />;
   }
 }
 

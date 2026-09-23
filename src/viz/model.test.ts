@@ -7,7 +7,8 @@ import { BstF64, type BstShape } from '../structures/bst';
 import { AvlF64, type AvlShape } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr, type TrieShape } from '../structures/trie';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent } from './events';
+import { SkipListF64 } from '../structures/skipList';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList,
@@ -15,6 +16,7 @@ import {
   avlModel, foldAvl, type AvlDisplayNode,
   heapModel, foldHeap,
   trieModel, foldTrie, type TrieModel, type TrieDisplayNode,
+  skipModel, foldSkip, skipLevelKeys, type SkipModel,
 } from './model';
 
 /**
@@ -515,5 +517,73 @@ describe('trie fold mirrors the structure', () => {
     const after = foldTrie(start, events);
     expect(shapeOf(after.root)).toEqual(shapeOf(start.root));
     expect(shapeOf(after.root)).toEqual(t.snapshot());
+  });
+});
+
+describe('skip-list fold mirrors the structure', () => {
+  // The seed the Explore panel ships (a four-lane staircase with a duplicate), plus
+  // the corpus keys, so the fold is exercised on more than one shape.
+  const SEED = [10, 30, 40, 50, 50, 90, 220, 270];
+
+  /** The folded value order, directly comparable to `keysInOrder()`. */
+  const valuesOf = (m: SkipModel) => m.nodes.map((n) => n.value);
+  const ids = (m: SkipModel) => m.nodes.map((n) => n.id);
+
+  const runFold = (build: number[], op: (s: SkipListF64, push: (e: SkipListEvent) => void) => void) => {
+    const s = SkipListF64.fromKeys(build);
+    const before = skipModel(s.snapshot());
+    const events: SkipListEvent[] = [];
+    op(s, (e) => events.push(e));
+    return { s, before, events };
+  };
+
+  /** Fold the whole stream and assert the picture *is* the structure — value order
+   * AND, crucially, the express-lane profile derived from the folded heights equals
+   * the structure's own `levelKeys()`. Order plus op-count would pass a mis-linked
+   * lane (level 0 alone answers every query); the lane check is what pins the O(log n)
+   * shape (docs/PLAN.md §12, the CLAUDE.md gotcha). Then every intermediate frame must
+   * keep unique ids (a React-key collision is what that would otherwise break). */
+  const expectMirrors = (s: SkipListF64, before: SkipModel, events: readonly SkipListEvent[]) => {
+    const after = foldSkip(before, events);
+    expect(valuesOf(after)).toEqual(s.keysInOrder());
+    expect(skipLevelKeys(after)).toEqual(s.levelKeys());
+    for (let f = 0; f <= events.length; f++) {
+      const frameIds = ids(foldSkip(before, events.slice(0, f)));
+      expect(new Set(frameIds).size).toBe(frameIds.length);
+    }
+  };
+
+  const CASES: [string, number[], (s: SkipListF64, push: (e: SkipListEvent) => void) => void][] = [
+    ['search a hit leaves the list unchanged', SEED, (s, p) => s.search(270, p)],
+    ['search an above-max miss (cheap)', SEED, (s, p) => s.search(999, p)],
+    ['search a mid-range miss (dear)', SEED, (s, p) => s.search(100, p)],
+    ['insert a new tall tower', SEED, (s, p) => s.insert(120, p)], // towerHeight(120) = 5
+    ['insert a duplicate (a new equal at level 0)', SEED, (s, p) => s.insert(50, p)],
+    ['insert into an empty list', [], (s, p) => s.insert(7, p)],
+    ['delete a level-0-only node', SEED, (s, p) => s.delete(10, p)],
+    ['delete the tallest tower', SEED, (s, p) => s.delete(220, p)],
+    ['delete one of a duplicate pair', SEED, (s, p) => s.delete(50, p)],
+    ['delete an absent key', SEED, (s, p) => s.delete(100, p)],
+    ['delete down to empty', [42], (s, p) => s.delete(42, p)],
+  ];
+
+  it.each(CASES)('%s', (_label, build, op) => {
+    const { s, before, events } = runFold(build, op);
+    expectMirrors(s, before, events);
+  });
+
+  it('a churn pair returns the picture to exactly the shape it started in', () => {
+    // The measurement's precondition (docs/METHODOLOGY.md §2.5), folded: an
+    // insert+delete of the same key nets zero nodes and the same express lanes.
+    const s = SkipListF64.fromKeys(SEED);
+    const start = skipModel(s.snapshot());
+    const events: SkipListEvent[] = [];
+    const push = (e: SkipListEvent) => events.push(e);
+    s.insert(65, push);
+    s.delete(65, push);
+    const after = foldSkip(start, events);
+    expect(valuesOf(after)).toEqual(s.keysInOrder());
+    expect(skipLevelKeys(after)).toEqual(s.levelKeys());
+    expect(skipLevelKeys(after)).toEqual(skipLevelKeys(start));
   });
 });

@@ -15,7 +15,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
-| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set*. Its animation, the graph, session persistence and performance polish are still open |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The graph, session persistence and performance polish are still open |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
@@ -1096,8 +1096,27 @@ insert/search/delete group on a shared key type.
     churn-vs-finite-difference regime lands with it (METHODOLOGY §2.3): the FD sum
     overshoots churn by ~56 %, the balanced BST's story told by a structure with no tree in
     it. **No new deps.**
-  - **Open:** the skip list's step-animation, graph, session persistence, presets/demos
-    beyond the six that shipped in Phase 5, and performance polish.
+  - **Done (the skip list's own step-animation — the second Phase 6 structure becomes
+    watchable):** an Explore tab (`SkipListView`) that draws the list as a grid of towers —
+    nodes left→right in ascending order, level 0 the sorted base list, the express lanes
+    stacked above it and drawn as the **real skips** (a link on a lane jumps straight over
+    every shorter tower, which is the O(log n)). A new `SkipEvent` family
+    (`src/viz/events.ts`) whose one cost event is `skip.inspect` (one node-visit), so
+    `countCostEvents === op-count` holds for search / insert / delete — search and delete
+    chained to `corpus-skip.txt` in `trace.skip.test.ts`, insert self-consistent only (no
+    corpus column, like the trie). Nodes are addressed by **level-0 index**, resolved
+    through a rank map built only when a tracer is passed (it perturbs no counter). Two
+    design points the honesty gate turns on: a hit **compares the level-0 node twice** —
+    the descent's `< key?` then the membership `= key?`, both real node-visits, shown as a
+    stand-point highlight (where the walk drops a level) plus a separate compared-node
+    tint; and the display model **derives the express lanes from the folded heights +
+    order** rather than storing links, pinned equal to `SkipListF64.levelKeys()` in
+    `model.test.ts` so the drawing is chained to the express-lane dimension the corpus
+    guards. The seeded structure is a four-lane staircase with a duplicate, chosen by
+    computing the hash-derived heights. Rendered every-frame in `views.render.test.ts`.
+    **No new deps.**
+  - **Open:** the graph, session persistence, presets/demos beyond the six that shipped in
+    Phase 5, and performance polish.
 
 ---
 
@@ -1170,5 +1189,7 @@ insert/search/delete group on a shared key type.
    here".
 5. ~~Phase 6: the skip list, measured.~~ **Done** — O(log n) search *and* add/remove
    on any input order, from hash-derived tower heights rather than a coin.
-6. Phase 6 remainder: the skip list's step-animation, then the graph, then
-   session persistence.
+6. ~~Phase 6: the skip list's step-animation.~~ **Done** — the express lanes are drawn
+   as real skips, and each step highlights the walk's stand-point and its compared node
+   separately, so a hit's level-0 double comparison (`< key?` then `= key?`) is visible.
+7. Phase 6 remainder: the graph, then session persistence, then performance polish.

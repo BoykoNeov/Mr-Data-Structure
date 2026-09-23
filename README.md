@@ -58,8 +58,12 @@ key's hash rather than from a coin toss or from the order the keys arrived in. T
 a deliberate departure from the textbook: it keeps the op-count signal reproducible,
 lets the TypeScript twin reproduce the Rust corpus exactly, and moves the
 "probabilistic" caveat from the algorithm's coin onto the *key distribution*, which is
-where this project can actually show it to you. Its animation, the graph and session
-persistence are still to come. The
+where this project can actually show it to you. The skip list now has **its own
+animation** too, so the O(log n) search can be watched happening: the express lanes are
+drawn as the real skips they are (the top lane jumps straight over most of the list),
+and each step shows two things at once — the node the walk *stands* on and the node it
+*compares* — so a hit visibly pays for the descent **and** one more equality test on the
+same node. The graph and session persistence are still to come. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).

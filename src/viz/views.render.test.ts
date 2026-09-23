@@ -7,18 +7,20 @@ import { BstF64 } from '../structures/bst';
 import { AvlF64 } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
+import { SkipListF64 } from '../structures/skipList';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
 import { BstView } from './BstView';
 import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
 import { TrieView } from './TrieView';
-import { SortedPanel, LinkedPanel, BstPanel, AvlPanel, HeapPanel, TriePanel } from './VizPanel';
+import { SkipListView } from './SkipListView';
+import { SortedPanel, LinkedPanel, BstPanel, AvlPanel, HeapPanel, TriePanel, SkipListPanel } from './VizPanel';
 import {
   arrayModel, foldSortedArray, linkedModel, foldLinkedList, bstModel, foldBst,
-  avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie,
+  avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie, skipModel, foldSkip,
 } from './model';
-import type { SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, Tracer } from './events';
+import type { SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, Tracer } from './events';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -246,6 +248,42 @@ describe('TrieView renders every frame without throwing', () => {
   });
 });
 
+describe('SkipListView renders every frame without throwing', () => {
+  // The skip list is the only view whose highlight tracks TWO things at once — the
+  // node the walk stands on and the node it compares — and its insert/delete change
+  // node count mid-stream. A stale index or an off-lane highlight would crash here
+  // rather than at the final frame.
+  const SEED = [10, 30, 40, 50, 50, 90, 220, 270];
+  const cases: [string, number[], (s: SkipListF64, tr: Tracer<SkipListEvent>) => void][] = [
+    ['search a hit (double compare at level 0)', SEED, (s, tr) => s.search(270, tr)],
+    ['search an above-max miss (rides the top lane)', SEED, (s, tr) => s.search(999, tr)],
+    ['search a mid-range miss', SEED, (s, tr) => s.search(100, tr)],
+    ['insert a new tall tower', SEED, (s, tr) => s.insert(120, tr)],
+    ['insert a duplicate at level 0', SEED, (s, tr) => s.insert(50, tr)],
+    ['insert into an empty list', [], (s, tr) => s.insert(7, tr)],
+    ['delete the tallest tower', SEED, (s, tr) => s.delete(220, tr)],
+    ['delete a level-0-only node', SEED, (s, tr) => s.delete(10, tr)],
+    ['delete absent', SEED, (s, tr) => s.delete(100, tr)],
+    ['delete down to empty', [42], (s, tr) => s.delete(42, tr)],
+  ];
+  it.each(cases)('%s', (_label, build, op) => {
+    const s = SkipListF64.fromKeys(build);
+    const before = skipModel(s.snapshot());
+    const events: SkipListEvent[] = [];
+    op(s, (e) => events.push(e));
+    renderEveryFrame(before, events, foldSkip, (model, active) =>
+      renderToStaticMarkup(createElement(SkipListView, { model, active })),
+    );
+  });
+
+  it('renders the empty list', () => {
+    const html = renderToStaticMarkup(
+      createElement(SkipListView, { model: skipModel(new SkipListF64().snapshot()), active: undefined }),
+    );
+    expect(html).toContain('(empty)');
+  });
+});
+
 describe('new panels mount without throwing', () => {
   // The views above are pure SVG; the panels add the hook wiring (ref-held
   // structure, usePlayer, the singly↔doubly key-remount). A single SSR pass runs
@@ -274,5 +312,8 @@ describe('new panels mount without throwing', () => {
     const html = renderToStaticMarkup(createElement(TriePanel));
     expect(html).toContain('<svg');
     expect(html).toContain('type="text"');
+  });
+  it('SkipListPanel renders its seeded SVG', () => {
+    expect(renderToStaticMarkup(createElement(SkipListPanel))).toContain('<svg');
   });
 });

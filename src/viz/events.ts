@@ -624,6 +624,110 @@ export type TrieEvent =
   | TriePrune
   | TrieResult;
 
+// ── Skip list (docs/PLAN.md §8, "Specialized") ──────────────────────────────
+//
+// A probabilistic **ordered multiset** whose tower heights come from each key's
+// hash rather than a coin (see `src/structures/skipList.ts`), so the whole shape is
+// a pure function of the key set. Nodes are addressed by their **level-0 index** —
+// the rank in ascending order — the skip list's analog of the array's slot index
+// and the tree's root path. A search or delete never mutates before its terminal
+// event and an insert splices last, so an index is stable across an op's whole
+// stream. The head sentinel is index `-1`.
+//
+// **Cost metric — node-visits (docs/PLAN.md §8):** one per node whose key is
+// inspected (one comparison each). Entering the head and dropping off the end of an
+// express lane cost nothing, exactly as `descend` counts them. The one cost event
+// is `skip.inspect`, so `countCostEvents(stream) === op-count` holds for **search,
+// insert, AND delete** — search and delete pinned against the Rust corpus in
+// `src/viz/trace.skip.test.ts`, insert self-consistent only (the corpus has no
+// insert column, like the trie's).
+//
+// **The level-0 double comparison is honest.** On a hit, the descent's level-0 step
+// compares node X (`X < target`? → no → drop), and then the membership check
+// compares the SAME X (`X === target`? → yes). Two comparisons on one node, both
+// counted (the Rust twin counts them the same way). The renderer/caption must show
+// the second as a separate equality test, never dedupe it.
+
+/** How a node inspection resolved. `advance`/`stop` are the descent's two outcomes
+ * (move right along this lane, or drop a level); `found`/`notFound` are the level-0
+ * membership check that search and delete finish with. */
+export type SkipOutcome = 'advance' | 'stop' | 'found' | 'notFound';
+
+/** Begin a walk at the head sentinel, on the top express lane. `topLevel` is the
+ * highest lane in use; it is `-1` only for an **empty** list, where no lane exists
+ * and no inspect follows. Not a cost event — entering the head is free (the skip
+ * list's op-count starts at the first node inspected, unlike the trie's root). */
+export interface SkipEnter {
+  readonly kind: 'skip.enter';
+  readonly key: number;
+  readonly topLevel: number;
+}
+
+/** Inspect the node at level-0 `index`, reached by following lane `level` forward
+ * from where the walk stands (`at`; `-1` = the head) — one key comparison, a cost
+ * event. `outcome` says what the comparison decided (see {@link SkipOutcome}). A
+ * level-0 `stop` and the `found`/`notFound` that follows it inspect the SAME node
+ * (`at`'s level-0 successor): the descent asks "`< target`?" and the membership
+ * check asks "`=== target`?". Two honest comparisons on one node — never deduped. */
+export interface SkipInspect {
+  readonly kind: 'skip.inspect';
+  readonly at: number;
+  readonly index: number;
+  readonly level: number;
+  readonly value: number;
+  readonly target: number;
+  readonly outcome: SkipOutcome;
+}
+
+/** Lane `level` has no next node from where the walk stands (`at`; `-1` = head):
+ * drop a level with no comparison. Free — the skip list pays nothing for running
+ * off the end of an express lane, which is why an above-max miss is its cheapest
+ * query (docs/METHODOLOGY.md §4 hurdle 9). */
+export interface SkipLaneEnd {
+  readonly kind: 'skip.laneEnd';
+  readonly at: number;
+  readonly level: number;
+}
+
+/** Splice a new node of height `height` at level-0 `index` (insert). The express
+ * lanes are re-derived from height + order (a correct skip list has a node on lane
+ * `i` iff its height > `i`), so no per-level link is carried. No comparison — the
+ * inspects that located the slot preceded it. */
+export interface SkipInsert {
+  readonly kind: 'skip.insert';
+  readonly index: number;
+  readonly value: number;
+  readonly height: number;
+}
+
+/** Mark the node at level-0 `index` (found by the descent's membership check) as
+ * the delete target — a highlight-only marker before the unlink. */
+export interface SkipRemoveTarget {
+  readonly kind: 'skip.removeTarget';
+  readonly index: number;
+}
+
+/** Unlink the node at level-0 `index` from every lane it occupied (delete). */
+export interface SkipRemove {
+  readonly kind: 'skip.remove';
+  readonly index: number;
+}
+
+/** Terminal marker for a search/delete: whether the key was present. Not a cost event. */
+export interface SkipResult {
+  readonly kind: 'skip.result';
+  readonly found: boolean;
+}
+
+export type SkipListEvent =
+  | SkipEnter
+  | SkipInspect
+  | SkipLaneEnd
+  | SkipInsert
+  | SkipRemoveTarget
+  | SkipRemove
+  | SkipResult;
+
 // ── Union + cost tagging ────────────────────────────────────────────────────
 
 export type VizEvent =
@@ -634,7 +738,8 @@ export type VizEvent =
   | BstEvent
   | AvlEvent
   | HeapEvent
-  | TrieEvent;
+  | TrieEvent
+  | SkipListEvent;
 export type VizEventKind = VizEvent['kind'];
 
 /** Sink the teaching impls emit into. Typed per family at the call site
@@ -671,6 +776,11 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   // char-step, so the gate holds for search, insert, AND delete.
   'trie.enterRoot',
   'trie.step',
+  // Skip list: node-visits (docs/PLAN.md §8) — one comparison per node inspected on
+  // the walk. Entering the head and dropping off a lane's end (`skip.laneEnd`) cost
+  // nothing; the structural events (insert / remove) carry no comparison. So the
+  // gate holds for search, insert, AND delete.
+  'skip.inspect',
 ]);
 
 /** Count the cost-bearing events in a stream (the op-count it represents). */

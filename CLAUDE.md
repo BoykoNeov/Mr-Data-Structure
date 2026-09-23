@@ -161,6 +161,23 @@ tool call does not survive into the next (each call is a fresh process).
   hurdle 12. Related: the skip-list corpus pins the **keys visible at each level**, not
   just the order — level 0 alone is a sorted linked list, so a mis-linked express lane
   answers every membership query correctly while being O(n).
+- **The skip list's animation compares the level-0 candidate node *twice*, and that is
+  honest, not a double-count.** The descent's level-0 step asks `node < key?` (→ drop),
+  then the membership check asks `node = key?` on the **same** node — two real node-visits,
+  both `skip.inspect` cost events, both counted by the Rust twin. So a hit costs one more
+  than the descent alone; do not "dedupe" it (`countCostEvents === ops` would then break
+  against `corpus-skip.txt`). The view shows the pair as a *stand-point* highlight (where
+  the walk drops a level) plus a separately-tinted *compared* node — two things at once,
+  the reason `SkipEvent`s carry both `at` and `index`. Two more skip-viz rules that look
+  like bugs and are not: **`skip.enter` is not a cost event** (unlike the trie's root — the
+  skip list's op-count starts at the first node inspected, and an empty list's search is
+  `topLevel: -1`, zero inspects, `ops: 0`); and the display model **derives the express
+  lanes from height + order, storing no per-level links** (`skipLevelKeys`), which is
+  faithful only because the teaching twin always builds a correct list — `model.test.ts`
+  pins it equal to `SkipListF64.levelKeys()`, and *that* equality is what ties the drawing
+  to the express-lane dimension the corpus guards. Pinned in `src/viz/trace.skip.test.ts`
+  (cost-events, chained to Rust for search/delete) and `src/viz/model.test.ts` (fold ⇒
+  lanes). The seed is chosen by *computing* the hash-derived heights, never hand-guessed.
 - **The heap's churn key must stay `min − 1`** (`belowMin`). A heap has no
   delete-by-value, so the pair is insert + extract-min, and only a key below every
   stored key is the one the extract takes back; `max + 1` silently *drains* the

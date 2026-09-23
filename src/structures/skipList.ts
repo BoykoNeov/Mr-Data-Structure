@@ -27,6 +27,7 @@
  * that makes the BST's successor walk free.
  */
 
+import type { Tracer, SkipListEvent } from '../viz/events';
 import { splitMix64, toBits } from './mix';
 
 /**
@@ -123,6 +124,26 @@ export class SkipListF64 {
   }
 
   /**
+   * A `Node → level-0 index` map (the rank in ascending order), built only when a tracer
+   * is passed. The step-events address nodes by this rank (`src/viz/events.ts`) — a stable
+   * id the renderer can resolve, unlike the `Node` object. It stays valid for a whole op:
+   * search and delete do not mutate before their terminal event, and an insert's descent
+   * runs before the splice, so pre-op ranks are what every one of its events references.
+   * Building it touches no counter.
+   */
+  private rankMap(): Map<Node, number> {
+    const rank = new Map<Node, number>();
+    let i = 0;
+    for (let n = this.head[0]; n !== null; n = n.forward[0]) rank.set(n, i++);
+    return rank;
+  }
+
+  /** The level-0 index of `cur` for an event's `at`/`index`; the head sentinel is `-1`. */
+  private rankOf(rank: Map<Node, number> | undefined, cur: Node | null): number {
+    return cur === null ? -1 : rank!.get(cur)!;
+  }
+
+  /**
    * The shared descent: top level down to level 0, advancing while the forward node's key
    * compares less than `target`, recording the last node visited per level in `update`.
    * Counts **one op per node inspected**.
@@ -131,20 +152,33 @@ export class SkipListF64 {
    * one: `false` advances while `value < target` (stopping before the first equal key —
    * what search and delete need), `true` while `value <= target` (stopping after the last,
    * so a new equal lands behind the stored equals).
+   *
+   * When tracing, each inspected node emits a `skip.inspect` (a cost event, matching the
+   * `ops += 1`) and each lane that runs out emits a free `skip.laneEnd`.
    */
   private descend(
     target: number,
     pastEqual: boolean,
     update: (Node | null)[],
+    trace?: Tracer<SkipListEvent>,
+    rank?: Map<Node, number>,
   ): { cur: Node | null; ops: number } {
     let cur: Node | null = null; // the head sentinel
     let ops = 0;
     for (let i = this.level - 1; i >= 0; i--) {
       for (;;) {
         const nx = this.fwd(cur, i);
-        if (nx === null) break;
+        if (nx === null) {
+          trace?.({ kind: 'skip.laneEnd', at: this.rankOf(rank, cur), level: i });
+          break;
+        }
         ops += 1;
-        if (pastEqual ? nx.value <= target : nx.value < target) cur = nx;
+        const advance = pastEqual ? nx.value <= target : nx.value < target;
+        trace?.({
+          kind: 'skip.inspect', at: this.rankOf(rank, cur), index: this.rankOf(rank, nx),
+          level: i, value: nx.value, target, outcome: advance ? 'advance' : 'stop',
+        });
+        if (advance) cur = nx;
         else break;
       }
       update[i] = cur;
@@ -157,12 +191,27 @@ export class SkipListF64 {
    * could hold it. The final equality test is counted too, so a miss past the end of the
    * list costs one op less than a hit.
    */
-  search(target: number): SearchResult {
+  search(target: number, trace?: Tracer<SkipListEvent>): SearchResult {
+    const rank = trace ? this.rankMap() : undefined;
     const update = new Array<Node | null>(MAX_LEVEL).fill(null);
-    const { cur, ops } = this.descend(target, false, update);
+    trace?.({ kind: 'skip.enter', key: target, topLevel: this.level - 1 });
+    const { cur, ops } = this.descend(target, false, update, trace, rank);
     const nx = this.fwd(cur, 0);
-    if (nx === null) return { found: false, ops };
-    return { found: nx.value === target, ops: ops + 1 };
+    if (nx === null) {
+      // The level-0 lane already ended, so `descend` emitted its `skip.laneEnd`; don't
+      // repeat it. No comparison here — a miss past the end costs one op less than a hit.
+      trace?.({ kind: 'skip.result', found: false });
+      return { found: false, ops };
+    }
+    const found = nx.value === target;
+    // A SECOND comparison on the node the descent just stopped at — the equality test the
+    // `< target` test cannot answer (see events.ts, "the level-0 double comparison").
+    trace?.({
+      kind: 'skip.inspect', at: this.rankOf(rank, cur), index: this.rankOf(rank, nx),
+      level: 0, value: nx.value, target, outcome: found ? 'found' : 'notFound',
+    });
+    trace?.({ kind: 'skip.result', found });
+    return { found, ops: ops + 1 };
   }
 
   /**
@@ -170,12 +219,14 @@ export class SkipListF64 {
    * height comes from the key, so the resulting list is a function of the key set alone.
    * Returns the descent's node-visits; the link surgery is free.
    */
-  insert(key: number): { ops: number } {
+  insert(key: number, trace?: Tracer<SkipListEvent>): { ops: number } {
+    const rank = trace ? this.rankMap() : undefined;
     // `update` starts at the head everywhere, which is already the right predecessor for
     // every level the list does not yet use — a taller-than-current tower links straight
     // off the sentinel.
     const update = new Array<Node | null>(MAX_LEVEL).fill(null);
-    const { ops } = this.descend(key, true, update);
+    trace?.({ kind: 'skip.enter', key, topLevel: this.level - 1 });
+    const { ops } = this.descend(key, true, update, trace, rank);
 
     const height = towerHeight(key);
     if (height > this.level) this.level = height;
@@ -185,6 +236,9 @@ export class SkipListF64 {
       this.setFwd(update[j], j, node);
     }
     this.count += 1;
+    // A new equal key lands after the stored equals, so its level-0 index is one past its
+    // level-0 predecessor `update[0]` (index 0 when that predecessor is the head).
+    trace?.({ kind: 'skip.insert', index: this.rankOf(rank, update[0]) + 1, value: key, height });
     return { ops };
   }
 
@@ -192,14 +246,31 @@ export class SkipListF64 {
    * Delete the **first** occurrence of `target`. Counts the descent's node-visits plus the
    * one equality test that identifies the victim; unlinking carries no comparisons.
    */
-  delete(target: number): DeleteResult {
+  delete(target: number, trace?: Tracer<SkipListEvent>): DeleteResult {
+    const rank = trace ? this.rankMap() : undefined;
     const update = new Array<Node | null>(MAX_LEVEL).fill(null);
-    const { cur, ops } = this.descend(target, false, update);
+    trace?.({ kind: 'skip.enter', key: target, topLevel: this.level - 1 });
+    const { cur, ops } = this.descend(target, false, update, trace, rank);
 
     const victim = this.fwd(cur, 0);
-    if (victim === null) return { removed: false, ops };
-    if (victim.value !== target) return { removed: false, ops: ops + 1 };
+    if (victim === null) {
+      trace?.({ kind: 'skip.result', found: false });
+      return { removed: false, ops };
+    }
+    const match = victim.value === target;
+    // The equality test — a second comparison on the node the descent stopped at.
+    trace?.({
+      kind: 'skip.inspect', at: this.rankOf(rank, cur), index: this.rankOf(rank, victim),
+      level: 0, value: victim.value, target, outcome: match ? 'found' : 'notFound',
+    });
+    if (!match) {
+      trace?.({ kind: 'skip.result', found: false });
+      return { removed: false, ops: ops + 1 };
+    }
 
+    // Resolve the rank only when tracing — an untraced delete carries no rank map.
+    const victimIndex = trace ? this.rankOf(rank, victim) : -1;
+    trace?.({ kind: 'skip.removeTarget', index: victimIndex });
     // Unlink at every level the victim occupies. Duplicates of a key all share its height,
     // and the victim is the first node ≥ key in level-0 order, so below its height that is
     // the node each `update[j]` points at; the guard is the textbook belt-and-braces.
@@ -208,7 +279,22 @@ export class SkipListF64 {
     }
     this.count -= 1;
     while (this.level > 0 && this.head[this.level - 1] === null) this.level -= 1;
+    trace?.({ kind: 'skip.remove', index: victimIndex });
+    trace?.({ kind: 'skip.result', found: true });
     return { removed: true, ops: ops + 1 };
+  }
+
+  /**
+   * A snapshot for the renderer's display model (`src/viz/model.ts`): each stored node's
+   * value and its **actual tower height** (`forward.length`), in level-0 order. The height
+   * is read from the built structure, not recomputed from {@link towerHeight}, so the
+   * drawing is pinned to the real express lanes rather than to the height formula agreeing
+   * with itself. Carries no animation ids; the model assigns those.
+   */
+  snapshot(): { value: number; height: number }[] {
+    const out: { value: number; height: number }[] = [];
+    for (let n = this.head[0]; n !== null; n = n.forward[0]) out.push({ value: n.value, height: n.forward.length });
+    return out;
   }
 
   /** Keys in ascending order — the level-0 walk, which *is* the iteration order. */
