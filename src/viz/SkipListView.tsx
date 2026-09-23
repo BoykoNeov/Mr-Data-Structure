@@ -176,7 +176,7 @@ export function SkipListView({ model, active }: SkipListViewProps) {
 
   return (
     <svg
-      width={Math.max(width, 320)}
+      width={Math.max(width, 520)} // wide enough that the in-SVG legend never clips, even on an empty list
       height={Math.max(height, 90)}
       role="img"
       aria-label="skip list: express lanes over a sorted base list"

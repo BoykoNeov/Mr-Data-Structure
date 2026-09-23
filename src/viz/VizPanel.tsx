@@ -227,8 +227,11 @@ function describeTrie(e: TrieEvent | undefined): string {
 
 /** The caption is op-agnostic — it reads the comparison's direction from the value vs
  * the target rather than being told which op is running, so `advance`/`stop` word
- * themselves correctly whether the descent used `<` (search/delete) or `≤` (insert). */
-function describeSkip(e: SkipListEvent | undefined): string {
+ * themselves correctly whether the descent used `<` (search/delete) or `≤` (insert).
+ * An `advance` on an *equal* key can only be an insert (search/delete stop before the
+ * first equal), so that branch says so rather than mislabelling it "smaller". Exported
+ * for `VizPanel.test.ts` — a render smoke can't catch a wrong caption. */
+export function describeSkip(e: SkipListEvent | undefined): string {
   if (!e) return '';
   const col = (i: number) => (i < 0 ? 'the head' : `node [${i}]`);
   switch (e.kind) {
@@ -239,7 +242,9 @@ function describeSkip(e: SkipListEvent | undefined): string {
     case 'skip.inspect': {
       const rel = e.value < e.target ? '<' : e.value > e.target ? '>' : '=';
       if (e.outcome === 'advance')
-        return `compare ${e.value} ${rel} ${e.target} → smaller, move right along level ${e.level}`;
+        return rel === '='
+          ? `compare ${e.value} = ${e.target} → equal; an insert goes after the stored equals, so move right along level ${e.level}`
+          : `compare ${e.value} < ${e.target} → smaller, move right along level ${e.level}`;
       if (e.outcome === 'stop')
         return e.level > 0
           ? `compare ${e.value} ${rel} ${e.target} → not smaller, drop to level ${e.level - 1}`
