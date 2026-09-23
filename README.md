@@ -63,7 +63,13 @@ animation** too, so the O(log n) search can be watched happening: the express la
 drawn as the real skips they are (the top lane jumps straight over most of the list),
 and each step shows two things at once — the node the walk *stands* on and the node it
 *compares* — so a hit visibly pays for the descent **and** one more equality test on the
-same node. The graph and session persistence are still to come. The
+same node. The **graph** has now begun: its bench twin, teaching twin and cost identity
+are in and pinned clock-free — an own-op-set adjacency-list multigraph whose breadth-first
+and depth-first traversals cost the *same* `V + 2E` while visiting in different orders (the
+graph counterpart to "the array and the linked list are both O(n) by different mechanisms").
+Its measured half — synthetic graph generators and your own edge-list import, a Compare
+section that sweeps vertices *and* edge density to show the `+E` term, and the browser gate —
+plus its animation are the next slice, and session persistence follows. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).

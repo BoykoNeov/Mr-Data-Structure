@@ -308,6 +308,81 @@ stray 24-level express lane costs every later descent an extra inspection per
 level — a doubled constant on every measured operation, from one key. Salting
 moves the fixed point onto a key nobody has.
 
+### 2.7 A structure with two size axes (the graph)
+
+Every other structure in the catalogue is measured against one number: `n`, the
+count of keys. A graph has **two** — the number of vertices `V` and the number
+of edges `E` — and its one operation, a whole-graph traversal (breadth-first via
+a queue, depth-first via an explicit stack), costs a function of **both**:
+
+```text
+BFS cost = DFS cost = V + 2E   (on a connected undirected graph)
+```
+
+`V` vertex-visits — each reached vertex taken off the frontier exactly once — plus
+`2E` edge-visits — each undirected edge examined from both of its endpoints. That
+identity is exact and clock-free (`structures::methodology::
+graph_traversal_costs_exactly_v_plus_2e_and_bfs_equals_dfs`), so it is pinned on
+op-counts, not left to the noisy wall clock.
+
+*(Status: the twin, the corpus and this cost identity are in; the **measured half** —
+the generators, edge-list import, the two Compare sweeps and the browser gate below —
+is the next slice, so the paragraphs that follow describe what that half **will** do.)*
+
+Three consequences shape how the graph will be measured:
+
+1. **The op set is different, so it stays off the shared charts.** A graph has no
+   insert/search/delete of a *key* (PLAN §4.1), so — like the heap — it must be
+   `!isCanonical`, compared only within its own group and drawn in its own section.
+   (The registry entry that enforces that lands with the measured half; note that
+   `isCanonical` is `id != "heap"` today, so a `"graph"` id added without a matching
+   exclusion would wrongly read as canonical.) `BFS` and `DFS` cost the same and
+   visit in **different orders**; that equal-cost / different-order pair is the
+   graph's headline, the counterpart to "the array and the linked list are both O(n)
+   by different mechanisms" (§1).
+
+2. **One sweep cannot separate `O(V)` from `O(V + E)`.** If you grow `V` at a
+   *fixed average degree* `d`, then `E = dV/2` and the cost is `(1 + d)V` — a
+   straight line in `V`, from which the `+E` term is unreadable, because both
+   terms scale together. So the Compare view will run **two** sweeps: a **V-sweep**
+   at fixed degree (which shows both traversals are linear and that BFS ≡ DFS in
+   class) and a **degree-sweep** at fixed `V` (which grows `E` alone, so the cost
+   moves by *exactly* two per added edge — the `+E` term made visible). Both halves
+   of that argument are already pinned clock-free
+   (`graph_plus_e_term_is_only_visible_when_degree_grows_at_fixed_v`). The axis is
+   labelled `V + 2E`, never `n`.
+
+3. **The cost is `O(V + E)`, not `O(E)`, and that is a real term.** An isolated or
+   barely-connected vertex still costs its visit, so an almost-edgeless graph pays
+   for its vertices — which is why the `V` is counted separately rather than folded
+   into the edge scan. On a **disconnected** graph a traversal from one source
+   reaches only that component and costs *that* component's `V' + 2E'`, strictly
+   less than the whole — pinned by the corpus's `disconnected` case and the
+   union-find proptest.
+
+**Where the edges will come from.** Every other structure is fed the user's own
+keys; a graph needs *edges*, which a list of keys does not carry. Synthetic
+generators (a connected random graph at a chosen average degree, a path, a grid)
+will drive the V- and degree-sweeps, and the section will be labelled synthetic so
+no invented graph is passed off as "your data". A user's **own edge list** (a
+CSV/paste of `u,v` pairs) is a real graph and will be accepted as such — with the
+labels mapped to dense ids in first-seen order (so the traversal's source vertex 0
+is always real), treated as strings never numbers (the `02134` gotcha), and the
+curve plotted against the **reached component's** `V' + 2E'`, since a user graph
+can be disconnected. What the tool deliberately will **not** do is fabricate edges
+out of the keys (linking key *i* to key *i+1*), which would present a made-up
+structure as measured reality.
+
+**Two implementation decisions that are correctness, not tuning.** DFS is
+**iterative with an explicit stack**, never recursion: a traversal of a
+10⁵-vertex path would otherwise overflow the WASM stack, the same hazard that
+forced the BST's index arena. And the traversal reuses a **generation-stamped**
+visited array and a preallocated frontier, so nothing is allocated inside the
+timed region — otherwise the curve would measure the allocator warming up rather
+than the walk. The graph is a **multigraph** (parallel edges and self-loops kept,
+a self-loop counting twice toward degree), matching the project's "never dedupe"
+rule and keeping `add_edge` genuinely O(1).
+
 ## 3. Reading a curve — the fitter (`src/bench/fit.ts`)
 
 The **log-log slope** is the headline (PLAN §2.3): on log-log axes `y ∝ nᵏ` is a
@@ -549,3 +624,7 @@ Ordered by how much they can mislead a reader today.
 | **deliberately not asserted:** the trie's *class label*, which comes out O(log n) as often as O(1). The char-steps are provably identical across the ladder, so the wall-clock bend is the memory hierarchy — ~6 dependent pointer hops per lookup against a tree that outgrows the caches (§2.5). The gate asserts the slope band and the rise limit instead | — | — |
 | **deliberately not asserted:** the string array's *class label*, which comes out O(n log n) as often as O(n) because its tail slope runs above 1 (pointer-chasing, §2.5). The slope band and the rise are asserted instead, as for the sorted array's search | — | — |
 | **deliberately not asserted:** the *class labels* on the heap's two finite-difference halves. They are noise-dominated and have been seen to mislabel (§4 hurdles 2 and 7); the clock-free op-count proofs carry those claims instead | — | — |
+| the graph's traversal costs **exactly `V + 2E`, and BFS ≡ DFS**, at every swept size — the exact identity the wall clock can only see as a noisy linear slope (§2.7) | `structures::methodology::graph_traversal_costs_exactly_v_plus_2e_and_bfs_equals_dfs` | none (op-counts) |
+| **why the graph needs two sweeps:** a V-sweep at fixed degree cannot separate `O(V)` from `O(V+E)` (both scale together), while a degree-sweep at fixed `V` moves the cost by exactly 2 per edge — the `+E` term isolated (§2.7) | `structures::methodology::graph_plus_e_term_is_only_visible_when_degree_grows_at_fixed_v` | none (op-counts) |
+| the graph's traversal reaches **exactly the source's connected component** and costs `\|C\| + Σ deg`, for random graphs, against a union-find reference — and BFS and DFS agree | `bench-engine/tests/proptest_graph.rs` | none |
+| the graph's two traversal **orders** (BFS by distance, DFS mark-on-push) and the multigraph rules (both directions, parallel edges, self-loop counts twice, disconnected reachability) match the TS twin | `conformance/corpus-graph.txt` + `src/structures/conformance-graph.test.ts` | none |

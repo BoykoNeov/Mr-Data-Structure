@@ -23,6 +23,7 @@ use super::avl::AvlF64;
 use super::bst::BstF64;
 use super::dyn_array::ArrayF64;
 use super::dyn_array_str::ArrayStr;
+use super::graph::GraphAdj;
 use super::hash_set::HashSetF64;
 use super::hash_set_str::HashSetStr;
 use super::heap::MinHeapF64;
@@ -46,6 +47,8 @@ const CORPUS_HEAP_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-heap.txt");
 const CORPUS_SKIP_PATH: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-skip.txt");
+const CORPUS_GRAPH_PATH: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../conformance/corpus-graph.txt");
 
 struct Case {
     name: &'static str,
@@ -1000,5 +1003,148 @@ fn corpus_skip_matches_committed() {
         normalize(&serialize_skip(&skip_cases())),
         "skip-list conformance corpus is stale vs the Rust impl; \
          regenerate with: cargo test -- --ignored regen_corpus_skip",
+    );
+}
+
+// ── Graph corpus (docs/PLAN.md §8 "Specialized", §12) ────────────────────────
+//
+// The graph's op set is different again — build (add edges) + traverse — so its corpus
+// carries dimensions none of the others do:
+//   • **the adjacency profile** (`graph_adj`): each vertex's neighbour list in edge-
+//     insertion order, vertices separated by `|`. This is the structure's observable shape
+//     (the counterpart to the skip list's express lanes / the BST's pre-order). A twin that
+//     pushed only one direction of an edge, or deduped parallel edges, still reaches every
+//     vertex on a traversal — only the adjacency pin catches it.
+//   • **two traversal orders** (`graph_bfs`, `graph_dfs`): BFS and DFS from vertex 0 visit
+//     the *same* vertices in *different* orders. The order is the drift-prone half — the
+//     mark-on-push DFS pops neighbours last-to-first, an easy thing to get subtly wrong.
+//   • **per-traversal `(reached : ops)`** (`graph_bfs_cost`, `graph_dfs_cost`): the vertex-
+//     visit + edge-visit count (`V + 2E` when the source's component is the whole graph),
+//     which pins the two counting rules cross-language and, on the disconnected case, pins
+//     that a traversal reaches only its source's component.
+// Vertex ids are small integers, so they round-trip through TS `Number()` / `String`.
+
+struct GraphCase {
+    name: &'static str,
+    vertices: usize,
+    edges: Vec<(u32, u32)>,
+}
+
+/// Graph input cases (docs/PLAN.md §12), chosen to exercise every divergence-prone path:
+/// the empty/singleton/isolated edges, a **self-loop** and **parallel edges** (the multigraph
+/// rules), a **path** and a **triangle** (the exact `V + 2E` identity), a small **tree** whose
+/// BFS and DFS orders differ, and a **disconnected** graph (a traversal from vertex 0 reaches
+/// only its component).
+fn graph_cases() -> Vec<GraphCase> {
+    vec![
+        GraphCase { name: "empty", vertices: 0, edges: vec![] },
+        GraphCase { name: "isolated", vertices: 3, edges: vec![] },
+        GraphCase { name: "self_loop", vertices: 2, edges: vec![(0, 0), (0, 1)] },
+        GraphCase { name: "parallel", vertices: 3, edges: vec![(0, 1), (0, 1), (1, 2)] },
+        GraphCase {
+            name: "path",
+            vertices: 5,
+            edges: vec![(0, 1), (1, 2), (2, 3), (3, 4)],
+        },
+        GraphCase {
+            name: "triangle",
+            vertices: 3,
+            edges: vec![(0, 1), (1, 2), (2, 0)],
+        },
+        GraphCase {
+            // BFS: 0,1,2,3 (by distance); DFS mark-on-push: 0,2,1,3 (dives via the last push).
+            name: "tree",
+            vertices: 4,
+            edges: vec![(0, 1), (0, 2), (1, 3)],
+        },
+        GraphCase {
+            // **Discriminates mark-on-push from mark-on-pop.** Vertex 1 is pushed early (by the
+            // source) and reached again from deeper in the stack (via 3). Mark-on-**push**
+            // visits 0,2,3,4,1; textbook mark-on-**pop** (same push order) visits 0,2,3,1,4 —
+            // the same `V + 2E = 15` either way, so only the *order* line catches the wrong
+            // variant. Pinned as a counterexample in `graph::tests` too.
+            name: "dfs_variant",
+            vertices: 5,
+            edges: vec![(0, 1), (0, 4), (0, 2), (2, 3), (3, 1)],
+        },
+        GraphCase {
+            // Two triangles with no edge between: from 0 only {0,1,2} is reached.
+            name: "disconnected",
+            vertices: 6,
+            edges: vec![(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)],
+        },
+    ]
+}
+
+/// The adjacency profile as one line: each vertex's neighbour list, space-separated, vertices
+/// separated by ` | `; a lone `-` for a graph with no vertices at all.
+fn fmt_adj(adj: &[Vec<u32>]) -> String {
+    if adj.is_empty() {
+        return "-".to_string();
+    }
+    adj.iter()
+        .map(|nbrs| nbrs.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn fmt_verts(vs: &[u32]) -> String {
+    vs.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" ")
+}
+
+/// Flat `u v u v …` edge pairs.
+fn fmt_edges(edges: &[(u32, u32)]) -> String {
+    edges
+        .iter()
+        .flat_map(|&(u, v)| [u.to_string(), v.to_string()])
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn serialize_graph(cases: &[GraphCase]) -> String {
+    let mut out = String::new();
+    out.push_str("# Mr Data Structure — graph conformance corpus (docs/PLAN.md §8, §12).\n");
+    out.push_str("# Generated from the Rust bench impl; the TS teaching twin must match.\n");
+    out.push_str("# Op-count = vertex-visits + edge-visits (V + 2E on a connected graph).\n");
+    out.push_str("# `graph_adj` is the ADJACENCY PROFILE: each vertex's neighbours (insertion\n");
+    out.push_str("# order), vertices separated by `|`. `*_cost` is `reached:ops` from vertex 0.\n");
+    out.push_str("# Regenerate: cargo test -- --ignored regen_corpus_graph\n");
+    for c in cases {
+        let flat: Vec<u32> = c.edges.iter().flat_map(|&(u, v)| [u, v]).collect();
+        let mut g = GraphAdj::new(&flat, c.vertices);
+        let bfs_order = g.bfs_order(0);
+        let dfs_order = g.dfs_order(0);
+        let (bfs_reached, bfs_ops) = g.bfs_counted_from(0);
+        let (dfs_reached, dfs_ops) = g.dfs_counted_from(0);
+
+        out.push('\n');
+        out.push_str(&format!("case {}\n", c.name));
+        out.push_str(&format!("vertices {}\n", c.vertices));
+        out.push_str(&format!("edges {}\n", fmt_edges(&c.edges)));
+        out.push_str(&format!("graph_adj {}\n", fmt_adj(&g.adjacency())));
+        out.push_str(&format!("graph_bfs {}\n", fmt_verts(&bfs_order)));
+        out.push_str(&format!("graph_bfs_cost {bfs_reached}:{bfs_ops}\n"));
+        out.push_str(&format!("graph_dfs {}\n", fmt_verts(&dfs_order)));
+        out.push_str(&format!("graph_dfs_cost {dfs_reached}:{dfs_ops}\n"));
+    }
+    out
+}
+
+#[test]
+#[ignore = "writes the committed graph corpus; run deliberately after a behavior change"]
+fn regen_corpus_graph() {
+    std::fs::write(CORPUS_GRAPH_PATH, serialize_graph(&graph_cases())).expect("write graph corpus");
+}
+
+#[test]
+fn corpus_graph_matches_committed() {
+    let committed = std::fs::read_to_string(CORPUS_GRAPH_PATH).expect(
+        "graph corpus missing; generate it with: cargo test -- --ignored regen_corpus_graph",
+    );
+    assert_eq!(
+        normalize(&committed),
+        normalize(&serialize_graph(&graph_cases())),
+        "graph conformance corpus is stale vs the Rust impl; \
+         regenerate with: cargo test -- --ignored regen_corpus_graph",
     );
 }

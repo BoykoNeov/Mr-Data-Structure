@@ -46,11 +46,19 @@
 //! That determinism is what lets the op-count signal stay reproducible under adaptive
 //! batching and the cross-language corpus stay exact — see the `skip_list` module doc for
 //! why an RNG could not do either. Pinned by `conformance/corpus-skip.txt`.
+//!
+//! `graph::GraphAdj` is the third own-op-set structure (after the heap and, by data type,
+//! the trie): an undirected adjacency-list **multigraph** whose operations are add-edge and
+//! whole-graph **traversal** (BFS via a queue, DFS via an explicit stack). Its cost metric is
+//! vertex-visits + edge-visits — exactly `V + 2E` on a connected graph — so it is measured and
+//! compared only within its own group (docs/PLAN.md §8, risk R6), never on the key-structure
+//! charts. Pinned by `conformance/corpus-graph.txt`.
 
 pub mod avl;
 pub mod bst;
 pub mod dyn_array;
 pub mod dyn_array_str;
+pub mod graph;
 pub mod hash_set;
 pub mod hash_set_str;
 pub mod heap;
@@ -167,6 +175,7 @@ mod methodology {
     use super::avl::AvlF64;
     use super::bst::BstF64;
     use super::dyn_array::ArrayF64;
+    use super::graph::GraphAdj;
     use super::hash_set::HashSetF64;
     use super::heap::MinHeapF64;
     use super::linked_list::LinkedListF64;
@@ -723,5 +732,101 @@ mod methodology {
         let ascending: Vec<f64> = (0..n).map(|i| i as f64).collect();
         let other = SkipListF64::new(&ascending, n);
         assert_eq!(other.search_one_counted(min), (true, skip_ops));
+    }
+
+    // ── Graph: a different kind of claim entirely. No churn / finite-difference here — the
+    //    graph's operation *is* a whole traversal, size-preserving by nature. What the
+    //    clock-free self-test pins instead is the exact cost identity and what the two
+    //    sweeps can and cannot separate (docs/METHODOLOGY.md §2.7).
+
+    /// A path `0–1–…–(n-1)` plus `chords` extra edges `(i, i + gap)` — connected by the path,
+    /// with a controllable edge count. Deterministic, no RNG.
+    fn connected_graph(n: usize, chords: &[(u32, u32)]) -> GraphAdj {
+        let mut edges: Vec<u32> = Vec::new();
+        for i in 0..n as u32 - 1 {
+            edges.push(i);
+            edges.push(i + 1);
+        }
+        for &(u, v) in chords {
+            edges.push(u);
+            edges.push(v);
+        }
+        GraphAdj::new(&edges, n)
+    }
+
+    /// **The headline, clock-free.** On a connected undirected graph a full traversal costs
+    /// exactly `V + 2E` — `V` vertex-visits (each reached once) plus `2E` edge-visits (each
+    /// edge examined from both ends) — and **BFS and DFS cost the same** while visiting in
+    /// different orders. That exact identity is what the browser gate can only see as a noisy
+    /// linear slope, so it lives here where the op-count is deterministic. This is also why
+    /// the class is `O(V + E)` and not `O(E)`: the `V` term is a real, separately-counted cost,
+    /// so an almost-edgeless graph still pays for its vertices.
+    #[test]
+    fn graph_traversal_costs_exactly_v_plus_2e_and_bfs_equals_dfs() {
+        for &n in &[10usize, 100, 1000, 5000] {
+            // A path (E = n − 1) and the path plus a few chords (still connected, more edges).
+            let e_path = n - 1;
+            let mut path = connected_graph(n, &[]);
+            let (bfs_r, bfs_ops) = path.bfs_counted_from(0);
+            let (dfs_r, dfs_ops) = path.dfs_counted_from(0);
+            let expected = (n + 2 * e_path) as u64;
+            assert_eq!(bfs_ops, expected, "path n={n}: BFS must be V + 2E");
+            assert_eq!(dfs_ops, expected, "path n={n}: DFS must be the same V + 2E");
+            assert_eq!(bfs_r, n, "BFS reaches every vertex of a connected graph");
+            assert_eq!(dfs_r, n, "DFS reaches every vertex of a connected graph");
+
+            // Add three chords: E = n − 1 + 3, so the count rises by exactly 2·3.
+            let chords = [(0, (n / 2) as u32), (1, (n / 3) as u32), (2, (n - 1) as u32)];
+            let mut denser = connected_graph(n, &chords);
+            let (_, denser_ops) = denser.bfs_counted_from(0);
+            assert_eq!(
+                denser_ops,
+                (n + 2 * (e_path + 3)) as u64,
+                "n={n}: three chords add exactly 2·3 edge-visits"
+            );
+        }
+    }
+
+    /// **Why the design needs two sweeps** (docs/METHODOLOGY.md §2.7 — the reason the browser
+    /// gate *will* run a V-sweep *and* a degree-sweep, once the measured half lands). A
+    /// traversal's cost is `V + 2E`. If you sweep
+    /// `V` at a *fixed average degree* `d`, then `E = dV/2` and the cost is `V + dV = (1 + d)V`
+    /// — linear in `V`, but that single sweep **cannot tell `O(V)` from `O(V + E)`**, because
+    /// both terms move together. Only holding `V` fixed and growing the degree isolates the
+    /// `+E` term: there the cost moves by *exactly* `2` per added edge while `V` contributes a
+    /// constant. This test pins both halves of that argument on deterministic op-counts.
+    #[test]
+    fn graph_plus_e_term_is_only_visible_when_degree_grows_at_fixed_v() {
+        let n = 2000usize;
+
+        // (a) Fixed V, growing E: the count is V + 2E, moving by exactly 2 per edge, so a
+        //     degree-sweep sees the +E term directly.
+        let base = connected_graph(n, &[]); // E = n − 1
+        let base_e = n - 1;
+        let mut g0 = base;
+        let (_, ops0) = g0.bfs_counted_from(0);
+        // Add 500 distinct chords (all within a connected path, so still connected).
+        let chords: Vec<(u32, u32)> =
+            (0..500u32).map(|k| (k, (k + (n as u32 / 4)) % n as u32)).collect();
+        let mut g1 = connected_graph(n, &chords);
+        let (_, ops1) = g1.bfs_counted_from(0);
+        assert_eq!(ops0, (n + 2 * base_e) as u64);
+        assert_eq!(ops1, (n + 2 * (base_e + 500)) as u64);
+        assert_eq!(ops1 - ops0, 2 * 500, "each added edge is exactly two edge-visits");
+
+        // (b) A V-sweep at fixed average degree cannot separate the terms: doubling V at the
+        //     same degree simply doubles the cost, indistinguishable from a pure O(V) structure.
+        //     A path has average degree ≈ 2 (E ≈ V); the cost (1 + ~2)V is just linear in V.
+        let mut small = connected_graph(1000, &[]);
+        let mut big = connected_graph(2000, &[]);
+        let (_, small_ops) = small.bfs_counted_from(0);
+        let (_, big_ops) = big.bfs_counted_from(0);
+        // 2·V at the same shape ⇒ ≈ 2× the cost — a straight line, no way to read out the E term.
+        let ratio = big_ops as f64 / small_ops as f64;
+        assert!(
+            (ratio - 2.0).abs() < 0.01,
+            "doubling V at fixed degree just doubles the cost (ratio {ratio}) — a V-sweep alone \
+             can't separate O(V) from O(V+E)"
+        );
     }
 }

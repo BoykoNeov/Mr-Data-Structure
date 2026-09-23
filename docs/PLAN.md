@@ -15,7 +15,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
-| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The graph, session persistence and performance polish are still open |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The **graph** now has its twin and cost identity **clock-free** (Rust + TS + `conformance/corpus-graph.txt` + the `V + 2E` methodology self-test, METHODOLOGY §2.7) — an own-op-set adjacency-list multigraph whose BFS and DFS cost the same `V + 2E` in different orders; its measured half (generators + edge-list import + the two-sweep Compare section + browser gate) and its animation are still open, as are session persistence and performance polish |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
@@ -1115,8 +1115,61 @@ insert/search/delete group on a shared key type.
     guards. The seeded structure is a four-lane staircase with a duplicate, chosen by
     computing the hash-derived heights. Rendered every-frame in `views.render.test.ts`.
     **No new deps.**
-  - **Open:** the graph, session persistence, presets/demos beyond the six that shipped in
-    Phase 5, and performance polish.
+  - **Done (the graph, clock-free — the twin, the corpus, and the `V + 2E` identity):**
+    `GraphAdj` in Rust (`bench-engine/src/structures/graph.rs`) and its TypeScript teaching
+    twin (`src/structures/graph.ts`), pinned to each other by `conformance/corpus-graph.txt`.
+    It is the **third own-op-set structure** (after the heap, and — by data type — the trie):
+    a graph is not a key container, so its op set is **add-edge + whole-graph traversal**
+    (BFS via a queue, DFS via an explicit stack), not insert/search/delete of a key. Like the
+    heap it is therefore `!isCanonical` — compared only within its own group, never on the
+    shared charts (docs/PLAN.md §8, risk R6).
+
+    **The representation is an undirected adjacency-list multigraph, and the cost metric is
+    vertex-visits + edge-visits — exactly `V + 2E` on a connected graph.** `add_edge(u, v)`
+    pushes each endpoint onto the other's list (a self-loop appears twice in its own list, the
+    convention that keeps Σ deg = 2E); parallel edges are kept (the project's "never dedupe"
+    rule, and what keeps `add_edge` O(1)). A traversal counts one vertex-visit per vertex taken
+    off the frontier and one edge-visit per adjacency entry examined — two rules the TS twin
+    must match exactly or the corpus diverges. **BFS and DFS cost the same and visit in
+    different orders**, which is the graph's headline (the counterpart to "array and linked
+    list are both O(n) by different mechanisms").
+
+    **Two decisions that are correctness, not tuning.** DFS is **iterative, mark-on-push** —
+    never recursion, which would overflow the WASM stack on a long path, the same hazard that
+    forced the BST's arena. And the traversal reuses a **generation-stamped** visited array and
+    a preallocated frontier, so nothing is allocated inside the (future) timed region.
+
+    The corpus carries three graph-specific dimensions none of the earlier ones do: the
+    **adjacency profile** (each vertex's neighbour list — catches a divergent edge build even
+    when every traversal still reaches every vertex), the **two traversal orders**, and
+    **per-traversal `(reached : ops)`** (which on the `disconnected` case pins that a traversal
+    reaches only its source's component). Hand-written Rust unit tests, a TS unit test, and a
+    **proptest** (BFS/DFS reach exactly 0's connected component against a union-find reference,
+    and the op-count equals `|C| + Σ deg`). Two findings live in the clock-free
+    `structures::methodology`: the exact `V + 2E` identity with BFS ≡ DFS at every size, and
+    **why the browser half needs two sweeps** — a V-sweep at fixed degree cannot separate
+    `O(V)` from `O(V+E)` (both scale together), so a degree-sweep at fixed `V` isolates the
+    `+E` term (it moves by exactly 2 per edge). Written up in docs/METHODOLOGY.md **§2.7** (a
+    structure with two size axes). **This slice is Rust + TS + corpus + methodology only** — no
+    `#[wasm_bindgen]`-timed sweep is wired into the UI yet, exactly as the string and
+    sorted-array twins first landed impl-ready with no `BenchEngine` method. **No new deps.**
+  - **Open:** the graph's **measured half** — the synthetic graph generators (connected random,
+    path, grid) *and* user edge-list import, the engine/worker sweep call, its own Compare
+    section with the V-sweep and degree-sweep, and the browser-gate pass; then the graph's
+    step-animation; then session persistence, presets/demos beyond the six that shipped in
+    Phase 5, and performance polish. **Four traps that half must handle, flagged now so they
+    aren't rediscovered:** (1) `registry.ts` — `isCanonical` is `id !== 'heap'` and
+    `CANONICAL_STRUCTURES` filters the same, so adding a `'graph'` `StructureId` *without also
+    excluding it* silently lands the graph on the shared insert/search/delete charts; exclude
+    it in both places and pin it in `registry.test.ts`, and give the graph its own info shape
+    rather than filling `OpComplexity`'s search/delete/churn slots with false theory. (2)
+    Edge-list import must **map vertex labels to dense ids in first-seen order**, so the
+    traversal's hardcoded source (vertex 0) is always a real vertex — raw ids can leave 0
+    isolated and chart a one-vertex O(1) line. (3) Labels are **strings, never `Number()`**
+    (the `02134` gotcha), and the TS twin must be handed **integer** ids (`adjLists[1.5]` is
+    `undefined`). (4) A user graph (or a swept prefix of one) can be **disconnected**, so plot
+    against the **reached component's** `V' + 2E'` (the measured op-count), and surface
+    reached/V, rather than the file's nominal V+E.
 
 ---
 
@@ -1192,4 +1245,7 @@ insert/search/delete group on a shared key type.
 6. ~~Phase 6: the skip list's step-animation.~~ **Done** — the express lanes are drawn
    as real skips, and each step highlights the walk's stand-point and its compared node
    separately, so a hit's level-0 double comparison (`< key?` then `= key?`) is visible.
-7. Phase 6 remainder: the graph, then session persistence, then performance polish.
+7. Phase 6 remainder: the graph — its clock-free twin, corpus and `V + 2E` cost identity
+   are **done** (METHODOLOGY §2.7); the measured half (synthetic generators + user edge-list
+   import, the two-sweep Compare section, the browser gate) and its animation are next — then
+   session persistence, then performance polish.
