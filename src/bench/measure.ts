@@ -35,6 +35,12 @@
  * `skiplist` is Phase 6's numeric addition: the ordered structure that reaches
  * O(log n) with no balancing at all, its node heights derived from each key's hash
  * rather than a coin (docs/PLAN.md §8 "Specialized").
+ *
+ * `graph` is not a key container at all: its op set is add-edge + whole-graph traversal
+ * (BFS / DFS), its size has **two** axes (V and E), and its series are a different type
+ * (`src/compare/runGraphSweeps.ts`) plotted against `V' + 2E'`, never `n`. It is in this
+ * union so the registry can carry it, and `isCanonical` keeps it off every shared chart
+ * (docs/PLAN.md §8, risk R6; docs/METHODOLOGY.md §2.7).
  */
 export type StructureId =
   | 'array'
@@ -47,7 +53,8 @@ export type StructureId =
   | 'skiplist'
   | 'arraystr'
   | 'hashsetstr'
-  | 'triestr';
+  | 'triestr'
+  | 'graph';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).

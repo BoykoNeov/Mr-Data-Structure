@@ -1,4 +1,5 @@
 import type { MeasureOptions, SweepSeries } from './measure';
+import type { GraphInput, GraphTraversalMeasure } from './graphBench';
 
 /**
  * The benchmark engine boundary.
@@ -151,6 +152,21 @@ export interface BenchEngine {
     sizes: number[],
     opts?: MeasureOptions,
   ): Promise<SweepSeries[]>;
+
+  /**
+   * Measure a whole-graph **traversal** — BFS and DFS from vertex 0 — on each graph in
+   * `graphs` (docs/PLAN.md §8 "Specialized"; docs/METHODOLOGY.md §2.7). The graph is not a
+   * key structure: it has its own data (edges, not the dataset's keys), its own op set
+   * (add-edge + traverse) and two size axes, so it gets its own call rather than a slot in
+   * the key sweeps. One {@link GraphTraversalMeasure} per graph, in order; each point's `n`
+   * is the nominal `V`, and the caller re-keys it to the reached component's `V' + 2E'`
+   * (`src/compare/runGraphSweeps.ts`). The engine may transfer (consume) every `edges`
+   * buffer, so callers must not reuse them — and must not hand in two views of one buffer.
+   */
+  runGraphSweep(
+    graphs: GraphInput[],
+    opts?: MeasureOptions,
+  ): Promise<GraphTraversalMeasure[]>;
 
   /** Release the worker / underlying resources. */
   dispose(): void;

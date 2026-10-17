@@ -6,6 +6,7 @@ import {
   CANONICAL_STRUCTURES,
   isCanonical,
   theoreticalClass,
+  GRAPH,
 } from './registry';
 import type { StructureId } from './bench/measure';
 
@@ -132,5 +133,33 @@ describe('structure registry', () => {
 
   it('declares a cost metric for every structure (op-counts are shape-only, §2.3)', () => {
     for (const s of STRUCTURES) expect(s.costMetric.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the graph off every shared chart, with its own info shape (PLAN §10 trap 1)', () => {
+    // The trap this pins: `isCanonical` used to be `id !== 'heap'`, so a `'graph'` id added
+    // without a matching exclusion silently read as canonical and could land on the shared
+    // insert/search/delete charts. Both the predicate and the filtered list must exclude it.
+    expect(isCanonical('graph')).toBe(false);
+    expect((['graph', 'heap', 'array'] as StructureId[]).filter(isCanonical)).toEqual(['array']);
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).not.toContain('graph');
+    expect(STRUCTURES.map((s) => s.id)).not.toContain('graph');
+    expect(STRING_STRUCTURES.map((s) => s.id)).not.toContain('graph');
+    // Its own shape: no search/delete/churn slots filled with theory it does not have, no
+    // key type (it stores edges), no input-order flag (V + 2E holds on any edge order).
+    const graph = REGISTRY.graph;
+    expect(graph).toBe(GRAPH);
+    expect(graph.id).toBe('graph');
+    expect(graph.family).toBe('graph');
+    for (const field of ['average', 'worst', 'shapeSensitive', 'keyType']) {
+      expect(field in graph).toBe(false);
+    }
+    expect(graph.ops).toEqual({ addEdge: 'O(1)', traversal: 'O(V + E)' });
+    expect(graph.costMetric).toBe('vertex-visits + edge-visits');
+    // Asking for key-structure theory on the graph is a routing error, not a silent O(n).
+    expect(() => theoreticalClass('graph', 'search')).toThrow(/no insert\/search\/delete theory/);
+    // The assigned grey, and a hue no key structure uses.
+    expect(graph.color).toBe('#7f7f7f');
+    const keyHues = new Set([...STRUCTURES, ...STRING_STRUCTURES].map((s) => s.color));
+    expect(keyHues.has(graph.color)).toBe(false);
   });
 });

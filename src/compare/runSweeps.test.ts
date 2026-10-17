@@ -108,6 +108,12 @@ function fakeEngine(log: string[]): BenchEngine {
         ...mutTrio('triestr', sizes, () => 6),
       ];
     },
+    // The graph has its own data and its own orchestrator (runGraphSweeps.test.ts); the key
+    // runs must never call it, so this stub records the call and fails loudly.
+    runGraphSweep: async () => {
+      log.push('graph');
+      throw new Error('a key-dataset run must not measure the graph');
+    },
     dispose: () => {},
   };
 }
