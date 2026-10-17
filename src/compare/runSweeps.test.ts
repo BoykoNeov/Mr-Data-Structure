@@ -59,6 +59,10 @@ function fakeEngine(log: string[]): BenchEngine {
         // The skip list shares the sorted array's O(log n) search class and, unlike it,
         // keeps a sub-linear add/remove — the pair the shared charts are meant to contrast.
         series('skiplist', 'search', sizes, (n) => Math.log2(n)),
+        // The doubly list walks the singly list's path visit for visit (METHODOLOGY §2.11).
+        series('dll', 'search', sizes, (n) => 2 * n),
+        // The red-black tree: the one tree on the search chart, O(log n) like the AVL.
+        series('rbt', 'search', sizes, (n) => Math.log2(n)),
       ];
     },
     runMutationSweep: async (_k, sizes) => {
@@ -72,6 +76,8 @@ function fakeEngine(log: string[]): BenchEngine {
         // canonical delete-by-value in the teardown is O(n). The two series disagree on
         // *class*, so the fake reproduces that here rather than a single cost shape.
         ...mutTrio('ll', sizes, () => 1, (n) => n),
+        // The doubly list inherits regime 7 unchanged: the second pointer buys nothing here.
+        ...mutTrio('dll', sizes, () => 1, (n) => n),
       ];
     },
     runBstMutationSweep: async (_k, sizes) => {
@@ -85,6 +91,10 @@ function fakeEngine(log: string[]): BenchEngine {
     runSkipMutationSweep: async (_k, sizes) => {
       log.push(`skip:${sizes.length}`);
       return mutTrio('skiplist', sizes, (n) => Math.log2(n));
+    },
+    runRbtMutationSweep: async (_k, sizes) => {
+      log.push(`rbt:${sizes.length}`);
+      return mutTrio('rbt', sizes, (n) => Math.log2(n));
     },
     runHeapMutationSweep: async (_k, sizes) => {
       log.push(`heap:${sizes.length}`);
@@ -108,12 +118,18 @@ function fakeEngine(log: string[]): BenchEngine {
         ...mutTrio('triestr', sizes, () => 6),
       ];
     },
+    // The graph has its own data and its own orchestrator (runGraphSweeps.test.ts); the key
+    // runs must never call it, so this stub records the call and fails loudly.
+    runGraphSweep: async () => {
+      log.push('graph');
+      throw new Error('a key-dataset run must not measure the graph');
+    },
     dispose: () => {},
   };
 }
 
 describe('runAllSweeps', () => {
-  it('drives every sweep from one dataset and publishes the six proofs in order', async () => {
+  it('drives every sweep from one dataset and publishes the seven proofs in order', async () => {
     const log: string[] = [];
     const statuses: string[] = [];
     const win: Record<string, unknown> = {};
@@ -125,29 +141,36 @@ describe('runAllSweeps', () => {
     expect(r.searchSizes[r.searchSizes.length - 1]).toBe(50_000); // capped by the dataset
     expect(r.mutationSizes[r.mutationSizes.length - 1]).toBe(MUT_MAX);
     expect(log[0]).toBe(`search:50000:${r.searchSizes.length}`);
-    expect(statuses).toHaveLength(6);
+    expect(statuses).toHaveLength(7);
 
     expect(r.search.map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist',
+      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll', 'rbt',
     ]);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
-    // All four **flat** structures now carry a mutation trio, not just the Phase 2 pair.
+    // All five **flat** structures now carry a mutation trio, not just the Phase 2 pair.
     expect(r.mutation.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'array.churn', 'array.insert', 'array.delete',
       'hashset.churn', 'hashset.insert', 'hashset.delete',
       'sarr.churn', 'sarr.insert', 'sarr.delete',
       'll.churn', 'll.insert', 'll.delete',
+      'dll.churn', 'dll.insert', 'dll.delete',
     ]);
     // Regime 7 survives the pipeline: the list's churn and its delete land in different
     // classes, which is exactly what the UI has to show side by side.
     const byKey = (k: string) => r.mutation.find((v) => `${v.series.structure}.${v.series.op}` === k)!;
     expect(byKey('ll.churn').fit.best).toBe('O(1)');
     expect(byKey('ll.delete').fit.best).toBe('O(n)');
+    expect(byKey('dll.churn').fit.best).toBe('O(1)');
+    expect(byKey('dll.delete').fit.best).toBe('O(n)');
     expect(byKey('sarr.churn').fit.best).toBe('O(n)');
     expect(r.trees.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'bst.churn', 'bst.insert', 'bst.delete', 'avl.churn', 'avl.insert', 'avl.delete',
+      'rbt.churn', 'rbt.insert', 'rbt.delete',
     ]);
+    // The red-black sweep must run *before* the heap's: the heap proof is the gate's
+    // "all done" signal, so anything published after it would be read as missing.
+    expect(log.indexOf(`rbt:${r.mutationSizes.length}`)).toBeLessThan(log.indexOf(`heap:${r.mutationSizes.length}`));
     // The skip list is not a tree, so it gets its own bucket — but unlike the heap that is
     // bookkeeping, not a risk-R6 split: it does the same three operations, so its series
     // land on the same shared charts as the trees'.
@@ -165,7 +188,7 @@ describe('runAllSweeps', () => {
     // Risk R6 at the seam: the shared search chart sees only canonical structures, and
     // the heap's scan is available separately for its own section.
     expect(canonicalSearch(r).map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'skiplist',
+      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt',
     ]);
     expect(heapSearch(r).map((v) => v.series.structure)).toEqual(['heap']);
 
@@ -176,6 +199,7 @@ describe('runAllSweeps', () => {
       '__bstMutationProof',
       '__avlMutationProof',
       '__skipMutationProof',
+      '__rbtMutationProof',
       '__compareMeta',
       '__heapMutationProof',
     ]);

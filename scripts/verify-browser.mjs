@@ -29,9 +29,12 @@ let revBst = null;
 let revAvl = null;
 let revHeap = null;
 let revSkip = null;
+let rbt = null;
+let revRbt = null;
 let strSearch = null;
 let strMutation = null;
 let strMeta = null;
+let graphProof = null;
 let meta = null;
 let text = '(no text captured)';
 const checks = [];
@@ -39,14 +42,14 @@ const checks = [];
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
-  // is set last, after the search sweep and the array/hashset, BST, AVL and skip-list
-  // mutation sweeps — or until the app reports an error. Generous timeout: the sweeps do
-  // real timed work, and there are six search series and seven mutation sweeps.
+  // is set last, after the search sweep and the array/hashset, BST, AVL, skip-list and
+  // red-black mutation sweeps — or until the app reports an error. Generous timeout: the
+  // sweeps do real timed work, and there are eight search series and eight mutation sweeps.
   await page.waitForFunction(
     () =>
       window.__heapMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
-    { timeout: 90000 },
+    { timeout: 120000 },
   );
   text = await page.evaluate(() => document.body.innerText);
   proof = await page.evaluate(() => window.__sweepProof ?? null);
@@ -55,6 +58,7 @@ try {
   avl = await page.evaluate(() => window.__avlMutationProof ?? null);
   heap = await page.evaluate(() => window.__heapMutationProof ?? null);
   skip = await page.evaluate(() => window.__skipMutationProof ?? null);
+  rbt = await page.evaluate(() => window.__rbtMutationProof ?? null);
   meta = await page.evaluate(() => window.__compareMeta ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
@@ -114,10 +118,12 @@ try {
     const hashset = proof.find((p) => p.structure === 'hashset');
     const heapSearch = proof.find((p) => p.structure === 'heap');
     const skipSearch = proof.find((p) => p.structure === 'skiplist');
+    const dllSearch = proof.find((p) => p.structure === 'dll');
+    const rbtSearch = proof.find((p) => p.structure === 'rbt');
 
     want(
-      'six search series measured',
-      proof.length === 6 && array && ll && sarrSearch && hashset && heapSearch && skipSearch,
+      'eight search series measured',
+      proof.length === 8 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch && rbtSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -132,6 +138,18 @@ try {
       want('linked-list search labelled O(n)', ll.best === 'O(n)');
       want('linked-list search slope ~1 (0.7..1.4)', ll.slope >= 0.7 && ll.slope <= 1.4);
       want(`linked-list search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
+    }
+    // Doubly linked list (docs/METHODOLOGY.md §2.11): the singly list's walk, visit for visit —
+    // its `prev` link has nothing to offer a search — so it gets the singly list's bands and
+    // nothing tighter. Deliberately NOT asserted: that its wall-clock equals the singly list's.
+    // Its node is 24 bytes against 16, so the same walk may legitimately read slower; the
+    // equality claim is an op-count claim and is pinned clock-free in Rust
+    // (`structures::methodology::doubly_linked_list_buys_nothing_on_the_canonical_op_set`).
+    if (dllSearch) {
+      const ratio = dllSearch.lastNanos / dllSearch.firstNanos;
+      want('doubly-linked-list search labelled O(n)', dllSearch.best === 'O(n)');
+      want('doubly-linked-list search slope ~1 (0.7..1.4)', dllSearch.slope >= 0.7 && dllSearch.slope <= 1.4);
+      want(`doubly-linked-list search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
     }
     // Sorted array: the "missing middle" — binary search is sub-linear (O(log n)). Assert
     // the slope *band* (well below the array's ~1), NOT the label: the §7.2 fitter cannot
@@ -179,6 +197,19 @@ try {
         skipSearch.slope < array.slope,
       );
     }
+    // Red-black tree (docs/PLAN.md §8 trees, §13): the one tree on the search chart. A
+    // search is one root-to-leaf descent, so the curve is the tree's depth — sub-linear on
+    // any order. Same band as the other sub-linear searches, label not asserted (§7.2).
+    if (rbtSearch && array) {
+      want(
+        `red-black search sub-linear (slope ${rbtSearch.slope.toFixed(2)} < 0.4)`,
+        rbtSearch.slope < 0.4,
+      );
+      want(
+        `red-black search flatter than array (${rbtSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
+        rbtSearch.slope < array.slope,
+      );
+    }
   }
 
   // Mutation (docs/PLAN.md §6.3): the real clock is too noisy for absolute-ns
@@ -192,7 +223,7 @@ try {
     const aIns = find('array', 'insert');
     const aDel = find('array', 'delete');
 
-    want('twelve mutation series measured (four flat structures)', mutation.length === 12);
+    want('fifteen mutation series measured (five flat structures)', mutation.length === 15);
     if (aChurn) {
       const ratio = aChurn.lastNanos / aChurn.firstNanos;
       want(`array churn rises (slope ${aChurn.slope.toFixed(2)} > 0.6)`, aChurn.slope > 0.6);
@@ -288,6 +319,40 @@ try {
         gap > 20,
       );
     }
+
+    // ── Doubly linked list (docs/METHODOLOGY.md §2.3 regime 7, §2.11) — the same pair, the
+    // same honesty rule. Its churn is flat for the singly list's reason (head insert puts *any*
+    // churn key at the head), and its delete-by-value is the same O(n) walk — the back pointer
+    // speeds only the uncounted splice. Mirrors the singly checks above, thresholds unchanged,
+    // including the two-sided `|slope| < 0.6` for a churn line expected to sit on the timer's
+    // floor. Not asserted: any dll-vs-ll wall-clock ratio (a bigger node may cost cache).
+    const dChurn = find('dll', 'churn');
+    const dDel = find('dll', 'delete');
+    if (dChurn) {
+      want(
+        `doubly-linked-list churn stays flat (|slope| ${Math.abs(dChurn.slope).toFixed(2)} < 0.6)`,
+        Math.abs(dChurn.slope) < 0.6,
+      );
+    }
+    if (dDel) {
+      const ratio = dDel.lastNanos / dDel.firstNanos;
+      want(
+        `doubly-linked-list delete-by-value reads O(n) (slope ${dDel.slope.toFixed(2)} > 0.6)`,
+        dDel.slope > 0.6,
+      );
+      want(`doubly-linked-list delete grows with n (ratio ${ratio.toFixed(1)} > 3)`, ratio > 3);
+    }
+    if (dChurn && dDel) {
+      want(
+        `doubly linked list: churn and delete-by-value disagree on class (${dChurn.slope.toFixed(2)} vs ${dDel.slope.toFixed(2)})`,
+        Math.abs(dChurn.slope) < 0.6 && dDel.slope > 0.6,
+      );
+      const gap = dDel.lastNanos / dChurn.lastNanos;
+      want(
+        `doubly-linked-list delete-by-value costs vastly more than head churn (${gap.toFixed(0)}x > 20x)`,
+        gap > 20,
+      );
+    }
     // Both flat-family structures stay on the *first* pass only: neither is
     // shape-sensitive (a sorted array re-sorts whatever arrives; a list head-inserts
     // regardless), so there is nothing for reverse-sorted input to flip. Note for anyone
@@ -364,6 +429,25 @@ try {
     }
   }
 
+  // Red-black mutation (docs/PLAN.md §6.3, §8 trees, §13): the AVL's recipe exactly (two-key
+  // churn, alternating teardown), so the two balanced trees' curves are comparable. Only the
+  // class is asserted here — sub-linear, like the AVL. The scheme-level comparison (≤ 2 / ≤ 3
+  // rotations per op, ~18 % fewer rotations on shuffled inserts, deeper spines on sorted
+  // input) is a set of op-count claims pinned clock-free in Rust (`structures::methodology`,
+  // docs/METHODOLOGY.md §2.9); the wall clock is too noisy for constant-level gaps.
+  if (rbt) {
+    const rChurn = rbt.find((m) => m.structure === 'rbt' && m.op === 'churn');
+    want('three red-black mutation series measured', rbt.length === 3);
+    if (rChurn) {
+      const ratio = rChurn.lastNanos / rChurn.firstNanos;
+      want(
+        `red-black churn sub-linear (slope ${rChurn.slope.toFixed(2)} < 0.6)`,
+        rChurn.slope < 0.6,
+      );
+      want(`red-black churn stays near-flat (ratio ${ratio.toFixed(1)} < 6)`, ratio < 6);
+    }
+  }
+
   // Min-heap mutation (docs/PLAN.md §6.3, §8 trees/heaps): the churn primary here is
   // insert + **extract-min**, so it is read only against the heap's own split, never
   // against the structures above (risk R6). Two things the real clock can show that the
@@ -429,6 +513,7 @@ try {
     window.__bstMutationProof = undefined;
     window.__avlMutationProof = undefined;
     window.__skipMutationProof = undefined;
+    window.__rbtMutationProof = undefined;
     window.__heapMutationProof = undefined;
   });
   await page.locator('select').first().selectOption('reverse-sorted');
@@ -445,6 +530,7 @@ try {
   revAvl = await page.evaluate(() => window.__avlMutationProof ?? null);
   revHeap = await page.evaluate(() => window.__heapMutationProof ?? null);
   revSkip = await page.evaluate(() => window.__skipMutationProof ?? null);
+  revRbt = await page.evaluate(() => window.__rbtMutationProof ?? null);
   const revMeta = await page.evaluate(() => window.__compareMeta ?? null);
 
   want('reverse-sorted run measured', revMeta && revMeta.order.kind === 'reverse-sorted');
@@ -485,6 +571,21 @@ try {
     if (c) {
       want(
         `reverse-sorted skip-list churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
+        c.slope < 0.6,
+      );
+    }
+  }
+
+  // The red-black tree on the same reverse-sorted input: it rotates like the AVL, so it
+  // belongs on the sub-linear side of the BST's O(n). Its spines run deeper than the AVL's
+  // on sorted keys (height 21 vs 12 at n = 4000, clock-free), which can lift its constant
+  // but not its class — pinned in Rust by
+  // `structures::methodology::rbt_keeps_its_class_on_the_input_that_degenerates_a_bst`.
+  if (revRbt) {
+    const c = revRbt.find((m) => m.op === 'churn');
+    if (c) {
+      want(
+        `reverse-sorted red-black churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
         c.slope < 0.6,
       );
     }
@@ -670,6 +771,67 @@ try {
     }
   }
 
+  // ── Fourth pass: the **graph** (docs/METHODOLOGY.md §2.7) ──
+  //
+  // The graph is not driven by the dataset picker at all: it has its own data (edges, not
+  // keys), its own section and its own button, and it never runs on page load — so the three
+  // key passes above are untouched by it and their order still holds. It runs after the string
+  // pass and reads only `__graphProof`, which no other pass sets.
+  //
+  // The default graph source is the synthetic connected random family at average degree 4,
+  // so both sweeps run on connected graphs and every traversal reaches every vertex.
+  await page.evaluate(() => {
+    window.__graphProof = undefined;
+  });
+  // Exact name; it deliberately does not match the key runs' /run the sweeps/ locator.
+  await page.getByRole('button', { name: /^measure the graph$/i }).click();
+  await page.waitForFunction(
+    () => window.__graphProof !== undefined || /graph status:\s*error/.test(document.body.innerText),
+    { timeout: 120000 },
+  );
+  graphProof = await page.evaluate(() => window.__graphProof ?? null);
+  want('graph run measured (both sweeps)', graphProof && graphProof.vertexSweep && graphProof.degreeSweep);
+  if (graphProof) {
+    for (const [name, s] of [
+      ['V-sweep', graphProof.vertexSweep],
+      ['degree-sweep', graphProof.degreeSweep],
+    ]) {
+      // The cost identity, checked at runtime on the real bench twin against the reached
+      // component the page computed itself (PLAN §10 trap 4) — clock-free, so exact.
+      want(`graph ${name}: op-count = V′ + 2E′ at every point`, s.countsMatchComponent === true);
+      want(`graph ${name}: BFS and DFS cost the same at every point`, s.bfsEqualsDfs === true);
+      want(`graph ${name}: synthetic graphs are connected (all reached)`, s.allReached === true);
+      want(`graph ${name}: ${s.points.length} points measured (≥ 5)`, s.points.length >= 5);
+    }
+    // The V-sweep on the wall clock: both traversals linear in V′ + 2E′. The band is wide on
+    // the high side on purpose: the sweep grows the graph from cache-resident (1k vertices)
+    // to well past it (50k), so each visit gets a little dearer and the slope can sit above 1
+    // for a reason that is memory, not algorithm (the same call the string array's band makes).
+    for (const t of [graphProof.vertexSweep.bfs, graphProof.vertexSweep.dfs]) {
+      want(
+        `graph V-sweep ${t.op} linear in V′ + 2E′ (slope ${t.slope.toFixed(2)} in 0.7..1.6)`,
+        t.slope >= 0.7 && t.slope <= 1.6,
+      );
+    }
+    // The degree-sweep is the "+E made visible" assertion: V is fixed, so an O(V) traversal
+    // would read flat (ratio ≈ 1, slope ≈ 0). The measured cost must rise with the edges. The
+    // bounds are loose on the low side because a per-vertex visit costs more than a per-edge
+    // read, which flattens the low-degree end (slope below 1 for an honest O(V + E)) — the
+    // point is "clearly rises", not "slope exactly 1". Clock-free, the +2-per-edge identity is
+    // pinned in Rust (`graph_plus_e_term_is_only_visible_when_degree_grows_at_fixed_v`).
+    for (const t of [graphProof.degreeSweep.bfs, graphProof.degreeSweep.dfs]) {
+      const rise = t.lastNanos / t.firstNanos;
+      want(
+        `graph degree-sweep ${t.op} rises with E at fixed V (${rise.toFixed(1)}× over a ${graphProof.degreeSweep.xRatio.toFixed(1)}× V′ + 2E′ range, > 3×)`,
+        rise > 3,
+      );
+      want(
+        `graph degree-sweep ${t.op} slope well above flat (${t.slope.toFixed(2)} in 0.4..1.4)`,
+        t.slope >= 0.4 && t.slope <= 1.4,
+      );
+    }
+  }
+
   ok = checks.length > 0 && checks.every((c) => c.pass);
 } catch (err) {
   logs.push(`[harness] ${err.message}`);
@@ -695,6 +857,14 @@ if (avl) {
   console.log('--- avl mutation proof ---');
   console.log(JSON.stringify(avl, null, 2));
 }
+if (rbt) {
+  console.log('--- red-black mutation proof ---');
+  console.log(JSON.stringify(rbt, null, 2));
+}
+if (revRbt) {
+  console.log('--- red-black mutation proof (reverse-sorted) ---');
+  console.log(JSON.stringify(revRbt, null, 2));
+}
 if (heap) {
   console.log('--- heap mutation proof ---');
   console.log(JSON.stringify(heap, null, 2));
@@ -718,6 +888,10 @@ if (strSearch) {
 if (strMutation) {
   console.log('--- string mutation proof ---');
   console.log(JSON.stringify(strMutation, null, 2));
+}
+if (graphProof) {
+  console.log('--- graph proof ---');
+  console.log(JSON.stringify(graphProof, null, 2));
 }
 if (meta) {
   console.log('--- compare meta (uniform pass) ---');

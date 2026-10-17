@@ -89,14 +89,19 @@ export interface CompareResult {
    */
   readonly search: readonly SeriesView[];
   /**
-   * churn + finite-difference insert/delete for the four **flat** structures — unsorted
-   * array, hash set, sorted array, linked list. Twelve series: each structure's churn
-   * primary plus its two finite-difference halves. The list's pair is the one that must
-   * be read together rather than separately (METHODOLOGY §2.3 regime 7): its churn is
-   * honestly O(1) and its delete-by-value honestly O(n).
+   * churn + finite-difference insert/delete for the five **flat** structures — unsorted
+   * array, hash set, sorted array, linked list, doubly linked list. Fifteen series: each
+   * structure's churn primary plus its two finite-difference halves. The lists' pairs are
+   * the ones that must be read together rather than separately (METHODOLOGY §2.3 regime 7):
+   * churn honestly O(1), delete-by-value honestly O(n) — for the doubly list too, whose
+   * second pointer changes no count (METHODOLOGY §2.11).
    */
   readonly mutation: readonly SeriesView[];
-  /** churn + finite-difference insert/delete for the BST and the AVL. */
+  /**
+   * churn + finite-difference insert/delete for the BST, the AVL and the **red-black
+   * tree** — in that order, three series each. The two balanced trees share a metric and a
+   * recipe, so their lines are read against each other (docs/METHODOLOGY.md §2.9).
+   */
   readonly trees: readonly SeriesView[];
   /**
    * churn + finite-difference insert/delete for the **skip list**. Its own field rather
@@ -194,6 +199,7 @@ interface ProofWindow {
   __bstMutationProof?: SweepProof[];
   __avlMutationProof?: SweepProof[];
   __skipMutationProof?: SweepProof[];
+  __rbtMutationProof?: SweepProof[];
   __heapMutationProof?: SweepProof[];
   /** The string run's mirrors; `__stringMutationProof` is set last (see {@link runStringSweeps}). */
   __stringSweepProof?: SweepProof[];
@@ -291,7 +297,7 @@ export async function runAllSweeps(
   const search = (await engine.runSweep(keyBuffer(data), searchSizes, SEARCH_OPTS, mix)).map((s) => toView(s));
   if (win) win.__sweepProof = toProof(search);
 
-  onStatus('running mutation sweep (array, hash set, sorted array, linked list)…');
+  onStatus('running mutation sweep (array, hash set, sorted array, linked lists)…');
   const mutation = (await engine.runMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
   if (win) win.__mutationProof = toProof(mutation);
 
@@ -306,6 +312,12 @@ export async function runAllSweeps(
   onStatus('running skip-list mutation sweep…');
   const skiplist = (await engine.runSkipMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
   if (win) win.__skipMutationProof = toProof(skiplist);
+
+  // Before the heap, deliberately: `__heapMutationProof` is the gate's "all sweeps done"
+  // signal, so a proof published after it would be read as missing.
+  onStatus('running red-black tree mutation sweep…');
+  const rbt = (await engine.runRbtMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
+  if (win) win.__rbtMutationProof = toProof(rbt);
 
   onStatus('running min-heap mutation sweep…');
   const heap = (await engine.runHeapMutationSweep(keyBuffer(data), mutationSizes, HEAP_OPTS)).map((s) => toView(s));
@@ -325,7 +337,7 @@ export async function runAllSweeps(
   return {
     search,
     mutation,
-    trees: [...bst, ...avl],
+    trees: [...bst, ...avl, ...rbt],
     skiplist,
     heap,
     shape,

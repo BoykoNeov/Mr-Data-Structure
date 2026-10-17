@@ -1,4 +1,5 @@
 import type { MeasureOptions, SweepSeries } from './measure';
+import type { GraphInput, GraphTraversalMeasure } from './graphBench';
 import type { ProbeMix } from './probeMix';
 
 /**
@@ -38,15 +39,15 @@ export interface BenchEngine {
   ): Promise<SweepSeries[]>;
 
   /**
-   * Measure the size-mutating ops across a size sweep for the four **flat**
-   * structures — unsorted array, hash set, sorted array, linked list
-   * (docs/PLAN.md §6.3): returns three {@link SweepSeries} per structure —
+   * Measure the size-mutating ops across a size sweep for the five **flat**
+   * structures — unsorted array, hash set, sorted array, linked list, doubly linked
+   * list (docs/PLAN.md §6.3): returns three {@link SweepSeries} per structure —
    * `churn` (the combined insert+delete primary), plus `insert` and `delete`
    * from the finite-difference cross-check. As with {@link runSweep}, the engine
    * may transfer (consume) the `keys` buffer, so callers must not reuse it.
-   * Keep `sizes` modest — three of the four have an O(n²) build or teardown (the
-   * array's ordered delete, the sorted array's shifting insert and delete, the
-   * linked list's walk-to-the-tail teardown).
+   * Keep `sizes` modest — four of the five have an O(n²) build or teardown (the
+   * array's ordered delete, the sorted array's shifting insert and delete, both
+   * linked lists' walk-to-the-tail teardown).
    */
   runMutationSweep(
     keys: Float64Array,
@@ -158,6 +159,36 @@ export interface BenchEngine {
     sizes: number[],
     opts?: MeasureOptions,
   ): Promise<SweepSeries[]>;
+
+  /**
+   * Measure the size-mutating ops for the **red-black tree** bench twin across a size sweep
+   * (docs/PLAN.md §6.3, §8 trees, §13) — three {@link SweepSeries} (`churn`, `insert`,
+   * `delete`) tagged `'rbt'`. The AVL's recipe exactly — the two-key churn and the
+   * alternating teardown (docs/METHODOLOGY.md §4.1) — so the two balanced trees' curves are
+   * comparable unit for unit. Like the AVL it is safe on sorted input: it rebalances
+   * whatever order the keys arrive in. As with the other sweeps, the engine may transfer
+   * (consume) the `keys` buffer.
+   */
+  runRbtMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
+  /**
+   * Measure a whole-graph **traversal** — BFS and DFS from vertex 0 — on each graph in
+   * `graphs` (docs/PLAN.md §8 "Specialized"; docs/METHODOLOGY.md §2.7). The graph is not a
+   * key structure: it has its own data (edges, not the dataset's keys), its own op set
+   * (add-edge + traverse) and two size axes, so it gets its own call rather than a slot in
+   * the key sweeps. One {@link GraphTraversalMeasure} per graph, in order; each point's `n`
+   * is the nominal `V`, and the caller re-keys it to the reached component's `V' + 2E'`
+   * (`src/compare/runGraphSweeps.ts`). The engine may transfer (consume) every `edges`
+   * buffer, so callers must not reuse them — and must not hand in two views of one buffer.
+   */
+  runGraphSweep(
+    graphs: GraphInput[],
+    opts?: MeasureOptions,
+  ): Promise<GraphTraversalMeasure[]>;
 
   /** Release the worker / underlying resources. */
   dispose(): void;

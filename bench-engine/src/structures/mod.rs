@@ -66,9 +66,13 @@ pub mod linked_list;
 pub mod skip_list;
 pub mod sorted_array;
 pub mod trie;
+pub mod doubly_linked_list;
+pub mod rbt;
 
 #[cfg(test)]
 mod conformance;
+#[cfg(test)]
+mod conformance_rbt;
 
 /// Decode the first `n` keys of an offsets+UTF-8-bytes marshal buffer
 /// (docs/PLAN.md §4.2) into owned `String`s. `offsets` has length `count + 1`
@@ -828,5 +832,355 @@ mod methodology {
             "doubling V at fixed degree just doubles the cost (ratio {ratio}) — a V-sweep alone \
              can't separate O(V) from O(V+E)"
         );
+    }
+
+    // ── Doubly linked list (docs/METHODOLOGY.md §2.11): regime 7 again, and a second pointer
+    // that buys nothing on the canonical op set.
+    //
+    // The doubly list differs from the singly list by one `prev` link per node. On insert /
+    // search / delete-by-key that link is only ever *written* — no walk reads it — and the one
+    // place it shortens work (the splice after a delete's find) carries no node-visit on either
+    // list. So the claim to pin is not "close": it is **equal**, op-count for op-count, on the
+    // same sequences, across every signal the Compare sweeps read (search, churn, the cumulative
+    // build and the cumulative teardown). If these ever differ, the twins have drifted apart or
+    // the doubly list has started using `prev` in a way the op set does not allow (the trap:
+    // unlinking the tail through its handle in the teardown, which reads O(1) and erases the
+    // class disagreement the singly list is honest about).
+
+    /// The doubly list's every op-count signal equals the singly list's, at several sizes and on
+    /// both a sorted and a shuffled build — and the regime-7 class disagreement holds for it
+    /// exactly as for the singly list (churn 1 visit, finite-difference delete ≈ 3n/4).
+    #[test]
+    fn doubly_linked_list_buys_nothing_on_the_canonical_op_set() {
+        use super::doubly_linked_list::DoublyLinkedListF64 as Dll;
+
+        for ks in [keys(4000), shuffled(4000)] {
+            for n in [250usize, 1000, 2000, 4000] {
+                // Search: the Compare workload's shape — present keys spread through the prefix
+                // plus a block just past the max.
+                let max = ks[..n].iter().cloned().fold(f64::MIN, f64::max);
+                let probes: Vec<f64> = (0..64)
+                    .map(|i| ks[i * n / 64])
+                    .chain((0..64).map(|i| max + 1.0 + i as f64))
+                    .collect();
+                let mut d = Dll::new(&ks, n);
+                let mut s = LinkedListF64::new(&ks, n);
+                d.set_probes(&probes);
+                s.set_probes(&probes);
+                assert_eq!(d.search_counted(), s.search_counted(), "search ops at n {n}");
+
+                // Churn: the engine's `max + 1` key, identical on both, and exactly 1.
+                d.set_churn_key(max + 1.0);
+                s.set_churn_key(max + 1.0);
+                assert_eq!(d.churn_counted(), s.churn_counted(), "churn ops at n {n}");
+                assert_eq!(d.churn_counted(), 1.0);
+
+                // Cumulative build and teardown — what the finite-difference split differences.
+                assert_eq!(Dll::build_insert_counted(&ks, n), LinkedListF64::build_insert_counted(&ks, n));
+                assert_eq!(Dll::teardown_counted(&ks, n), LinkedListF64::teardown_counted(&ks, n));
+                // Distinct keys, tail by value: Σ_{i=1..n} i, a full walk each — not 0, which a
+                // tail-handle unlink would have reported.
+                assert_eq!(Dll::teardown_counted(&ks, n), (n * (n + 1) / 2) as f64, "teardown at n {n}");
+            }
+        }
+
+        // Regime 7 for the doubly list, the singly test's numbers verbatim.
+        let ks = keys(4000);
+        let (n1, n2) = (2000usize, 4000usize);
+        let insert_fd = (Dll::build_insert_counted(&ks, n2) - Dll::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (Dll::teardown_counted(&ks, n2) - Dll::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let mut l = Dll::new(&ks, n2);
+        l.set_churn_key(n2 as f64 + 1.0);
+        let churn = l.churn_counted();
+        assert_eq!(insert_fd, 0.0, "head insert is O(1) on the doubly list too");
+        assert_eq!(churn, 1.0, "doubly-list churn is O(1) for the singly list's reason");
+        assert!(delete_fd > n2 as f64 / 2.0 && delete_fd < n2 as f64, "delete_fd {delete_fd} ≈ 3n/4");
+        assert!(insert_fd + delete_fd > churn * 100.0, "the class disagreement survives the second pointer");
+    }
+
+    // ── Red-black tree vs AVL: the balancing-scheme comparison (docs/PLAN.md §13,
+    //    docs/METHODOLOGY.md §2.9).
+    //
+    // The textbook trade: the red-black tree accepts a looser height bound
+    // (≤ 2·log₂(n+1) against the AVL's ≈ 1.44·log₂ n) in exchange for **at most two
+    // rotations per insert and three per delete**, where an AVL delete may rotate at every
+    // level. The expected finding is "fewer rotations, slightly more comparisons". These
+    // tests measure it on the same key sequences the AVL is measured on — shuffled,
+    // ascending, descending — and pin what the op-counts *actually* say, which is narrower
+    // than the slogan (each test's doc gives the measured numbers).
+    //
+    // **Splitting the AVL's single op-count into comparisons and rotations** needs no change
+    // to `avl.rs`. For *distinct* keys, an insert descends exactly the path a failed search
+    // for that key takes in the tree as it stood just before the insert, and a delete's find
+    // phase stops at exactly the node a search stops at. So per operation:
+    // `rotations = op-count − search_one_counted(key)` with the search taken first. Every
+    // sequence below is a permutation of distinct keys, which is what keeps that valid.
+
+    use super::rbt::{Cost, RbtF64};
+
+    /// Per-operation tallies for one sequence of operations on one tree.
+    #[derive(Default)]
+    struct Tally {
+        comparisons: u64,
+        rotations: u64,
+        recolours: u64,
+        max_rotations: u64,
+    }
+
+    impl Tally {
+        fn push(&mut self, comparisons: u64, rotations: u64, recolours: u64) {
+            self.comparisons += comparisons;
+            self.rotations += rotations;
+            self.recolours += recolours;
+            self.max_rotations = self.max_rotations.max(rotations);
+        }
+        fn push_rbt(&mut self, c: Cost) {
+            self.push(c.comparisons, c.rotations, c.recolours);
+        }
+    }
+
+    fn avl_build_tally(keys: &[f64]) -> (AvlF64, Tally) {
+        let mut t = AvlF64::new_empty();
+        let mut tally = Tally::default();
+        for &k in keys {
+            let (_, cmp) = t.search_one_counted(k); // the descent the insert is about to take
+            let ops = t.insert_one_counted(k);
+            tally.push(cmp, ops - cmp, 0);
+        }
+        (t, tally)
+    }
+
+    fn rbt_build_tally(keys: &[f64]) -> (RbtF64, Tally) {
+        let mut t = RbtF64::new_empty();
+        let mut tally = Tally::default();
+        for &k in keys {
+            tally.push_rbt(t.insert_one_detail(k));
+        }
+        (t, tally)
+    }
+
+    fn avl_delete_tally(t: &mut AvlF64, order: &[f64]) -> Tally {
+        let mut tally = Tally::default();
+        for &k in order {
+            let (_, cmp) = t.search_one_counted(k); // the find phase the delete is about to take
+            let (removed, ops) = t.delete_one_counted(k);
+            assert!(removed, "every key in the order is stored");
+            tally.push(cmp, ops - cmp, 0);
+        }
+        tally
+    }
+
+    fn rbt_delete_tally(t: &mut RbtF64, order: &[f64]) -> Tally {
+        let mut tally = Tally::default();
+        for &k in order {
+            let (removed, c) = t.delete_one_detail(k);
+            assert!(removed, "every key in the order is stored");
+            tally.push_rbt(c);
+        }
+        tally
+    }
+
+    /// The engine's teardown order on distinct keys: current maximum, current minimum, in
+    /// turn — computed from the sorted keys, so both trees get the identical sequence.
+    fn alternating_extremes(keys: &[f64]) -> Vec<f64> {
+        let mut sorted = keys.to_vec();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let (mut lo, mut hi) = (0usize, sorted.len());
+        let mut out = Vec::with_capacity(sorted.len());
+        let mut take_hi = true;
+        while lo < hi {
+            if take_hi {
+                hi -= 1;
+                out.push(sorted[hi]);
+            } else {
+                out.push(sorted[lo]);
+                lo += 1;
+            }
+            take_hi = !take_hi;
+        }
+        out
+    }
+
+    fn three_orders(n: usize) -> [(&'static str, Vec<f64>); 3] {
+        [
+            ("shuffled", shuffled(n)),
+            ("ascending", keys(n)),
+            ("descending", (0..n).map(|i| (n - 1 - i) as f64).collect()),
+        ]
+    }
+
+    /// **The guarantee that holds, and the AVL breaking it on the same data.** On every
+    /// single operation of every sequence — build, alternating teardown, and a deletion in
+    /// an unrelated order, on shuffled, ascending and descending keys — the red-black tree
+    /// rotates at most **twice** on an insert and **three times** on a delete. The AVL, on
+    /// the same shuffled teardown, needed **ten** rotations for one delete (measured; the
+    /// deletion in random order peaked at six), because its retrace can rebalance at every
+    /// level on the way back up. This is the claim the slogan "fewer rotations" is really
+    /// about: a bound on the *worst single operation*, not on the total (see the next test).
+    #[test]
+    fn rbt_bounds_rotations_per_operation_where_the_avl_does_not() {
+        let n = 4000usize;
+        for (name, ks) in three_orders(n) {
+            let (mut t, build) = rbt_build_tally(&ks);
+            assert!(build.max_rotations <= 2, "{name}: an RB insert rotated {} times", build.max_rotations);
+            let teardown = rbt_delete_tally(&mut t, &alternating_extremes(&ks));
+            assert!(teardown.max_rotations <= 3, "{name}: an RB delete rotated {} times", teardown.max_rotations);
+            let mut t = RbtF64::new(&ks, n);
+            let random = rbt_delete_tally(&mut t, &shuffled(n).iter().rev().copied().collect::<Vec<_>>());
+            assert!(random.max_rotations <= 3, "{name}: an RB delete rotated {} times", random.max_rotations);
+            assert!(t.is_empty() && t.check_rb());
+        }
+        // The AVL on the identical shuffled teardown: one delete rotates more than an RB
+        // delete ever may. Measured: 10.
+        let ks = shuffled(n);
+        let mut avl = AvlF64::new(&ks, n);
+        let avl_teardown = avl_delete_tally(&mut avl, &alternating_extremes(&ks));
+        assert!(
+            avl_teardown.max_rotations > 3,
+            "AVL's worst teardown delete rotated {} times — expected past the RB bound of 3",
+            avl_teardown.max_rotations
+        );
+    }
+
+    /// **What the totals say — narrower than the slogan.** On *shuffled* inserts the
+    /// red-black tree does clearly fewer rotations than the AVL (measured 2311 vs 2830 at
+    /// n = 4000, 0.58 vs 0.71 per insert, ~18 % fewer) at essentially the same comparisons
+    /// (43 122 vs 43 069, +0.1 %) — but it **recolours** 9223 times on the way, four times
+    /// as often as it rotates, a cost the shared metric deliberately does not count (the
+    /// AVL's height updates are not counted either). On *sorted* inserts the rotation totals
+    /// are **the same** (3979 vs 3988 — about one per insert for both), and on deletes the
+    /// totals are within a few percent, the red-black tree's slightly *higher* (2690 vs 2761
+    /// on the shuffled teardown, 1501 vs 1466 deleting in random order). So "fewer
+    /// rotations" is a per-operation bound (previous test) plus a random-insert effect, not
+    /// a property of every total.
+    #[test]
+    fn rbt_rotates_less_on_random_inserts_and_about_as_much_everywhere_else() {
+        let n = 4000usize;
+        let ks = shuffled(n);
+        let (_, avl) = avl_build_tally(&ks);
+        let (_, rbt) = rbt_build_tally(&ks);
+        assert!(
+            (rbt.rotations as f64) < 0.9 * avl.rotations as f64,
+            "shuffled build: RB rotations {} should be clearly below AVL {}",
+            rbt.rotations,
+            avl.rotations
+        );
+        let cmp_gap = (rbt.comparisons as f64 - avl.comparisons as f64).abs() / avl.comparisons as f64;
+        assert!(cmp_gap < 0.02, "shuffled build: comparisons within 2 % ({} vs {})", rbt.comparisons, avl.comparisons);
+        assert!(rbt.recolours > 2 * rbt.rotations, "RB recolours {} dwarf its rotations {}", rbt.recolours, rbt.rotations);
+
+        // Sorted inserts: one rotation per insert for both schemes, give or take.
+        let (_, avl_sorted) = avl_build_tally(&keys(n));
+        let (_, rbt_sorted) = rbt_build_tally(&keys(n));
+        let rot_gap = (rbt_sorted.rotations as f64 - avl_sorted.rotations as f64).abs() / avl_sorted.rotations as f64;
+        assert!(rot_gap < 0.02, "sorted build: rotations within 2 % ({} vs {})", rbt_sorted.rotations, avl_sorted.rotations);
+
+        // Deletes: totals within 15 % either way — no scheme-level saving in the totals.
+        let mut a = AvlF64::new(&ks, n);
+        let mut r = RbtF64::new(&ks, n);
+        let order = alternating_extremes(&ks);
+        let (ad, rd) = (avl_delete_tally(&mut a, &order), rbt_delete_tally(&mut r, &order));
+        let del_gap = (rd.rotations as f64 - ad.rotations as f64).abs() / ad.rotations as f64;
+        assert!(del_gap < 0.15, "teardown rotations within 15 % ({} vs {})", rd.rotations, ad.rotations);
+    }
+
+    /// **"Slightly more comparisons" — true where it was predicted, and larger than
+    /// "slightly" on sorted input.** Shuffled: the two trees end up the same height (15) and
+    /// within 0.4 % on internal path length, so a search costs the same. Ascending (and,
+    /// mirrored, descending): the AVL builds a near-perfect tree (height 12) while the
+    /// red-black tree's height reaches 21 — inside its 2·log₂(n+1) ≈ 23.9 bound, but the
+    /// long path is exactly the spine sorted input keeps inserting down, so the sorted
+    /// **build** costs the red-black tree 68 % more comparisons (73 809 vs 43 905). The
+    /// finished tree is still nearly as good to *search* as the AVL's: internal path length
+    /// only 3.8 % higher (45 586 vs 43 917). Both stay O(log n) — this is a constant, not a
+    /// class — and it is why the RB churn line sits above the AVL's on sorted data.
+    #[test]
+    fn rbt_pays_its_looser_bound_in_comparisons_on_sorted_input() {
+        let n = 4000usize;
+        let bound = 2.0 * ((n + 1) as f64).log2();
+        for (name, ks) in three_orders(n) {
+            let (avl_tree, avl) = avl_build_tally(&ks);
+            let (rbt_tree, rbt) = rbt_build_tally(&ks);
+            assert!(rbt_tree.check_rb() && avl_tree.check_balanced());
+            assert!((rbt_tree.tree_height() as f64) <= bound, "{name}: RB height within 2·log₂(n+1)");
+            assert!(rbt_tree.tree_height() >= avl_tree.tree_height(), "{name}: RB never shallower here");
+            // Average search cost = internal path length / n; for the AVL, the per-key search
+            // count summed over the stored (distinct) keys is that same number.
+            let avl_ipl: u64 = ks.iter().map(|&k| avl_tree.search_one_counted(k).1).sum();
+            let rbt_ipl = rbt_tree.internal_path_length();
+            let ipl_gap = (rbt_ipl as f64 - avl_ipl as f64) / avl_ipl as f64;
+            assert!(ipl_gap >= 0.0 && ipl_gap < 0.06, "{name}: RB average search within 6 % above AVL ({ipl_gap})");
+            if name != "shuffled" {
+                assert!(
+                    rbt_tree.tree_height() as f64 >= 1.5 * avl_tree.tree_height() as f64,
+                    "{name}: RB height {} vs AVL {}",
+                    rbt_tree.tree_height(),
+                    avl_tree.tree_height()
+                );
+                assert!(
+                    rbt.comparisons as f64 > 1.5 * avl.comparisons as f64,
+                    "{name}: sorted build costs RB {} comparisons vs AVL {}",
+                    rbt.comparisons,
+                    avl.comparisons
+                );
+            }
+        }
+    }
+
+    /// The **tenth churn-vs-finite-difference regime** (docs/METHODOLOGY.md §2.3). The AVL's
+    /// direction again — churn above the sum, because churn's keys ride the spines while the
+    /// build inserts at average depth — but twice as wide: measured churn 27, insert_fd 12.40,
+    /// delete_fd 9.81, sum 22.21 (~18 % under churn, against the AVL's ~10 %). The looser
+    /// height bound is exactly what widens it: an RB tree's spines can run longer than its
+    /// average path by more than an AVL's can. Class agreement holds (both O(log n)).
+    #[test]
+    fn rbt_churn_exceeds_finite_difference_sum_like_the_avl_but_wider() {
+        let ks = shuffled(4000);
+        let (n1, n2) = (2000usize, 4000usize);
+        let insert_fd = (RbtF64::build_insert_counted(&ks, n2) - RbtF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (RbtF64::teardown_counted(&ks, n2) - RbtF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let mut t = RbtF64::new(&ks, n2);
+        t.set_churn_keys(-1.0, n2 as f64 + 1.0);
+        let churn = t.churn_counted();
+        let sum = insert_fd + delete_fd;
+        assert!(churn >= sum, "RB churn {churn} should be ≥ fd sum {sum} (spine probe)");
+        let rel = (churn - sum) / churn;
+        assert!(rel < 0.25, "RB churn {churn} vs fd sum {sum}: same class, rel {rel}");
+        assert!(churn < 80.0 && sum < 80.0, "RB churn {churn} / sum {sum} must stay O(log n)");
+        assert_eq!(t.len(), n2);
+        assert!(t.check_rb());
+    }
+
+    /// **The red-black tree on the input that degenerates a BST.** Reverse-sorted keys build
+    /// the naive BST into an O(n) left chain; the red-black tree built from the same keys
+    /// searches the far end within its 2·log₂(n+1) bound (measured 19 against the AVL's 11
+    /// and the BST's 2000), and its two-key churn stays O(log n) (measured 30 vs the AVL's
+    /// 23). It rotates, like the AVL — the difference between the two is a constant, the
+    /// difference from the BST is a class.
+    #[test]
+    fn rbt_keeps_its_class_on_the_input_that_degenerates_a_bst() {
+        let n = 2000usize;
+        let descending: Vec<f64> = (0..n).map(|i| (n - 1 - i) as f64).collect();
+        let bst = BstF64::new(&descending, n);
+        let rbt = RbtF64::new(&descending, n);
+        let avl = AvlF64::new(&descending, n);
+        let (bst_found, bst_ops) = bst.search_one_counted(0.0);
+        let (rbt_found, rbt_ops) = rbt.search_one_counted(0.0);
+        let (avl_found, avl_ops) = avl.search_one_counted(0.0);
+        assert!(bst_found && rbt_found && avl_found);
+        assert_eq!(bst_ops, n as u64, "reverse-sorted BST search-min is the full chain");
+        let bound = 2.0 * ((n + 1) as f64).log2();
+        assert!((rbt_ops as f64) <= bound, "RB search-min {rbt_ops} within 2·log₂(n+1) ≈ {bound:.1}");
+        assert!(rbt_ops >= avl_ops, "RB {rbt_ops} vs AVL {avl_ops}: the looser bound shows at the spine");
+
+        let mut r = RbtF64::new(&descending, n);
+        r.set_churn_keys(-1.0, n as f64);
+        let churn = r.churn_counted();
+        assert!(churn < 60.0, "reverse-sorted RB churn {churn} must stay O(log n) ≪ {n}");
+        assert_eq!(r.len(), n);
     }
 }

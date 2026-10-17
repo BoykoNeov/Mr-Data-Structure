@@ -6,6 +6,7 @@ import {
   CANONICAL_STRUCTURES,
   isCanonical,
   theoreticalClass,
+  GRAPH,
 } from './registry';
 import type { StructureId } from './bench/measure';
 
@@ -15,7 +16,7 @@ import type { StructureId } from './bench/measure';
  */
 describe('structure registry', () => {
   it('covers every StructureId exactly once, with a distinct colour each', () => {
-    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist'];
+    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll', 'rbt'];
     for (const id of ids) expect(REGISTRY[id].id).toBe(id);
     // STRUCTURES is the *numeric* catalogue — the one the shared charts draw from.
     expect(STRUCTURES.map((s) => s.id).sort()).toEqual([...ids].sort());
@@ -61,6 +62,23 @@ describe('structure registry', () => {
     // its own rather than a deliberate duplicate.
     const numericHues = new Set(STRUCTURES.map((s) => s.color));
     expect(numericHues.has(REGISTRY.triestr.color)).toBe(false);
+  });
+
+  it('pins the red-black tree beside the AVL: same metric, O(log n) everywhere, order-insensitive', () => {
+    // The balancing-scheme comparison (docs/PLAN.md §13, METHODOLOGY §2.9) only means
+    // something if the two balanced trees are measured in the same unit, so the metric is
+    // pinned *equal* to the AVL's — recolours are deliberately outside it.
+    expect(REGISTRY.rbt.costMetric).toBe(REGISTRY.avl.costMetric);
+    for (const op of ['search', 'insert', 'delete', 'churn'] as const) {
+      expect(REGISTRY.rbt.average[op]).toBe('O(log n)');
+      expect(REGISTRY.rbt.worst[op]).toBe('O(log n)');
+    }
+    expect(theoreticalClass('rbt', 'churn', 'sorted')).toBe('O(log n)');
+    expect(REGISTRY.rbt.shapeSensitive).toBe(false);
+    expect(REGISTRY.rbt.family).toBe('tree');
+    expect(REGISTRY.rbt.color).toBe('#c49c94');
+    expect(isCanonical('rbt')).toBe(true);
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('rbt');
   });
 
   it('pins the skip list at O(log n) average, O(n) worst, and order-insensitive', () => {
@@ -132,5 +150,33 @@ describe('structure registry', () => {
 
   it('declares a cost metric for every structure (op-counts are shape-only, §2.3)', () => {
     for (const s of STRUCTURES) expect(s.costMetric.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the graph off every shared chart, with its own info shape (PLAN §10 trap 1)', () => {
+    // The trap this pins: `isCanonical` used to be `id !== 'heap'`, so a `'graph'` id added
+    // without a matching exclusion silently read as canonical and could land on the shared
+    // insert/search/delete charts. Both the predicate and the filtered list must exclude it.
+    expect(isCanonical('graph')).toBe(false);
+    expect((['graph', 'heap', 'array'] as StructureId[]).filter(isCanonical)).toEqual(['array']);
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).not.toContain('graph');
+    expect(STRUCTURES.map((s) => s.id)).not.toContain('graph');
+    expect(STRING_STRUCTURES.map((s) => s.id)).not.toContain('graph');
+    // Its own shape: no search/delete/churn slots filled with theory it does not have, no
+    // key type (it stores edges), no input-order flag (V + 2E holds on any edge order).
+    const graph = REGISTRY.graph;
+    expect(graph).toBe(GRAPH);
+    expect(graph.id).toBe('graph');
+    expect(graph.family).toBe('graph');
+    for (const field of ['average', 'worst', 'shapeSensitive', 'keyType']) {
+      expect(field in graph).toBe(false);
+    }
+    expect(graph.ops).toEqual({ addEdge: 'O(1)', traversal: 'O(V + E)' });
+    expect(graph.costMetric).toBe('vertex-visits + edge-visits');
+    // Asking for key-structure theory on the graph is a routing error, not a silent O(n).
+    expect(() => theoreticalClass('graph', 'search')).toThrow(/no insert\/search\/delete theory/);
+    // The assigned grey, and a hue no key structure uses.
+    expect(graph.color).toBe('#7f7f7f');
+    const keyHues = new Set([...STRUCTURES, ...STRING_STRUCTURES].map((s) => s.color));
+    expect(keyHues.has(graph.color)).toBe(false);
   });
 });

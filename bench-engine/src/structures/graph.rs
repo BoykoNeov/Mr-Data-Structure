@@ -519,4 +519,37 @@ mod tests {
             assert_eq!(g.bfs_counted_from(0), (10, 10 + 2 * 9));
         }
     }
+    /// **Nothing is allocated inside the timed region** (docs/METHODOLOGY.md §2.7) — the
+    /// measured half's precondition, pinned on the scratch buffers themselves. `bfs_n` /
+    /// `dfs_n` are what the browser times; if either grew `frontier` or rebuilt `visited`, the
+    /// curve would carry the allocator's cost, and the first timed batch would pay a growth the
+    /// later ones do not. Same capacity and same heap pointers before and after many runs.
+    ///
+    /// The graph is chosen to be the worst case for the frontier: a dense multigraph with
+    /// parallel edges and self-loops, where a *mark-on-pop* DFS would push a vertex once per
+    /// incoming entry and overflow a `V`-sized buffer. Mark-on-push pushes each vertex at most
+    /// once, so the preallocated `V` slots always suffice.
+    #[test]
+    fn the_timed_traversals_never_grow_their_scratch() {
+        let n = 64u32;
+        let mut edges = Vec::new();
+        for u in 0..n {
+            for v in 0..n {
+                edges.push((u, v)); // every ordered pair: K_n twice over, plus a loop on each
+            }
+        }
+        let mut g = graph(n as usize, &edges);
+        let (cap, fptr, vptr) = (g.frontier.capacity(), g.frontier.as_ptr(), g.visited.as_ptr());
+        assert!(cap >= n as usize, "frontier preallocated to V");
+        assert_eq!(g.bfs_n(200), 200 * n);
+        assert_eq!(g.dfs_n(200), 200 * n);
+        assert_eq!(g.frontier.capacity(), cap, "the frontier never reallocates");
+        assert_eq!(g.frontier.as_ptr(), fptr);
+        assert_eq!(g.visited.as_ptr(), vptr, "visited is cleared by generation, never rebuilt");
+        // The counted (op-count) path shares the same scratch and leaves it untouched too.
+        let ops = (n + 2 * n * n) as f64;
+        assert_eq!(g.bfs_counted(), ops);
+        assert_eq!(g.dfs_counted(), ops);
+        assert_eq!(g.frontier.as_ptr(), fptr);
+    }
 }

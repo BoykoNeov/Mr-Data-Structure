@@ -35,6 +35,16 @@
  * `skiplist` is Phase 6's numeric addition: the ordered structure that reaches
  * O(log n) with no balancing at all, its node heights derived from each key's hash
  * rather than a coin (docs/PLAN.md §8 "Specialized").
+ *
+ * `rbt` is the **red-black tree**, the second balanced tree (docs/PLAN.md §13's
+ * balancing-scheme comparison): O(log n) like the AVL, with at most 2 rotations per
+ * insert and 3 per delete bought by a looser height bound (docs/METHODOLOGY.md §2.9).
+ *
+ * `graph` is not a key container at all: its op set is add-edge + whole-graph traversal
+ * (BFS / DFS), its size has **two** axes (V and E), and its series are a different type
+ * (`src/compare/runGraphSweeps.ts`) plotted against `V' + 2E'`, never `n`. It is in this
+ * union so the registry can carry it, and `isCanonical` keeps it off every shared chart
+ * (docs/PLAN.md §8, risk R6; docs/METHODOLOGY.md §2.7).
  */
 export type StructureId =
   | 'array'
@@ -47,7 +57,12 @@ export type StructureId =
   | 'skiplist'
   | 'arraystr'
   | 'hashsetstr'
-  | 'triestr';
+  | 'triestr'
+  /** The doubly linked list (Phase 6): the singly list plus a `prev` link per node, measured
+   * to show that on the canonical op set the second pointer buys nothing (METHODOLOGY §2.11). */
+  | 'dll'
+  | 'rbt'
+  | 'graph';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).

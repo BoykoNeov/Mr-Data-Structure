@@ -656,7 +656,8 @@ fn corpus_sarr_matches_committed() {
 // nothing). The cases pin head-insert reversal, duplicate handling (delete removes the
 // *head-most* occurrence), and head/middle/tail/absent deletes (the visit count to reach
 // each). The *same* corpus pins **both** TS twins — singly and doubly are bench-identical
-// under this metric (the back-pointers are a viz-only distinction). Integer-valued keys
+// under this metric (the back-pointers change no count). The doubly list's own bench twin has
+// its own corpus, generated in `doubly_linked_list.rs` (`corpus-dll.txt`). Integer-valued keys
 // round-trip through TS `Number()`.
 
 struct LlCase {

@@ -203,6 +203,12 @@ re-measured) …".
 
 - Wire the reload pass (§6) into the gate once the graph Compare pass has landed, so the order
   of passes is settled first.
+- **The graph Compare section's controls are not persisted.** It landed on `main` while this
+  slice was in flight (`src/ui/GraphCompareSection.tsx`, merged at 36e43d5) with its own
+  `GraphPickerState`; it does not auto-run on load, so nothing is measured differently either
+  way. Persisting it is a small additive `run`-style section in `session.ts` plus two lines in
+  that component — left to whoever owns it. It already inherits the saved signal / overlay /
+  spread, which it receives as props from `CompareSection`.
 - File upload (the picker only has a paste box today) would reuse the same text store as is.
 - If `PickerState` grows fields (graph generator parameters), `parsePicker` spreads the saved
   values over `DEFAULT_PICKER`, so new fields restore as their defaults; validate them there
