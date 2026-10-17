@@ -27,6 +27,7 @@ Edited (additive):
 - `src/registry.ts` (+ test) — `KeyStructureId`, `GraphComplexity`, `GraphStructureInfo`, the
   `Registry` mapped type, the `graph` entry, `GRAPH`, `isCanonical` excludes `'graph'`,
   `CANONICAL_STRUCTURES` filters through `isCanonical`, `theoreticalClass('graph', …)` throws.
+  **Not purely additive — see "Merge notes" below.**
 - `src/bench/BenchEngine.ts`, `src/bench/wasmBenchEngine.ts`, `src/bench/engine.worker.ts` —
   `runGraphSweep` appended (worker imports `GraphAdj`).
 - `src/compare/runSweeps.test.ts` — one stub (`runGraphSweep`) on the fake engine, which throws if
@@ -40,6 +41,24 @@ Edited (additive):
 - `scripts/verify-browser.mjs` — a fourth pass (UNRUN, see §6).
 
 `src/structures/graph.ts` is untouched (the animation agent owns its traversal code).
+
+### Merge notes — the non-additive edits, and where conflicts can land
+
+Four existing lines in `src/registry.ts` (a shared hotspot) were **changed**, not appended to.
+All four are required by trap 1 or by giving the graph its own info shape:
+
+1. The `REGISTRY` type annotation: `Readonly<Record<StructureId, StructureInfo>>` → the new
+   `Registry` mapped type (`'graph'` → `GraphStructureInfo`, every other id → `StructureInfo`).
+2. The `CANONICAL_STRUCTURES` filter predicate: `(s) => s.id !== 'heap'` → `(s) => isCanonical(s.id)`.
+3. The `isCanonical` return line: `id !== 'heap'` → `id !== 'heap' && id !== 'graph'`.
+4. A new guard at the top of `theoreticalClass` that throws for the graph.
+
+Consequences: any code that reads `.average`, `.worst` or `.shapeSensitive` off `REGISTRY[x]`
+with an **arbitrary** `StructureId` fails typecheck until it narrows the graph away
+(`if (info.family === 'graph') …`) — intended, it is the type system enforcing trap 1. Reads via a
+literal key (`REGISTRY.bst.average`) and of the common fields are unaffected. Every branch that
+adds a `BenchEngine` method also adds a fake stub just above `dispose` in
+`src/compare/runSweeps.test.ts`, so expect adjacent-line conflicts there (keep all stubs).
 
 ## (1) Proposed PLAN §10 "Done" entry
 
@@ -191,13 +210,18 @@ step-animation, session persistence and performance polish remain open."
 
 **What was run** (all at below-normal priority, on a machine shared with six other agents):
 
+> The Bash tool refused the `cmd //v:on //c "start /belownormal …"` wrapper in this worktree, so
+> every run used the same wrapper from PowerShell, where its **exit code did not propagate** (it
+> reported 0 on a `tsc` run that printed an error). Every result below is read from the tools'
+> own output lines, not from exit codes.
+
 - `cargo test --manifest-path bench-engine/Cargo.toml` — lib **192 passed** (191 + 1 new), 9
   ignored; integration/proptest binaries 2 + 2 + 1 + 2 + 10 + 2 passed; 0 failed.
 - `npm run typecheck` — clean.
 - `npx vitest run` — **56 files, 828 tests passed**.
 - `npx vite build` — clean (worker chunk 33 kB).
 - A scratch **node** smoke run (vite-node, the real WASM twin via `initSync`, the real
-  `measureGraphs` + `runGraphSweeps`; script kept outside the repo): whole graph run ~7.3 s;
+  `measureGraphs` + `runGraphSweeps`; a throwaway script outside the repo, since deleted): whole graph run ~7.3 s;
   V-sweep BFS slope 1.33 ± 0.04 / DFS 1.38 ± 0.08 (labelled `O(n log n)` — the cache effect,
   ns per visit 2.3 → 7.4); degree-sweep BFS 0.88 ± 0.08 / DFS 0.85 ± 0.20, rise ~18× over a 21.7×
   x range; `countsMatchComponent`, `bfsEqualsDfs`, `allReached` all true; a disconnected
@@ -241,4 +265,7 @@ step-animation, session persistence and performance polish remain open."
 8. **Labels are trimmed** of surrounding whitespace (`" 2134 "` = `"2134"`), as the key importer's
    detection does; anything else is literal.
 9. **V-sweep's gate band is 0.7..1.6**, wide on the high side for the cache effect; a tighter band
-   would flake on machines with smaller caches.
+   would flake on machines with smaller caches. It was set from a node run where DFS already read
+   1.38 ± 0.08, so headroom is thin. If it flakes in Chromium, check the "ns per visit" column
+   first: a rising column means memory is tilting the slope, which argues for widening the band,
+   not for re-tuning the graphs.
