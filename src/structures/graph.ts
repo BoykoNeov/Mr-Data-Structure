@@ -21,7 +21,16 @@
  * **BFS (a queue) and DFS (an explicit stack, mark-on-push — never recursion) cost the same
  * and visit in different orders** — the point of drawing both. The Rust module doc carries
  * the full reasoning, including why DFS is iterative (a long path would overflow the stack).
+ *
+ * **Tracing (docs/PLAN.md §5).** `bfs` / `dfs` take an optional {@link Tracer} that receives
+ * the step-events the Explore animation replays. A `graph.visit` / `graph.examine` is emitted
+ * exactly where the two counting rules increment `ops`, so the stream's cost-event count is the
+ * op-count by construction (`src/viz/trace.graph.test.ts`, chained to the corpus). The tracer
+ * only observes — it changes no control flow and no counter (pinned by the traced-vs-untraced
+ * pair there).
  */
+
+import type { Tracer, GraphEvent, GraphAlgo } from '../viz/events';
 
 /** One traversal's result: the visit order, how many vertices it reached, and its op-count. */
 export interface Traversal {
@@ -85,8 +94,8 @@ export class GraphAdj {
    * Breadth-first traversal from `source`, **mark-on-enqueue**. Counts one vertex-visit per
    * dequeue and one edge-visit per adjacency entry examined.
    */
-  bfs(source: number): Traversal {
-    return this.traverse(source, false);
+  bfs(source: number, trace?: Tracer<GraphEvent>): Traversal {
+    return this.traverse(source, false, trace);
   }
 
   /**
@@ -94,23 +103,29 @@ export class GraphAdj {
    * BFS, so the same `V + 2E` total in a different visitation order. Neighbours are pushed in
    * adjacency order, so they are popped last-to-first — the pinned DFS order.
    */
-  dfs(source: number): Traversal {
-    return this.traverse(source, true);
+  dfs(source: number, trace?: Tracer<GraphEvent>): Traversal {
+    return this.traverse(source, true, trace);
   }
 
   /**
    * Shared traversal body. `stack` selects DFS (LIFO pop) vs BFS (FIFO via a head cursor).
    * The frontier only grows and is read by cursor/pop, exactly as the Rust twin's reused
    * buffer — the visitation order and counts are identical.
+   *
+   * With a tracer, each counter increment emits its cost event at the same point, and the
+   * mark + frontier push that follows a discovery emits a free `graph.mark`. An out-of-range
+   * source emits nothing at all (0 events, `ops: 0`).
    */
-  private traverse(source: number, stack: boolean): Traversal {
+  private traverse(source: number, stack: boolean, trace?: Tracer<GraphEvent>): Traversal {
     const order: number[] = [];
     if (source < 0 || source >= this.adjLists.length) {
       return { order, reached: 0, ops: 0 };
     }
+    const algo: GraphAlgo = stack ? 'dfs' : 'bfs';
     const visited = new Uint8Array(this.adjLists.length);
     const frontier: number[] = [source];
     visited[source] = 1;
+    trace?.({ kind: 'graph.start', algo, source });
     let ops = 0;
     let head = 0;
     for (;;) {
@@ -125,17 +140,22 @@ export class GraphAdj {
         head += 1;
       }
       ops += 1; // rule 1: a vertex is visited
+      trace?.({ kind: 'graph.visit', algo, vertex: u });
       order.push(u);
       const nbrs = this.adjLists[u];
       for (let i = 0; i < nbrs.length; i += 1) {
         const w = nbrs[i];
         ops += 1; // rule 2: an adjacency entry is examined
-        if (!visited[w]) {
+        const discovers = !visited[w];
+        trace?.({ kind: 'graph.examine', from: u, slot: i, to: w, discovers });
+        if (discovers) {
           visited[w] = 1;
           frontier.push(w);
+          trace?.({ kind: 'graph.mark', vertex: w });
         }
       }
     }
+    trace?.({ kind: 'graph.done', reached: order.length });
     return { order, reached: order.length, ops };
   }
 
