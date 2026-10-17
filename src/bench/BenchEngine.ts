@@ -152,6 +152,21 @@ export interface BenchEngine {
     opts?: MeasureOptions,
   ): Promise<SweepSeries[]>;
 
+  /**
+   * Measure the size-mutating ops for the **red-black tree** bench twin across a size sweep
+   * (docs/PLAN.md §6.3, §8 trees, §13) — three {@link SweepSeries} (`churn`, `insert`,
+   * `delete`) tagged `'rbt'`. The AVL's recipe exactly — the two-key churn and the
+   * alternating teardown (docs/METHODOLOGY.md §4.1) — so the two balanced trees' curves are
+   * comparable unit for unit. Like the AVL it is safe on sorted input: it rebalances
+   * whatever order the keys arrive in. As with the other sweeps, the engine may transfer
+   * (consume) the `keys` buffer.
+   */
+  runRbtMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
   /** Release the worker / underlying resources. */
   dispose(): void;
 }

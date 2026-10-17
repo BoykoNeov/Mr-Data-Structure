@@ -90,7 +90,11 @@ export interface CompareResult {
    * honestly O(1) and its delete-by-value honestly O(n).
    */
   readonly mutation: readonly SeriesView[];
-  /** churn + finite-difference insert/delete for the BST and the AVL. */
+  /**
+   * churn + finite-difference insert/delete for the BST, the AVL and the **red-black
+   * tree** — in that order, three series each. The two balanced trees share a metric and a
+   * recipe, so their lines are read against each other (docs/METHODOLOGY.md §2.9).
+   */
   readonly trees: readonly SeriesView[];
   /**
    * churn + finite-difference insert/delete for the **skip list**. Its own field rather
@@ -176,6 +180,7 @@ interface ProofWindow {
   __bstMutationProof?: SweepProof[];
   __avlMutationProof?: SweepProof[];
   __skipMutationProof?: SweepProof[];
+  __rbtMutationProof?: SweepProof[];
   __heapMutationProof?: SweepProof[];
   /** The string run's mirrors; `__stringMutationProof` is set last (see {@link runStringSweeps}). */
   __stringSweepProof?: SweepProof[];
@@ -282,6 +287,12 @@ export async function runAllSweeps(
   const skiplist = (await engine.runSkipMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
   if (win) win.__skipMutationProof = toProof(skiplist);
 
+  // Before the heap, deliberately: `__heapMutationProof` is the gate's "all sweeps done"
+  // signal, so a proof published after it would be read as missing.
+  onStatus('running red-black tree mutation sweep…');
+  const rbt = (await engine.runRbtMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
+  if (win) win.__rbtMutationProof = toProof(rbt);
+
   onStatus('running min-heap mutation sweep…');
   const heap = (await engine.runHeapMutationSweep(keyBuffer(data), mutationSizes, HEAP_OPTS)).map((s) => toView(s));
   if (win) {
@@ -299,7 +310,7 @@ export async function runAllSweeps(
   return {
     search,
     mutation,
-    trees: [...bst, ...avl],
+    trees: [...bst, ...avl, ...rbt],
     skiplist,
     heap,
     shape,
