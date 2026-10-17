@@ -303,7 +303,7 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     keyType: 'number',
     color: '#ffbb78',
     costMetric: 'node-visits',
-    mechanism: 'walks node by node from the head, exactly like the singly list; the extra back-pointer only speeds unlinking a node you already hold, which find-then-delete never does',
+    mechanism: 'walks node by node from the head, exactly like the singly list; the extra back-pointer only speeds unlinking a node you already hold, and a delete by key never starts with one — it must walk to the node first',
     average: { search: ON, insert: O1, delete: ON, churn: O1 },
     worst: { search: ON, insert: O1, delete: ON, churn: O1 },
     shapeSensitive: false,

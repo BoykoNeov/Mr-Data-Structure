@@ -233,10 +233,54 @@ In the Status paragraph, after the linked-list caveat clause:
    differ by exactly the pointer. The honest caveat (a sentinel encoding would make the pointer
    free in bytes) is in the test doc and in the §2.11 text above.
 7. **The 1.24× wall-clock figure** comes from an off-browser Node probe of the release wasm, run
-   once on a shared machine, not from the gate. It appears only in a code comment in
-   `engine.worker.ts` and in the suggested §2.11 text, labelled as such; the UI copy says only
-   "a constant factor, not a different growth rate". Its mechanism is unexplained (constant across
-   L1→L3 sizes, so probably not cache capacity).
+   once on a shared machine, not from the gate. It appears only in the suggested §2.11 text,
+   labelled as such — not in shipped code or UI copy, which say only "a constant factor, not a
+   different growth rate". Its mechanism is unexplained (constant across L1→L3 sizes, so probably
+   not cache capacity). Output of that run (op-counts equal, churn 1 on both):
+
+   ```text
+   1000   ll 1257 ns/search  dll 1563 ns/search  ratio 1.24   (ops 96528 both)
+   10000  ll 12877           dll 16114           ratio 1.25   (ops 965024 both)
+   100000 ll 119389          dll 146310          ratio 1.23   (ops 9650016 both)
+   ```
+
+   To reproduce (after `npm run wasm`; save anywhere outside the repo, set `pkg` to this
+   checkout's `bench-engine/pkg/`, run with `node`):
+
+   ```js
+   import { readFileSync } from 'node:fs';
+   const pkg = '<repo>/bench-engine/pkg/';
+   const m = await import('file:///' + pkg + 'bench_engine.js');
+   await m.default({ module_or_path: readFileSync(pkg + 'bench_engine_bg.wasm') });
+   const N = 100000;
+   const keys = new Float64Array(N);
+   for (let i = 0; i < N; i++) keys[i] = (i * 7919) % N;
+   for (const n of [1000, 10000, 100000]) {
+     const k = keys.subarray(0, n);
+     const probes = new Float64Array(128);
+     let max = 0;
+     for (let i = 0; i < n; i++) max = Math.max(max, k[i]);
+     for (let i = 0; i < 64; i++) probes[i] = k[Math.floor((i * n) / 64)];
+     for (let i = 0; i < 64; i++) probes[64 + i] = max + 1 + i;
+     const out = {};
+     for (const [name, C] of [['ll', m.LinkedListF64], ['dll', m.DoublyLinkedListF64]]) {
+       const s = new C(k, n);
+       s.set_probes(probes);
+       const reps = Math.max(1, Math.floor(2e7 / n));
+       s.search_n(reps);
+       let best = Infinity;
+       for (let r = 0; r < 5; r++) {
+         const t = performance.now();
+         s.search_n(reps);
+         best = Math.min(best, (performance.now() - t) / reps);
+       }
+       s.set_churn_key(max + 1);
+       out[name] = { ops: s.search_counted(), churnOps: s.churn_counted(), nsPerSearch: +(best * 1e6).toFixed(0) };
+       s.free();
+     }
+     console.log(n, JSON.stringify(out), 'ratio dll/ll', (out.dll.nsPerSearch / out.ll.nsPerSearch).toFixed(2));
+   }
+   ```
 8. **`runSweeps.ts` status string** changed from "…linked list)…" to "…linked lists)…" and the
    `CompareResult.mutation` doc updated (four → five flat structures, twelve → fifteen series) —
    small edits in a hotspot file, made because leaving them would have been a stale claim.
@@ -244,5 +288,12 @@ In the Status paragraph, after the linked-list caveat clause:
    alone — still literally true, since the dll is not a sixth *way*; the `DllSearchNote` callout
    under the chart says so. The singly caveat's title ("The flat orange line is a trap") was also
    left alone; the dll caveat directly below it names the light-orange line.
-10. **Not done:** `mod.rs`'s module doc (Phase 4 paragraph) still describes `LinkedListF64` as the
+10. **`STRUCTURES` order:** documented as "catalogue order", but the append-only rule for shared
+    files put `REGISTRY.dll` after `REGISTRY.skiplist` rather than beside `REGISTRY.ll`. Moving it
+    next to `ll` at merge time would also group the two orange lines in legends and fit lists.
+11. **Stale counts fixed in hotspot files** (doc comments only): `BenchEngine.ts` /
+    `engine.worker.ts` `runMutationSweep` JSDoc (four → five flat structures), the
+    `runSweeps.test.ts` comment, and the `verify-browser.mjs` wait comment (six → seven search
+    series).
+12. **Not done:** `mod.rs`'s module doc (Phase 4 paragraph) still describes `LinkedListF64` as the
     twin of both TS lists — historical, in a hotspot file; one sentence could be added there.

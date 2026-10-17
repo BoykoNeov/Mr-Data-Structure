@@ -440,9 +440,9 @@ const api = {
     // The doubly linked list walks exactly the singly list's path — its `prev` link has
     // nothing to offer a search — so its op-count line lands *on* the singly list's, and its
     // wall-clock line should differ by a constant, not a slope: a 24-byte node against a
-    // 16-byte one (an off-browser Node probe read ~1.24× at every n from 1k to 100k —
-    // docs/METHODOLOGY.md §2.11). Same probes, same runner: a different workload would end
-    // the comparison the line is there to make.
+    // 16-byte one (docs/METHODOLOGY.md §2.11; no ratio between the two is asserted anywhere).
+    // Same probes, same runner: a different workload would end the comparison the line is
+    // there to make.
     const dll = measureSweep(sizes, searchRunnerFactory(DoublyLinkedListF64, keys), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
@@ -484,14 +484,14 @@ const api = {
     ];
   },
   /**
-   * Run the §6.3 size-mutating measurement for the four **flat** structures across
-   * `sizes` — unsorted array, hash set, sorted array, linked list: the **churn**
+   * Run the §6.3 size-mutating measurement for the five **flat** structures across
+   * `sizes` — unsorted array, hash set, sorted array, linked list, doubly linked list: the **churn**
    * primary (combined insert+delete cost at fixed n) plus the **finite-difference**
    * cross-check that separates per-insert (cumulative build) from per-delete
    * (cumulative teardown). Returns three series per structure: `churn`, `insert`,
-   * `delete`. `keys` is transferred in by the caller. Keep `sizes` modest — three of
-   * the four have an O(n²) build or teardown (the array's ordered delete, the sorted
-   * array's shifting insert *and* delete, the linked list's walk-to-the-tail teardown).
+   * `delete`. `keys` is transferred in by the caller. Keep `sizes` modest — four of
+   * the five have an O(n²) build or teardown (the array's ordered delete, the sorted
+   * array's shifting insert *and* delete, both linked lists' walk-to-the-tail teardown).
    *
    * Each structure names its own {@link ChurnKeyPicker}, because where the spare key
    * lands is a measurement decision that can set the reported class (§2.3, §4.1):

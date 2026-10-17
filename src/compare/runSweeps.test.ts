@@ -136,7 +136,7 @@ describe('runAllSweeps', () => {
     ]);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
-    // All four **flat** structures now carry a mutation trio, not just the Phase 2 pair.
+    // All five **flat** structures now carry a mutation trio, not just the Phase 2 pair.
     expect(r.mutation.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'array.churn', 'array.insert', 'array.delete',
       'hashset.churn', 'hashset.insert', 'hashset.delete',

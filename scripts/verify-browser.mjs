@@ -41,7 +41,7 @@ try {
   // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
   // is set last, after the search sweep and the array/hashset, BST, AVL and skip-list
   // mutation sweeps — or until the app reports an error. Generous timeout: the sweeps do
-  // real timed work, and there are six search series and seven mutation sweeps.
+  // real timed work, and there are seven search series and seven mutation sweeps.
   await page.waitForFunction(
     () =>
       window.__heapMutationProof !== undefined ||
