@@ -29,6 +29,8 @@ let revBst = null;
 let revAvl = null;
 let revHeap = null;
 let revSkip = null;
+let rbt = null;
+let revRbt = null;
 let strSearch = null;
 let strMutation = null;
 let strMeta = null;
@@ -39,14 +41,14 @@ const checks = [];
 try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
-  // is set last, after the search sweep and the array/hashset, BST, AVL and skip-list
-  // mutation sweeps — or until the app reports an error. Generous timeout: the sweeps do
-  // real timed work, and there are seven search series and seven mutation sweeps.
+  // is set last, after the search sweep and the array/hashset, BST, AVL, skip-list and
+  // red-black mutation sweeps — or until the app reports an error. Generous timeout: the
+  // sweeps do real timed work, and there are eight search series and eight mutation sweeps.
   await page.waitForFunction(
     () =>
       window.__heapMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
-    { timeout: 90000 },
+    { timeout: 120000 },
   );
   text = await page.evaluate(() => document.body.innerText);
   proof = await page.evaluate(() => window.__sweepProof ?? null);
@@ -55,6 +57,7 @@ try {
   avl = await page.evaluate(() => window.__avlMutationProof ?? null);
   heap = await page.evaluate(() => window.__heapMutationProof ?? null);
   skip = await page.evaluate(() => window.__skipMutationProof ?? null);
+  rbt = await page.evaluate(() => window.__rbtMutationProof ?? null);
   meta = await page.evaluate(() => window.__compareMeta ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
@@ -106,10 +109,11 @@ try {
     const heapSearch = proof.find((p) => p.structure === 'heap');
     const skipSearch = proof.find((p) => p.structure === 'skiplist');
     const dllSearch = proof.find((p) => p.structure === 'dll');
+    const rbtSearch = proof.find((p) => p.structure === 'rbt');
 
     want(
-      'seven search series measured',
-      proof.length === 7 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch,
+      'eight search series measured',
+      proof.length === 8 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch && rbtSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -181,6 +185,19 @@ try {
       want(
         `skip-list search flatter than array (${skipSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
         skipSearch.slope < array.slope,
+      );
+    }
+    // Red-black tree (docs/PLAN.md §8 trees, §13): the one tree on the search chart. A
+    // search is one root-to-leaf descent, so the curve is the tree's depth — sub-linear on
+    // any order. Same band as the other sub-linear searches, label not asserted (§7.2).
+    if (rbtSearch && array) {
+      want(
+        `red-black search sub-linear (slope ${rbtSearch.slope.toFixed(2)} < 0.4)`,
+        rbtSearch.slope < 0.4,
+      );
+      want(
+        `red-black search flatter than array (${rbtSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
+        rbtSearch.slope < array.slope,
       );
     }
   }
@@ -402,6 +419,25 @@ try {
     }
   }
 
+  // Red-black mutation (docs/PLAN.md §6.3, §8 trees, §13): the AVL's recipe exactly (two-key
+  // churn, alternating teardown), so the two balanced trees' curves are comparable. Only the
+  // class is asserted here — sub-linear, like the AVL. The scheme-level comparison (≤ 2 / ≤ 3
+  // rotations per op, ~18 % fewer rotations on shuffled inserts, deeper spines on sorted
+  // input) is a set of op-count claims pinned clock-free in Rust (`structures::methodology`,
+  // docs/METHODOLOGY.md §2.9); the wall clock is too noisy for constant-level gaps.
+  if (rbt) {
+    const rChurn = rbt.find((m) => m.structure === 'rbt' && m.op === 'churn');
+    want('three red-black mutation series measured', rbt.length === 3);
+    if (rChurn) {
+      const ratio = rChurn.lastNanos / rChurn.firstNanos;
+      want(
+        `red-black churn sub-linear (slope ${rChurn.slope.toFixed(2)} < 0.6)`,
+        rChurn.slope < 0.6,
+      );
+      want(`red-black churn stays near-flat (ratio ${ratio.toFixed(1)} < 6)`, ratio < 6);
+    }
+  }
+
   // Min-heap mutation (docs/PLAN.md §6.3, §8 trees/heaps): the churn primary here is
   // insert + **extract-min**, so it is read only against the heap's own split, never
   // against the structures above (risk R6). Two things the real clock can show that the
@@ -467,6 +503,7 @@ try {
     window.__bstMutationProof = undefined;
     window.__avlMutationProof = undefined;
     window.__skipMutationProof = undefined;
+    window.__rbtMutationProof = undefined;
     window.__heapMutationProof = undefined;
   });
   await page.locator('select').first().selectOption('reverse-sorted');
@@ -483,6 +520,7 @@ try {
   revAvl = await page.evaluate(() => window.__avlMutationProof ?? null);
   revHeap = await page.evaluate(() => window.__heapMutationProof ?? null);
   revSkip = await page.evaluate(() => window.__skipMutationProof ?? null);
+  revRbt = await page.evaluate(() => window.__rbtMutationProof ?? null);
   const revMeta = await page.evaluate(() => window.__compareMeta ?? null);
 
   want('reverse-sorted run measured', revMeta && revMeta.order.kind === 'reverse-sorted');
@@ -523,6 +561,21 @@ try {
     if (c) {
       want(
         `reverse-sorted skip-list churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
+        c.slope < 0.6,
+      );
+    }
+  }
+
+  // The red-black tree on the same reverse-sorted input: it rotates like the AVL, so it
+  // belongs on the sub-linear side of the BST's O(n). Its spines run deeper than the AVL's
+  // on sorted keys (height 21 vs 12 at n = 4000, clock-free), which can lift its constant
+  // but not its class — pinned in Rust by
+  // `structures::methodology::rbt_keeps_its_class_on_the_input_that_degenerates_a_bst`.
+  if (revRbt) {
+    const c = revRbt.find((m) => m.op === 'churn');
+    if (c) {
+      want(
+        `reverse-sorted red-black churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
         c.slope < 0.6,
       );
     }
@@ -732,6 +785,14 @@ if (bst) {
 if (avl) {
   console.log('--- avl mutation proof ---');
   console.log(JSON.stringify(avl, null, 2));
+}
+if (rbt) {
+  console.log('--- red-black mutation proof ---');
+  console.log(JSON.stringify(rbt, null, 2));
+}
+if (revRbt) {
+  console.log('--- red-black mutation proof (reverse-sorted) ---');
+  console.log(JSON.stringify(revRbt, null, 2));
 }
 if (heap) {
   console.log('--- heap mutation proof ---');

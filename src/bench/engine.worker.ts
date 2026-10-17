@@ -14,6 +14,7 @@ import init, {
   HashSetStr,
   TrieStr,
   DoublyLinkedListF64,
+  RbtF64,
 } from '../../bench-engine/pkg/bench_engine.js';
 import { encodeStringKeys } from '../data/marshal';
 import {
@@ -465,6 +466,7 @@ const api = {
     // Same probes, same runner: a different workload would end the comparison the line is
     // there to make.
     const dll = measureSweep(sizes, searchRunnerFactory(DoublyLinkedListF64, keys, mix), now, opts);
+    const rbt = measureSweep(sizes, searchRunnerFactory(RbtF64, keys, mix), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
@@ -495,6 +497,13 @@ const api = {
     // point-for-point comparability with the array's scan; keeping it off the shared
     // chart is the UI's job (`src/ui/CompareSection.tsx` filters on the registry's
     // canonical list and renders the heap in its own section).
+    //
+    // The **red-black tree** is the one tree on this chart (the BST and the AVL are measured
+    // on the mutation charts only). Its search is a plain BST descent, so its line reads the
+    // tree's depth: O(log n), with a constant set by how loosely the scheme balances. Against
+    // the AVL the clock-free op-counts say that constant is the same on shuffled input and a
+    // few percent higher on sorted (`structures::methodology::
+    // rbt_pays_its_looser_bound_in_comparisons_on_sorted_input`, docs/METHODOLOGY.md §2.9).
     return [
       { structure: 'array', op: 'search', points: array },
       { structure: 'll', op: 'search', points: ll },
@@ -503,6 +512,7 @@ const api = {
       { structure: 'heap', op: 'search', points: heap },
       { structure: 'skiplist', op: 'search', points: skiplist },
       { structure: 'dll', op: 'search', points: dll },
+      { structure: 'rbt', op: 'search', points: rbt },
     ];
   },
   /**
@@ -828,6 +838,46 @@ const api = {
       out.push(fd.insert, fd.delete);
     }
     return out;
+  },
+  /**
+   * Run the §6.3 size-mutating measurement for the **red-black tree** across `sizes`: the
+   * churn primary plus the finite-difference split, as three series (`churn`, `insert`,
+   * `delete`) tagged `'rbt'` (docs/PLAN.md §8 trees, §13). The AVL's recipe exactly — the
+   * **two-key** churn runner (docs/METHODOLOGY.md §4.1) and the same build / teardown
+   * factories — because the point of this line is to be read *against* the AVL's: same
+   * metric (comparisons + rotations), same probe, so on the **op-count** signal any gap
+   * between the two is the balancing scheme and nothing else. On the **wall clock** it is
+   * not: the AVL is a recursive `Box` tree that allocates and frees a node on every churn
+   * pair, while this one is a pre-sized arena that reuses one slot, so the timed gap also
+   * carries allocator and memory-layout effects. Read the two wall-clock lines for shape.
+   *
+   * What the clock-free op-counts say that gap should be (docs/METHODOLOGY.md §2.9): on
+   * shuffled keys the two are within a percent on comparisons and the red-black tree
+   * rotates ~18 % less on inserts; on sorted keys its spines run deeper (height 21 vs 12 at
+   * n = 4000), so its churn sits *above* the AVL's. Its real advantage — never more than 2
+   * rotations per insert or 3 per delete — is a bound on single operations, which no
+   * per-op average on this chart can show; it is pinned in Rust instead. Recolours are not
+   * in the op-count (the AVL has no colour to pay for). `keys` is transferred in by the
+   * caller.
+   */
+  async runRbtMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const Ctor = RbtF64 as unknown as TreeMutationStructCtor;
+    const churn = measureSweep(sizes, treeChurnRunnerFactory(Ctor, keys), now, opts);
+    const fd = measureMutationFd(
+      'rbt',
+      sizes,
+      buildRunnerFactory(Ctor, keys),
+      buildTeardownRunnerFactory(Ctor, keys),
+      now,
+      opts,
+    );
+    return [{ structure: 'rbt', op: 'churn', points: churn }, fd.insert, fd.delete];
   },
 };
 

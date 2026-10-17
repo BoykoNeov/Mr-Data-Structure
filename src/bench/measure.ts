@@ -35,6 +35,10 @@
  * `skiplist` is Phase 6's numeric addition: the ordered structure that reaches
  * O(log n) with no balancing at all, its node heights derived from each key's hash
  * rather than a coin (docs/PLAN.md §8 "Specialized").
+ *
+ * `rbt` is the **red-black tree**, the second balanced tree (docs/PLAN.md §13's
+ * balancing-scheme comparison): O(log n) like the AVL, with at most 2 rotations per
+ * insert and 3 per delete bought by a looser height bound (docs/METHODOLOGY.md §2.9).
  */
 export type StructureId =
   | 'array'
@@ -50,7 +54,8 @@ export type StructureId =
   | 'triestr'
   /** The doubly linked list (Phase 6): the singly list plus a `prev` link per node, measured
    * to show that on the canonical op set the second pointer buys nothing (METHODOLOGY §2.11). */
-  | 'dll';
+  | 'dll'
+  | 'rbt';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).

@@ -15,7 +15,7 @@ import type { StructureId } from './bench/measure';
  */
 describe('structure registry', () => {
   it('covers every StructureId exactly once, with a distinct colour each', () => {
-    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll'];
+    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll', 'rbt'];
     for (const id of ids) expect(REGISTRY[id].id).toBe(id);
     // STRUCTURES is the *numeric* catalogue — the one the shared charts draw from.
     expect(STRUCTURES.map((s) => s.id).sort()).toEqual([...ids].sort());
@@ -61,6 +61,23 @@ describe('structure registry', () => {
     // its own rather than a deliberate duplicate.
     const numericHues = new Set(STRUCTURES.map((s) => s.color));
     expect(numericHues.has(REGISTRY.triestr.color)).toBe(false);
+  });
+
+  it('pins the red-black tree beside the AVL: same metric, O(log n) everywhere, order-insensitive', () => {
+    // The balancing-scheme comparison (docs/PLAN.md §13, METHODOLOGY §2.9) only means
+    // something if the two balanced trees are measured in the same unit, so the metric is
+    // pinned *equal* to the AVL's — recolours are deliberately outside it.
+    expect(REGISTRY.rbt.costMetric).toBe(REGISTRY.avl.costMetric);
+    for (const op of ['search', 'insert', 'delete', 'churn'] as const) {
+      expect(REGISTRY.rbt.average[op]).toBe('O(log n)');
+      expect(REGISTRY.rbt.worst[op]).toBe('O(log n)');
+    }
+    expect(theoreticalClass('rbt', 'churn', 'sorted')).toBe('O(log n)');
+    expect(REGISTRY.rbt.shapeSensitive).toBe(false);
+    expect(REGISTRY.rbt.family).toBe('tree');
+    expect(REGISTRY.rbt.color).toBe('#c49c94');
+    expect(isCanonical('rbt')).toBe(true);
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('rbt');
   });
 
   it('pins the skip list at O(log n) average, O(n) worst, and order-insensitive', () => {

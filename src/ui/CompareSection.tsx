@@ -372,10 +372,11 @@ export function CompareSection() {
         <>
       <h3 style={h3}>Search — the cost of finding a key</h3>
       <p style={{ color: '#555', marginTop: 0 }}>
-        Five structures look up a key five different ways: the unsorted array scans from the front, the
+        Six structures look up a key six different ways: the unsorted array scans from the front, the
         linked list walks node by node, the sorted array binary-searches, the skip list drops down a tower of
-        ever-sparser express lanes, and the hash set jumps straight to a bucket. (The min-heap is measured
-        too, but it answers a different question and gets its own section below.)
+        ever-sparser express lanes, the red-black tree descends a tree it keeps balanced, and the hash set
+        jumps straight to a bucket. (The min-heap is measured too, but it answers a different question and
+        gets its own section below.)
       </p>
       {search.length > 0 && (
         <>
@@ -405,7 +406,9 @@ export function CompareSection() {
             comparison at all.{' '}
               </>
             )}
-            The dashed lines are each
+            The red-black tree (light brown) is the one tree on this chart: a search is a
+            walk from the root to a leaf, so its line rises with the tree’s depth, <strong>O(log n)</strong>
+            on any input order. The dashed lines are each
             structure’s textbook class scaled onto its points — where a solid line peels away from its dashed
             twin, the machine (cache, memory traffic) or the data is doing something the textbook doesn’t say.
           </Callout>
@@ -433,7 +436,9 @@ export function CompareSection() {
             saw above: <em>the same structure, cheap to read and expensive to write</em>. The hash set (blue)
             stays <strong>O(1)</strong>. The linked list (orange) is flat too, but not for the hash set's reason —
             see the note below the chart before you read anything into it. On shuffled data both trees — BST
-            (purple) and AVL (brown) — stay sub-linear (<strong>O(log n)</strong>), nearly flat. So does the
+            (purple) and AVL (brown) — stay sub-linear (<strong>O(log n)</strong>), nearly flat, and so does the
+            red-black tree (light brown), the AVL’s rival way of staying balanced: it rotates at most twice
+            per insert and three times per delete, and pays for that with a looser balance. So does the
             skip list (olive), and that is the pairing to look at next to the sorted array: the two of them
             agreed on the search chart above, and here they part company. Keeping an array in order costs a
             shift of everything after the change; splicing a node into a handful of express lanes costs the
@@ -443,7 +448,12 @@ export function CompareSection() {
               <>
                 <strong>This dataset is sorted</strong>, so the naive BST built into a chain and its dashed
                 twin is now the worst case, O(n): watch the purple line leave the brown AVL, which rotates to
-                stay O(log n) on the same input — the headline demo.
+                stay O(log n) on the same input — the headline demo. The light-brown red-black tree holds too.
+                On the <em>op-count</em> signal it sits a little above the AVL here: its looser balance lets the
+                edges of the tree, where sorted keys keep landing, grow deeper — a constant, not a class, and
+                both stay O(log n). On <em>wall-clock</em> that gap also carries how the two store their nodes
+                (the AVL allocates a node per insert, the red-black tree reuses slots in one array), so there
+                compare the two shapes, not which line is higher.
                 {reverse && (
                   <>
                     {' '}

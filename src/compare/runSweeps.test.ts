@@ -61,6 +61,8 @@ function fakeEngine(log: string[]): BenchEngine {
         series('skiplist', 'search', sizes, (n) => Math.log2(n)),
         // The doubly list walks the singly list's path visit for visit (METHODOLOGY §2.11).
         series('dll', 'search', sizes, (n) => 2 * n),
+        // The red-black tree: the one tree on the search chart, O(log n) like the AVL.
+        series('rbt', 'search', sizes, (n) => Math.log2(n)),
       ];
     },
     runMutationSweep: async (_k, sizes) => {
@@ -90,6 +92,10 @@ function fakeEngine(log: string[]): BenchEngine {
       log.push(`skip:${sizes.length}`);
       return mutTrio('skiplist', sizes, (n) => Math.log2(n));
     },
+    runRbtMutationSweep: async (_k, sizes) => {
+      log.push(`rbt:${sizes.length}`);
+      return mutTrio('rbt', sizes, (n) => Math.log2(n));
+    },
     runHeapMutationSweep: async (_k, sizes) => {
       log.push(`heap:${sizes.length}`);
       return mutTrio('heap', sizes, (n) => Math.log2(n));
@@ -117,7 +123,7 @@ function fakeEngine(log: string[]): BenchEngine {
 }
 
 describe('runAllSweeps', () => {
-  it('drives every sweep from one dataset and publishes the six proofs in order', async () => {
+  it('drives every sweep from one dataset and publishes the seven proofs in order', async () => {
     const log: string[] = [];
     const statuses: string[] = [];
     const win: Record<string, unknown> = {};
@@ -129,10 +135,10 @@ describe('runAllSweeps', () => {
     expect(r.searchSizes[r.searchSizes.length - 1]).toBe(50_000); // capped by the dataset
     expect(r.mutationSizes[r.mutationSizes.length - 1]).toBe(MUT_MAX);
     expect(log[0]).toBe(`search:50000:${r.searchSizes.length}`);
-    expect(statuses).toHaveLength(6);
+    expect(statuses).toHaveLength(7);
 
     expect(r.search.map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll',
+      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll', 'rbt',
     ]);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
@@ -154,7 +160,11 @@ describe('runAllSweeps', () => {
     expect(byKey('sarr.churn').fit.best).toBe('O(n)');
     expect(r.trees.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'bst.churn', 'bst.insert', 'bst.delete', 'avl.churn', 'avl.insert', 'avl.delete',
+      'rbt.churn', 'rbt.insert', 'rbt.delete',
     ]);
+    // The red-black sweep must run *before* the heap's: the heap proof is the gate's
+    // "all done" signal, so anything published after it would be read as missing.
+    expect(log.indexOf(`rbt:${r.mutationSizes.length}`)).toBeLessThan(log.indexOf(`heap:${r.mutationSizes.length}`));
     // The skip list is not a tree, so it gets its own bucket — but unlike the heap that is
     // bookkeeping, not a risk-R6 split: it does the same three operations, so its series
     // land on the same shared charts as the trees'.
@@ -172,7 +182,7 @@ describe('runAllSweeps', () => {
     // Risk R6 at the seam: the shared search chart sees only canonical structures, and
     // the heap's scan is available separately for its own section.
     expect(canonicalSearch(r).map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll',
+      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt',
     ]);
     expect(heapSearch(r).map((v) => v.series.structure)).toEqual(['heap']);
 
@@ -183,6 +193,7 @@ describe('runAllSweeps', () => {
       '__bstMutationProof',
       '__avlMutationProof',
       '__skipMutationProof',
+      '__rbtMutationProof',
       '__compareMeta',
       '__heapMutationProof',
     ]);

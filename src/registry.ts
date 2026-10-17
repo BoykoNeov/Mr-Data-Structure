@@ -308,6 +308,39 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     worst: { search: ON, insert: O1, delete: ON, churn: O1 },
     shapeSensitive: false,
   },
+  /**
+   * The **red-black tree** (docs/PLAN.md §8 "Trees / heaps", §13's balancing-scheme
+   * comparison) — classic CLRS, the second balanced tree beside the AVL. Same ordering
+   * rule, same multiset semantics, same value-copy delete, same cost metric
+   * (comparisons + rotations), so the two op-count lines compare unit for unit and any gap
+   * there is the balancing scheme. (Not on the wall clock: the AVL allocates a `Box` per
+   * insert, this tree reuses arena slots, so the timed gap also carries storage effects.)
+   *
+   * The trade it makes, and what the op-counts say about it (docs/METHODOLOGY.md §2.9):
+   * a looser height bound (≤ 2·log₂(n+1), against the AVL's ≈ 1.44·log₂ n) for **at most
+   * two rotations per insert and three per delete**, where one AVL delete was measured
+   * rotating ten times. In *totals* the gap is narrower than the slogan — ~18 % fewer
+   * rotations on shuffled inserts, about the same on sorted inserts and on deletes — and the
+   * red-black tree recolours where the AVL rotates, a cost this metric deliberately leaves
+   * out because the AVL has no colour to pay for. On sorted input its spines run deeper
+   * (height 21 vs 12 at n = 4000), so its mutation line sits above the AVL's there: a
+   * constant, not a class.
+   *
+   * **Colour:** the light partner of the AVL's brown, so the two balanced trees read as a
+   * pair on every chart. **`shapeSensitive: false`**: no input order changes its class.
+   */
+  rbt: {
+    id: 'rbt',
+    label: 'red-black tree',
+    family: 'tree',
+    keyType: 'number',
+    color: '#c49c94',
+    costMetric: 'comparisons + rotations',
+    mechanism: 'a BST that recolours and rotates (at most 2 per insert, 3 per delete) to keep every path within twice the shortest',
+    average: { search: OLOG, insert: OLOG, delete: OLOG, churn: OLOG },
+    worst: { search: OLOG, insert: OLOG, delete: OLOG, churn: OLOG },
+    shapeSensitive: false,
+  },
 };
 
 /**
@@ -325,6 +358,7 @@ export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.heap,
   REGISTRY.skiplist,
   REGISTRY.dll,
+  REGISTRY.rbt,
 ];
 
 /**
