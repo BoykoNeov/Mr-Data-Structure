@@ -8,7 +8,11 @@ import { AvlF64, type AvlShape } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr, type TrieShape } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent } from './events';
+import { GraphAdj } from '../structures/graph';
+import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
+import { countCostEvents } from './events';
+import { GRAPH_SEED } from './VizPanel';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList,
@@ -17,6 +21,7 @@ import {
   heapModel, foldHeap,
   trieModel, foldTrie, type TrieModel, type TrieDisplayNode,
   skipModel, foldSkip, skipLevelKeys, type SkipModel,
+  graphModel, foldGraph, reduceGraph, graphAdjacency, type GraphModel,
 } from './model';
 
 /**
@@ -585,5 +590,120 @@ describe('skip-list fold mirrors the structure', () => {
     expect(valuesOf(after)).toEqual(s.keysInOrder());
     expect(skipLevelKeys(after)).toEqual(s.levelKeys());
     expect(skipLevelKeys(after)).toEqual(skipLevelKeys(start));
+  });
+});
+
+describe('graph fold mirrors the structure and the traversal', () => {
+  /** `(vertices, edges)` of every corpus case — the shapes the Rust twin generated. */
+  const corpusGraphs = (() => {
+    const out: { name: string; vertices: number; edges: number[] }[] = [];
+    for (const raw of graphCorpusText.split('\n')) {
+      const line = raw.trim();
+      const sp = line.indexOf(' ');
+      const tag = sp === -1 ? line : line.slice(0, sp);
+      const rest = sp === -1 ? '' : line.slice(sp + 1);
+      if (tag === 'case') out.push({ name: rest, vertices: 0, edges: [] });
+      else if (tag === 'vertices') out[out.length - 1].vertices = Number(rest);
+      else if (tag === 'edges') out[out.length - 1].edges = rest.split(/\s+/).filter((t) => t.length > 0).map(Number);
+    }
+    return out;
+  })();
+
+  const GRAPHS: { name: string; vertices: number; edges: readonly number[] }[] = [
+    { name: 'the shipped seed', vertices: GRAPH_SEED.vertices, edges: GRAPH_SEED.edges },
+    ...corpusGraphs,
+    // A vertex with two self-loops, and an out-of-range pair that addEdge must drop.
+    { name: 'two loops + a dropped pair', vertices: 3, edges: [0, 0, 0, 1, 0, 0, 1, 9, 1, 2] },
+  ];
+
+  describe.each(GRAPHS)('$name', ({ vertices, edges }) => {
+    const g = GraphAdj.fromEdges(edges, vertices);
+    const base = graphModel(vertices, edges);
+
+    it('the incident table implies exactly the structure’s adjacency lists', () => {
+      // Ties the drawing to the corpus’s adjacency dimension: the edge copy the view
+      // lights for entry (u, slot) is the one GraphAdj actually stores there.
+      expect(graphAdjacency(base)).toEqual(g.adjacency());
+      expect(base.edges).toHaveLength(g.numEdges());
+    });
+
+    it('every edge id appears in exactly two adjacency entries (Σ deg = 2E, in the drawing layer)', () => {
+      const hits = base.edges.map(() => 0);
+      base.incident.forEach((ks, u) =>
+        ks.forEach((k) => {
+          hits[k] += 1;
+          expect(base.edges[k]).toContain(u); // an entry belongs to an edge touching its vertex
+        }),
+      );
+      expect(hits.every((h) => h === 2)).toBe(true);
+      // A self-loop's two entries both sit in its own vertex's list.
+      base.edges.forEach(([a, b], k) => {
+        if (a === b) expect(base.incident[a].filter((x) => x === k)).toHaveLength(2);
+      });
+    });
+
+    describe.each(['bfs', 'dfs'] as const)('%s from 0', (algo: GraphAlgo) => {
+      const events: GraphEvent[] = [];
+      const t = algo === 'bfs' ? g.bfs(0, (e) => events.push(e)) : g.dfs(0, (e) => events.push(e));
+
+      it('each visit takes the frontier’s real out-end — the queue’s front, the stack’s top', () => {
+        // The discipline itself, frame by frame, not just the final order: a fold that
+        // popped the wrong end would still visit every vertex.
+        let m: GraphModel = base;
+        for (const e of events) {
+          if (e.kind === 'graph.visit') {
+            const outEnd = algo === 'bfs' ? m.frontier[0] : m.frontier[m.frontier.length - 1];
+            expect(outEnd).toBe(e.vertex);
+          }
+          if (e.kind === 'graph.examine') {
+            expect(m.examined[e.from]).toBe(e.slot); // the list is read in order, once
+            expect(m.current).toBe(e.from);
+          }
+          m = reduceGraph(m, e);
+        }
+      });
+
+      it('the running tally is exactly the cost events folded so far, at every frame', () => {
+        for (let f = 0; f <= events.length; f++) {
+          const m = foldGraph(base, events.slice(0, f));
+          expect(m.vertexVisits + m.edgeVisits).toBe(countCostEvents(events.slice(0, f)));
+        }
+      });
+
+      it('the final frame is the finished traversal', () => {
+        const end = foldGraph(base, events);
+        expect(end.order).toEqual(t.order);
+        expect(end.frontier).toEqual([]);
+        expect(end.vertexVisits + end.edgeVisits).toBe(t.ops);
+        if (vertices > 0) expect(end.done).toBe(true);
+        const reached = new Set(t.order);
+        end.state.forEach((s, v) => expect(s).toBe(reached.has(v) ? 'visited' : 'unseen'));
+        // Every edge in the reached component was examined from both ends; none outside it.
+        end.edges.forEach(([a, b], k) => expect(end.edgeHits[k]).toBe(reached.has(a) && reached.has(b) ? 2 : 0));
+        // The traversal tree: every reached vertex but the source was discovered by an
+        // edge that touches it.
+        end.discoveredBy.forEach((k, v) => {
+          if (!reached.has(v) || v === 0) expect(k).toBeNull();
+          else {
+            expect(k).not.toBeNull();
+            if (k !== null) expect(end.edges[k]).toContain(v);
+          }
+        });
+      });
+    });
+  });
+
+  it('the shipped DFS shows a vertex marked (on the stack) long before it is visited', () => {
+    // Mark-on-push, visible in the fold: 1 and 3 are marked by 0's examines and are
+    // only visited at the very end.
+    const g = GraphAdj.fromEdges(GRAPH_SEED.edges, GRAPH_SEED.vertices);
+    const base = graphModel(GRAPH_SEED.vertices, GRAPH_SEED.edges);
+    const events: GraphEvent[] = [];
+    g.dfs(0, (e) => events.push(e));
+    const firstVisitOf5 = events.findIndex((e) => e.kind === 'graph.visit' && e.vertex === 5);
+    const m = foldGraph(base, events.slice(0, firstVisitOf5 + 1));
+    expect(m.state[1]).toBe('marked');
+    expect(m.state[3]).toBe('marked');
+    expect(m.frontier).toEqual([3, 1]); // stack, top last
   });
 });

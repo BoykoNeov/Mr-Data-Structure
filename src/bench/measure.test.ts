@@ -187,3 +187,22 @@ describe('measurePoint spread + adaptive reps (docs/METHODOLOGY.md §2)', () => 
     expect(point.reps).toBe(3);
   });
 });
+
+describe('stored size (docs/METHODOLOGY.md §4 hurdle 8)', () => {
+  it('records what the built structure holds beside the input size', () => {
+    const clock = virtualClock();
+    // A de-duplicating stub: built from n input keys, it holds only half of them.
+    const factory: OpRunnerFactory = (n) => ({
+      ...costShape(clock, () => 1e-6)(n),
+      storedSize: () => Math.floor(n / 2),
+    });
+    const points = measureSweep([10, 100], factory, clock.now);
+    expect(points.map((p) => [p.n, p.storedN])).toEqual([[10, 5], [100, 50]]);
+  });
+
+  it('leaves storedN off when the runner has no built instance to ask', () => {
+    const clock = virtualClock();
+    const p = measurePoint(10, costShape(clock, () => 1e-6), clock.now);
+    expect('storedN' in p).toBe(false);
+  });
+});
