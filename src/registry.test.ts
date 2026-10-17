@@ -16,7 +16,7 @@ import type { StructureId } from './bench/measure';
  */
 describe('structure registry', () => {
   it('covers every StructureId exactly once, with a distinct colour each', () => {
-    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll', 'rbt', 'btree'];
+    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa'];
     for (const id of ids) expect(REGISTRY[id].id).toBe(id);
     // STRUCTURES is the *numeric* catalogue — the one the shared charts draw from.
     expect(STRUCTURES.map((s) => s.id).sort()).toEqual([...ids].sort());
@@ -116,6 +116,24 @@ describe('structure registry', () => {
     expect(REGISTRY.btree.color).toBe('#c5b0d5');
     expect(isCanonical('btree')).toBe(true);
     expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('btree');
+  });
+
+  it('pins the open-addressing hash set to the chaining set’s classes, on its light-blue pair', () => {
+    // Same hash, same table sizes, same classes — the two lines are a comparison of
+    // collision strategies, so every theoretical slot matches the chaining set's
+    // (docs/METHODOLOGY.md §2.8). What differs is the measured constant: clustering.
+    for (const op of ['search', 'insert', 'delete', 'churn'] as const) {
+      expect(REGISTRY.hashoa.average[op]).toBe(REGISTRY.hashset.average[op]);
+      expect(REGISTRY.hashoa.worst[op]).toBe(REGISTRY.hashset.worst[op]);
+    }
+    expect(theoreticalClass('hashoa', 'search')).toBe('O(1)');
+    expect(theoreticalClass('hashoa', 'churn', 'sorted')).toBe('O(1)');
+    expect(REGISTRY.hashoa.family).toBe('hashing');
+    expect(REGISTRY.hashoa.shapeSensitive).toBe(false);
+    expect(REGISTRY.hashoa.color).toBe('#aec7e8');
+    expect(REGISTRY.hashoa.costMetric).toBe('hashes + slot probes');
+    expect(isCanonical('hashoa')).toBe(true);
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('hashoa');
   });
 
   it('pins the §8 search classes: O(n) scan/walk, O(log n) binary search, O(1) hash', () => {

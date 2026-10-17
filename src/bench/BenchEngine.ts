@@ -39,13 +39,13 @@ export interface BenchEngine {
   ): Promise<SweepSeries[]>;
 
   /**
-   * Measure the size-mutating ops across a size sweep for the five **flat**
+   * Measure the size-mutating ops across a size sweep for the six **flat**
    * structures — unsorted array, hash set, sorted array, linked list, doubly linked
-   * list (docs/PLAN.md §6.3): returns three {@link SweepSeries} per structure —
-   * `churn` (the combined insert+delete primary), plus `insert` and `delete`
+   * list, open-addressing hash set (docs/PLAN.md §6.3): returns three {@link SweepSeries}
+   * per structure — `churn` (the combined insert+delete primary), plus `insert` and `delete`
    * from the finite-difference cross-check. As with {@link runSweep}, the engine
    * may transfer (consume) the `keys` buffer, so callers must not reuse it.
-   * Keep `sizes` modest — four of the five have an O(n²) build or teardown (the
+   * Keep `sizes` modest — four of the six have an O(n²) build or teardown (the
    * array's ordered delete, the sorted array's shifting insert and delete, both
    * linked lists' walk-to-the-tail teardown).
    */

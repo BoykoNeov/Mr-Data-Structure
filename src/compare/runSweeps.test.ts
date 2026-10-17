@@ -65,6 +65,9 @@ function fakeEngine(log: string[]): BenchEngine {
         series('rbt', 'search', sizes, (n) => Math.log2(n)),
         // The B-tree makes the sorted array's ≈ log₂ n comparisons (METHODOLOGY §2.10).
         series('btree', 'search', sizes, (n) => Math.log2(n)),
+        // The open-addressing hash set: flat like the chaining one, higher constant
+        // (primary clustering) — the same class by a different collision strategy.
+        series('hashoa', 'search', sizes, () => 5),
       ];
     },
     runMutationSweep: async (_k, sizes) => {
@@ -80,6 +83,7 @@ function fakeEngine(log: string[]): BenchEngine {
         ...mutTrio('ll', sizes, () => 1, (n) => n),
         // The doubly list inherits regime 7 unchanged: the second pointer buys nothing here.
         ...mutTrio('dll', sizes, () => 1, (n) => n),
+        ...mutTrio('hashoa', sizes, () => 4),
       ];
     },
     runBstMutationSweep: async (_k, sizes) => {
@@ -150,17 +154,18 @@ describe('runAllSweeps', () => {
     expect(statuses).toHaveLength(8);
 
     expect(r.search.map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll', 'rbt', 'btree',
+      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa',
     ]);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
-    // All five **flat** structures now carry a mutation trio, not just the Phase 2 pair.
+    // All six **flat** structures now carry a mutation trio, not just the Phase 2 pair.
     expect(r.mutation.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'array.churn', 'array.insert', 'array.delete',
       'hashset.churn', 'hashset.insert', 'hashset.delete',
       'sarr.churn', 'sarr.insert', 'sarr.delete',
       'll.churn', 'll.insert', 'll.delete',
       'dll.churn', 'dll.insert', 'dll.delete',
+      'hashoa.churn', 'hashoa.insert', 'hashoa.delete',
     ]);
     // Regime 7 survives the pipeline: the list's churn and its delete land in different
     // classes, which is exactly what the UI has to show side by side.
@@ -170,6 +175,9 @@ describe('runAllSweeps', () => {
     expect(byKey('dll.churn').fit.best).toBe('O(1)');
     expect(byKey('dll.delete').fit.best).toBe('O(n)');
     expect(byKey('sarr.churn').fit.best).toBe('O(n)');
+    // The open-addressing set rides the flat-structure bucket, so its churn lands on the
+    // shared churn chart with no new engine call (docs/METHODOLOGY.md §2.8).
+    expect(byKey('hashoa.churn').fit.best).toBe('O(1)');
     expect(r.trees.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'bst.churn', 'bst.insert', 'bst.delete', 'avl.churn', 'avl.insert', 'avl.delete',
       'rbt.churn', 'rbt.insert', 'rbt.delete',
@@ -203,7 +211,7 @@ describe('runAllSweeps', () => {
     // Risk R6 at the seam: the shared search chart sees only canonical structures, and
     // the heap's scan is available separately for its own section.
     expect(canonicalSearch(r).map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt', 'btree',
+      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa',
     ]);
     expect(heapSearch(r).map((v) => v.series.structure)).toEqual(['heap']);
 

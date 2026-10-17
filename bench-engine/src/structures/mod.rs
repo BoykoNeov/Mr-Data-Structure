@@ -61,6 +61,7 @@ pub mod dyn_array;
 pub mod dyn_array_str;
 pub mod graph;
 pub mod hash_set;
+pub mod hash_set_oa;
 pub mod hash_set_str;
 pub mod heap;
 pub mod linked_list;
@@ -1187,5 +1188,201 @@ mod methodology {
         let churn = r.churn_counted();
         assert!(churn < 60.0, "reverse-sorted RB churn {churn} must stay O(log n) ≪ {n}");
         assert_eq!(r.len(), n);
+    }
+
+    // ── Open-addressing hash set (docs/METHODOLOGY.md §2.8): the second hash set, held to
+    //    the chaining one's hash, start size, threshold and doubling so that the only thing
+    //    that differs between the two curves is where a colliding key goes.
+
+    /// Mean (hashes + slot probes) over `queries` for both hash sets at size `n`.
+    fn hash_pair_means(
+        ks: &[f64],
+        n: usize,
+        queries: &[f64],
+    ) -> (f64, f64) {
+        use super::hash_set_oa::HashSetOaF64;
+        let oa = HashSetOaF64::new(ks, n);
+        let ch = HashSetF64::new(ks, n);
+        let m = queries.len() as f64;
+        let oa_ops: u64 = queries.iter().map(|&q| oa.search_one_counted(q).1).sum();
+        let ch_ops: u64 = queries.iter().map(|&q| ch.search_one_counted(q).1).sum();
+        (oa_ops as f64 / m, ch_ops as f64 / m)
+    }
+
+    /// **Primary clustering, clock-free.** At the *same* load factor α — guaranteed, since
+    /// both tables grow at the same points — a linearly-probed miss costs what Knuth's
+    /// analysis says, ½(1 + 1/(1−α)²) on this metric (his count includes the final empty
+    /// slot, which this one does not charge, and the hash tick puts the one back), while a
+    /// chained miss costs 1 + α. Hits: 1 + ½(1 + 1/(1−α)) against 1 + 1 + α/2. The gap is the
+    /// price of keys from *neighbouring* homes piling into one run, and it widens fast with α:
+    /// the reason this table's 0.75 ceiling is a real decision (§2.8), not a default.
+    /// Measured at α ≈ 0.61 (n = 5000, 8192 slots): miss 3.66 vs Knuth 3.79 (chaining 1.61);
+    /// hit 2.82 vs Knuth 2.78 (chaining 2.32). At α ≈ 0.73 (n = 3000): miss 7.70 vs Knuth
+    /// 7.48 (chaining 1.72) — a 4.5× gap on the same hash and the same table size.
+    #[test]
+    fn open_addressing_probe_counts_follow_knuths_clustering_formulas() {
+        use super::hash_set_oa::HashSetOaF64;
+        let ks = shuffled(20_000);
+        for n in [3_000usize, 5_000, 12_000] {
+            let cap = HashSetOaF64::new(&ks, n).capacity() as f64;
+            let alpha = n as f64 / cap;
+            let absent: Vec<f64> = (0..20_000).map(|i| 1e6 + i as f64).collect();
+            let present: Vec<f64> = ks[..n].to_vec();
+            let (oa_miss, ch_miss) = hash_pair_means(&ks, n, &absent);
+            let (oa_hit, ch_hit) = hash_pair_means(&ks, n, &present);
+            let knuth_miss = 0.5 * (1.0 + 1.0 / ((1.0 - alpha) * (1.0 - alpha)));
+            let knuth_hit = 1.0 + 0.5 * (1.0 + 1.0 / (1.0 - alpha));
+            assert!(
+                (oa_miss - knuth_miss).abs() / knuth_miss < 0.15,
+                "n={n} α={alpha:.3}: OA miss {oa_miss:.2} vs Knuth {knuth_miss:.2}"
+            );
+            assert!(
+                (oa_hit - knuth_hit).abs() / knuth_hit < 0.10,
+                "n={n} α={alpha:.3}: OA hit {oa_hit:.2} vs Knuth {knuth_hit:.2}"
+            );
+            // Chaining at the same α: a miss walks one chain of expected length α.
+            assert!((ch_miss - (1.0 + alpha)).abs() < 0.1, "n={n}: chained miss {ch_miss:.2}");
+            // The clustering price: same hash, same α, more probes — for a miss most of all.
+            assert!(oa_miss > ch_miss && oa_hit > ch_hit, "n={n}: OA must probe more");
+            assert!(oa_miss / ch_miss > oa_hit / ch_hit, "n={n}: misses pay the most");
+        }
+    }
+
+    /// **The sawtooth, and why it is not a slope.** A doubling table's load factor swings
+    /// between ~0.38 and 0.75 as n climbs a geometric ladder, so the probe count of *both*
+    /// hash sets saws up and down — but linear probing's miss cost is far more sensitive to α
+    /// than chaining's, so its saw is louder. Neither has a trend in n: over the browser's
+    /// own search ladder (10 … 100 000) and probe mix (64 present + 64 above-max absent),
+    /// the fitted log-log slope stays near zero for both. The UI's flat-line claim for this
+    /// structure therefore rests on this test plus the gate's slope band, not on the fitter's
+    /// label, which a loud saw can wobble.
+    /// Measured: OA 2.02 … 3.89 per probe (a 1.92× swing), chaining 1.62 … 2.05 (1.27×);
+    /// log-log slopes 0.013 and 0.012.
+    #[test]
+    fn open_addressing_search_saws_with_the_load_factor_but_has_no_trend_in_n() {
+        use super::hash_set_oa::HashSetOaF64;
+        let ks: Vec<f64> = shuffled(100_000).iter().map(|k| k * 7.0 + 3.0).collect();
+        let ladder = [10usize, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 20_000, 50_000, 100_000];
+        let mut oa_pts = Vec::new();
+        let mut ch_pts = Vec::new();
+        for &n in &ladder {
+            let max = ks[..n].iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let present = 64.min(n);
+            let mut probes: Vec<f64> = (0..present).map(|i| ks[i * n / present]).collect();
+            probes.extend((0..64).map(|i| max + 1.0 + i as f64));
+            let mut oa = HashSetOaF64::new(&ks, n);
+            let mut ch = HashSetF64::new(&ks, n);
+            oa.set_probes(&probes);
+            ch.set_probes(&probes);
+            oa_pts.push(oa.search_counted() / probes.len() as f64);
+            ch_pts.push(ch.search_counted() / probes.len() as f64);
+        }
+        let slope = |ys: &[f64]| -> f64 {
+            let xs: Vec<f64> = ladder.iter().map(|&n| (n as f64).ln()).collect();
+            let ly: Vec<f64> = ys.iter().map(|y| y.ln()).collect();
+            let (mx, my) = (xs.iter().sum::<f64>() / xs.len() as f64, ly.iter().sum::<f64>() / ly.len() as f64);
+            let cov: f64 = xs.iter().zip(&ly).map(|(x, y)| (x - mx) * (y - my)).sum();
+            let var: f64 = xs.iter().map(|x| (x - mx) * (x - mx)).sum();
+            cov / var
+        };
+        let swing = |ys: &[f64]| {
+            ys.iter().copied().fold(f64::MIN, f64::max) / ys.iter().copied().fold(f64::MAX, f64::min)
+        };
+        let (oa_slope, ch_slope) = (slope(&oa_pts), slope(&ch_pts));
+        assert!(oa_slope.abs() < 0.1, "OA search slope {oa_slope:.3} must be trendless: {oa_pts:?}");
+        assert!(ch_slope.abs() < 0.1, "chained search slope {ch_slope:.3}: {ch_pts:?}");
+        assert!(
+            swing(&oa_pts) > swing(&ch_pts),
+            "linear probing saws louder with α ({:.2}x) than chaining ({:.2}x)",
+            swing(&oa_pts),
+            swing(&ch_pts)
+        );
+        assert!(swing(&oa_pts) < 2.5, "but stays bounded: {oa_pts:?}");
+    }
+
+    /// The **tenth churn-vs-finite-difference regime**, and the one whose overshoot is the
+    /// tombstone policy rather than a key position. Churn's insert is a *miss* walk, and its
+    /// delete a hit — the same two walks the finite-difference build (every insert is a new
+    /// key) and teardown (every delete finds its key) average. So on a fresh table the two
+    /// methods agree; what churn adds is **its own tombstone**. A tombstone never reverts to
+    /// empty, so after priming the churn key's slot stays occupied for good: it bridges the
+    /// key's run to whatever run follows, and every later insert walks the merged run to the
+    /// next empty slot before reusing the tombstone. Churn therefore overshoots the FD sum,
+    /// by what an *unprimed* first pair — no tombstone yet — does not pay. Averaged over 64
+    /// tables (each churning its own 16-key block, the sweep's recipe) at n = 4000 so one
+    /// cluster cannot decide the result (§2.8).
+    /// Measured: insert_fd 3.54, delete_fd 2.52, sum 6.06; unprimed single pair 5.81; primed
+    /// (the churn the sweep reports) 7.69 — a ~27% overshoot of the sum, which the unprimed
+    /// pair shows is the tombstones' doing. The sweep's own single table (block from
+    /// `n + 1`) reads 5.38 here: one table is still a sample. Against the chaining set's churn
+    /// on the same 64 keys (3.94), the OA line sits higher for two roughly equal reasons:
+    /// clustering (+1.87, chained → unprimed) and the tombstones (+1.88). Straddle check: OA's
+    /// 1500 → 1600 marginal delete is −10.77 where the chaining set's is +2.00.
+    #[test]
+    fn open_addressing_churn_overshoots_finite_differences_by_its_own_tombstone() {
+        use super::hash_set_oa::HashSetOaF64;
+        let ks = keys(4000);
+        // Equal-α endpoints (both tables at 2000/4096 = 4000/8192 ≈ 0.49), as on the browser's
+        // doubling mutation ladder; see the straddle check at the end for why that matters.
+        let (n1, n2) = (2000usize, 4000usize);
+        let insert_fd = (HashSetOaF64::build_insert_counted(&ks, n2)
+            - HashSetOaF64::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (HashSetOaF64::teardown_counted(&ks, n2)
+            - HashSetOaF64::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let sum = insert_fd + delete_fd;
+
+        let (mut primed, mut unprimed, mut chained) = (0.0, 0.0, 0.0);
+        let block = 64;
+        for j in 0..block {
+            let key = 1e6 + j as f64; // absent (each table is independent)
+            let mut ch = HashSetF64::new(&ks, n2);
+            ch.set_churn_key(key);
+            chained += ch.churn_counted();
+            let mut fresh = HashSetOaF64::new(&ks, n2);
+            let (_, ins) = fresh.insert_one_counted(key);
+            let (_, del) = fresh.delete_one_counted(key);
+            unprimed += (ins + del) as f64;
+            let mut s = HashSetOaF64::new(&ks, n2);
+            s.set_churn_key(key);
+            primed += s.churn_counted();
+            assert_eq!(s.len(), n2);
+        }
+        let (primed, unprimed) = (primed / block as f64, unprimed / block as f64);
+        let chained = chained / block as f64;
+        // (0) Against the chaining set on the same keys and table size, the gap has two
+        //     parts of about the same size here: clustering (chained → unprimed) and the
+        //     tombstones (unprimed → primed). This is what the churn chart's copy says.
+        assert!(chained < unprimed && unprimed < primed, "{chained:.2} < {unprimed:.2} < {primed:.2}");
+        let (clustering, tombstones) = (unprimed - chained, primed - unprimed);
+        assert!(
+            clustering > 0.5 * tombstones && tombstones > 0.5 * clustering,
+            "two comparable causes: clustering {clustering:.2}, tombstones {tombstones:.2}"
+        );
+
+        // (1) Before any tombstone exists, churn and the FD sum measure the same two walks.
+        assert!((unprimed - sum).abs() / sum < 0.15, "unprimed {unprimed:.2} vs fd sum {sum:.2}");
+        // (2) The steady state pays for the tombstone the churn key leaves behind.
+        assert!(primed > unprimed, "primed {primed:.2} must exceed unprimed {unprimed:.2}");
+        assert!(primed > sum, "churn {primed:.2} overshoots the fd sum {sum:.2}");
+        // (3) A constant overshoot, not a class: everything stays O(1), nowhere near n.
+        assert!(primed < 3.0 * sum && primed < 20.0, "churn {primed:.2} must stay O(1)");
+
+        // (4) Why the endpoints are chosen at equal α. The chaining row differences 1500 →
+        //     1600, which here straddles a doubling (2048 → 4096 slots): every stored key's walk
+        //     shortens at once, the n = 1600 teardown is *cheaper in total* than the n = 1500
+        //     one, and the "marginal delete" comes out negative. A finite difference of a
+        //     doubling table is a marginal cost only between equal load factors.
+        let straddle = (HashSetOaF64::teardown_counted(&ks, 1600)
+            - HashSetOaF64::teardown_counted(&ks, 1500))
+            / 100.0;
+        assert!(straddle < 0.0, "across a rehash the marginal delete reads {straddle:.2}");
+        // Chaining crosses the same doubling without going negative: its hit cost barely
+        // depends on α (1 + 1 + α/2), linear probing's is steep in it (Knuth, above).
+        let chained = (HashSetF64::teardown_counted(&ks, 1600)
+            - HashSetF64::teardown_counted(&ks, 1500))
+            / 100.0;
+        assert!(chained > 0.0, "the chaining set's straddle {chained:.2} stays positive");
     }
 }

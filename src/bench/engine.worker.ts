@@ -10,6 +10,7 @@ import init, {
   LinkedListF64,
   MinHeapF64,
   SkipListF64,
+  HashSetOaF64,
   ArrayStr,
   HashSetStr,
   TrieStr,
@@ -471,6 +472,13 @@ const api = {
     const dll = measureSweep(sizes, searchRunnerFactory(DoublyLinkedListF64, keys, mix), now, opts);
     const rbt = measureSweep(sizes, searchRunnerFactory(RbtF64, keys, mix), now, opts);
     const btree = measureSweep(sizes, searchRunnerFactory(BTreeF64, keys, mix), now, opts);
+    // The **open-addressing hash set** (docs/METHODOLOGY.md §2.8) shares the chaining set's
+    // hash, start size, threshold and doubling, so at every n the two tables have the same
+    // capacity and load factor and only the collision strategy differs. It probes more —
+    // primary clustering — and its probe count saws with α more loudly than chaining's,
+    // with no trend in n. Its misses are its dear query (Knuth: ½(1 + 1/(1−α)²)), so a
+    // misses-heavy mix raises its constant more than the chaining set's.
+    const hashoa = measureSweep(sizes, searchRunnerFactory(HashSetOaF64, keys, mix), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
@@ -529,16 +537,18 @@ const api = {
       // search walks to a leaf; an above-max probe only skips the final equality test — so,
       // unlike the skip list, this line carries no probe-set bias at any mix.
       { structure: 'btree', op: 'search', points: btree },
+      { structure: 'hashoa', op: 'search', points: hashoa },
     ];
   },
   /**
-   * Run the §6.3 size-mutating measurement for the five **flat** structures across
-   * `sizes` — unsorted array, hash set, sorted array, linked list, doubly linked list: the **churn**
+   * Run the §6.3 size-mutating measurement for the six **flat** structures across
+   * `sizes` — unsorted array, hash set, sorted array, linked list, doubly linked list,
+   * open-addressing hash set: the **churn**
    * primary (combined insert+delete cost at fixed n) plus the **finite-difference**
    * cross-check that separates per-insert (cumulative build) from per-delete
    * (cumulative teardown). Returns three series per structure: `churn`, `insert`,
    * `delete`. `keys` is transferred in by the caller. Keep `sizes` modest — four of
-   * the five have an O(n²) build or teardown (the array's ordered delete, the sorted
+   * the six have an O(n²) build or teardown (the array's ordered delete, the sorted
    * array's shifting insert *and* delete, both linked lists' walk-to-the-tail teardown).
    *
    * Each structure names its own {@link ChurnKeyPicker}, because where the spare key
@@ -576,6 +586,11 @@ const api = {
       // is the singly list's regime-7 finding, and its teardown deletes the tail *by value* —
       // never through the tail handle, which would read O(1) and erase the disagreement.
       ['dll', DoublyLinkedListF64 as unknown as MutationStructCtor, aboveMax],
+      // Open addressing: `max + 1` as for the chaining set — a hash structure has no key
+      // position to bias. But `set_churn_key` expands it into a primed *block* of
+      // `max + 1 …` keys (docs/METHODOLOGY.md §2.8): one key under linear probing samples
+      // one cluster, and that alone made the curve jump several-fold between sweep points.
+      ['hashoa', HashSetOaF64 as unknown as MutationStructCtor, aboveMax],
     ];
     const out: SweepSeries[] = [];
     for (const [structure, Ctor, pickKey] of structures) {

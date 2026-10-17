@@ -45,6 +45,11 @@
  * (`src/compare/runGraphSweeps.ts`) plotted against `V' + 2E'`, never `n`. It is in this
  * union so the registry can carry it, and `isCanonical` keeps it off every shared chart
  * (docs/PLAN.md §8, risk R6; docs/METHODOLOGY.md §2.7).
+ *
+ * `hashoa` is the second hash set — open addressing with linear probing — held to the
+ * chaining `hashset`'s hash, start size, threshold and doubling so that only the
+ * collision strategy differs between the two curves (docs/PLAN.md §8, §13;
+ * docs/METHODOLOGY.md §2.8).
  */
 export type StructureId =
   | 'array'
@@ -55,6 +60,7 @@ export type StructureId =
   | 'll'
   | 'heap'
   | 'skiplist'
+  | 'hashoa'
   | 'arraystr'
   | 'hashsetstr'
   | 'triestr'

@@ -377,8 +377,9 @@ export function CompareSection() {
         Six structures look up a key six different ways: the unsorted array scans from the front, the
         linked list walks node by node, the sorted array binary-searches, the skip list drops down a tower of
         ever-sparser express lanes, the red-black tree descends a tree it keeps balanced, the B-tree
-        binary-searches inside a few wide nodes, and the hash set jumps straight to a bucket. (The min-heap is
-        measured too, but it answers a different question and gets its own section below.)
+        binary-searches inside a few wide nodes, the hash set jumps straight to a bucket and walks its chain,
+        and the open-addressing hash set jumps straight to a slot and steps along the table past any collisions.
+        (The min-heap is measured too, but it answers a different question and gets its own section below.)
       </p>
       {search.length > 0 && (
         <>
@@ -396,6 +397,14 @@ export function CompareSection() {
             in the sorted array’s class by an unrelated route — it never sorts anything, it just keeps a few
             sparse lanes over the same keys and drops through them — which is why the two lines are worth
             reading together on the add/remove chart below.{' '}
+            The light-blue line is a <em>second</em> hash set that settles collisions differently: no chains,
+            just one flat table where a key that finds its slot taken steps to the next free one (open
+            addressing). It uses the same hash and the same table size as the blue one at every n, so the gap
+            between them is the collision strategy alone. Counted in steps, it does more work on average —
+            neighbouring collisions pile into one run, and a lookup for a missing key must walk to the end of
+            it — and its count saws up and down as the table fills and doubles; both stay flat
+            (<strong>O(1)</strong>). On the wall clock the order can flip, because stepping along one array is
+            kinder to the memory cache than following a chain (docs/METHODOLOGY.md §2.8).{' '}
             {/* Only true while the run asked absent keys at all — a hits-only run has none. */}
             {(ranMixSummary?.absent ?? 64) > 0 && (
               <>
@@ -447,6 +456,13 @@ export function CompareSection() {
             shift of everything after the change; splicing a node into a handful of express lanes costs the
             same <strong>O(log n)</strong> the lookup did. <em>Same read cost, different write cost, same
             data.</em>{' '}
+            The open-addressing hash set (light blue) stays <strong>O(1)</strong> too, and its line is
+            honest only because of a rule you cannot see: a removed key leaves a marker (a tombstone) that
+            the next insert reuses. Without that rule every add-and-remove would strand one more marker, each
+            lookup would walk further, and the cost would grow with how many repetitions the timer happened
+            to run — not with n. Counted in steps, its line sits above the blue one for two reasons of
+            about equal size: clustering (as on the search chart), and the markers its own add-and-remove
+            keys leave behind, which join neighbouring runs together (docs/METHODOLOGY.md §2.8).{' '}
             {sortedNote ? (
               <>
                 <strong>This dataset is sorted</strong>, so the naive BST built into a chain and its dashed
