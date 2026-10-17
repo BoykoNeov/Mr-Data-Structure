@@ -47,7 +47,10 @@ export type StructureId =
   | 'skiplist'
   | 'arraystr'
   | 'hashsetstr'
-  | 'triestr';
+  | 'triestr'
+  /** The doubly linked list (Phase 6): the singly list plus a `prev` link per node, measured
+   * to show that on the canonical op set the second pointer buys nothing (METHODOLOGY §2.11). */
+  | 'dll';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).

@@ -15,7 +15,7 @@ import type { StructureId } from './bench/measure';
  */
 describe('structure registry', () => {
   it('covers every StructureId exactly once, with a distinct colour each', () => {
-    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist'];
+    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll'];
     for (const id of ids) expect(REGISTRY[id].id).toBe(id);
     // STRUCTURES is the *numeric* catalogue — the one the shared charts draw from.
     expect(STRUCTURES.map((s) => s.id).sort()).toEqual([...ids].sort());

@@ -17,7 +17,9 @@ import { SinglyLinkedListF64, DoublyLinkedListF64, type LinkedListF64 } from './
  *
  * Crucially the *same* corpus pins **both** twins: singly and doubly are bench-identical under
  * the node-visit metric (the back-pointers are a viz-only distinction), so each must reproduce
- * it byte-for-byte. The Rust bench has a single `LinkedListF64` for the same reason.
+ * it byte-for-byte. Since Phase 6 the doubly list also has a Rust bench twin of its own
+ * (`doubly_linked_list.rs`, pinned by `corpus-dll.txt` / `conformance-dll.test.ts`) — not
+ * because the counts differ, but so the chart can *show* that they don't (METHODOLOGY §2.11).
  *
  * Regenerated on the Rust side: `cargo test -- --ignored regen_corpus_ll`.
  */

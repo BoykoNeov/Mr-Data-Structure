@@ -277,6 +277,37 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     worst: { search: ON, insert: ON, delete: ON, churn: ON },
     shapeSensitive: false,
   },
+  /**
+   * The **doubly linked list** (docs/PLAN.md §8 "Linear", Phase 6) — the singly list with a
+   * `prev` link per node, and on this chart **the same curves**. Every class below is the
+   * singly list's, and that is the finding rather than a copy-paste: a delete-by-value still
+   * has to *find* its node with the head-first walk the singly list does, visit for visit, and
+   * the splice that `prev` makes cheaper was never counted on either list. `prev` only pays
+   * for unlinking a node you already hold, which the canonical op set (§4.1) never hands you.
+   * The op-counts are pinned *equal* to the singly list's, not close
+   * (`structures::methodology::doubly_linked_list_buys_nothing_on_the_canonical_op_set`), while
+   * each node costs 24 bytes against 16 (docs/METHODOLOGY.md §2.11).
+   *
+   * **`churn: O1` inherits the singly list's trap.** Head insert puts the churn key at the
+   * head whatever its value, so the pair is one visit; the O(n) delete-by-value lives in the
+   * finite-difference `delete` series, and the UI must show it beside the flat line
+   * (METHODOLOGY §2.3 regime 7 — every rule that binds `ll`'s curve binds this one).
+   *
+   * Colour: the light pair of the singly list's orange (tab20) — a variant of a parent
+   * structure takes the parent's lighter hue.
+   */
+  dll: {
+    id: 'dll',
+    label: 'doubly linked list',
+    family: 'linear',
+    keyType: 'number',
+    color: '#ffbb78',
+    costMetric: 'node-visits',
+    mechanism: 'walks node by node from the head, exactly like the singly list; the extra back-pointer only speeds unlinking a node you already hold, which find-then-delete never does',
+    average: { search: ON, insert: O1, delete: ON, churn: O1 },
+    worst: { search: ON, insert: O1, delete: ON, churn: O1 },
+    shapeSensitive: false,
+  },
 };
 
 /**
@@ -293,6 +324,7 @@ export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.avl,
   REGISTRY.heap,
   REGISTRY.skiplist,
+  REGISTRY.dll,
 ];
 
 /**
