@@ -1,4 +1,5 @@
 import type { MeasureOptions, SweepSeries } from './measure';
+import type { ProbeMix } from './probeMix';
 
 /**
  * The benchmark engine boundary.
@@ -25,11 +26,15 @@ export interface BenchEngine {
    * (docs/PLAN.md §6.3). `keys` is the marshalled numeric key buffer; the engine
    * may consume (transfer) its backing `ArrayBuffer`, so callers must not reuse
    * it afterwards. Returns one {@link SweepSeries} per structure.
+   *
+   * `mix` is the present/absent probe split (docs/PLAN.md §6.3, `./probeMix`) — one value
+   * applied to **every** structure in the run; omitted ⇒ the calibrated 64 + 64 default.
    */
   runSweep(
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,
+    mix?: ProbeMix,
   ): Promise<SweepSeries[]>;
 
   /**
@@ -129,12 +134,14 @@ export interface BenchEngine {
    * — one branch per key byte and no hash — so "constant" and "cheap" come apart on one
    * picture. All three are probed with the *same* derived key set, which for a trie is
    * its deepest absent case; retuning the probes per structure would end the comparison.
+   * `mix` sets the present/absent split for all three alike, as in {@link runSweep}.
    */
   runStringSweep(
     offsets: Uint32Array,
     bytes: Uint8Array,
     sizes: number[],
     opts?: MeasureOptions,
+    mix?: ProbeMix,
   ): Promise<SweepSeries[]>;
 
   /**

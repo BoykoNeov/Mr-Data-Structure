@@ -295,5 +295,10 @@ In the Status paragraph, after the linked-list caveat clause:
     `engine.worker.ts` `runMutationSweep` JSDoc (four → five flat structures), the
     `runSweeps.test.ts` comment, and the `verify-browser.mjs` wait comment (six → seven search
     series).
-12. **Not done:** `mod.rs`'s module doc (Phase 4 paragraph) still describes `LinkedListF64` as the
+12. **Merged `main` @ 94a3168** (the probe-mix and graph-animation slices) into this branch.
+    The dll search runner takes the run's `mix` like every other (`searchRunnerFactory(
+    DoublyLinkedListF64, keys, mix)`); the Rust twin already exports `len()`, so stored size
+    reads back with no change. Conflicts were the two shared spots only (the worker's search list,
+    `CompareSection.tsx`'s imports and `sheetNotes`), resolved keeping both sides.
+13. **Not done:** `mod.rs`'s module doc (Phase 4 paragraph) still describes `LinkedListF64` as the
     twin of both TS lists — historical, in a hotspot file; one sentence could be added there.
