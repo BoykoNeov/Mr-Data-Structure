@@ -275,6 +275,56 @@ describe('runStringSweeps', () => {
   });
 });
 
+describe('probe mix and stored size (docs/PLAN.md §6.3, §13)', () => {
+  /** The fake engine, recording the mix each search call received. */
+  function mixSpy(): { engine: BenchEngine; seen: unknown[] } {
+    const seen: unknown[] = [];
+    const base = fakeEngine([]);
+    return {
+      seen,
+      engine: {
+        ...base,
+        runSweep: async (keys, sizes, opts, mix) => {
+          seen.push(mix);
+          return base.runSweep(keys, sizes, opts);
+        },
+        runStringSweep: async (o, b, sizes, opts, mix) => {
+          seen.push(mix);
+          return base.runStringSweep(o, b, sizes, opts);
+        },
+      },
+    };
+  }
+
+  it('defaults to the calibrated 50/50 mix and reports it on the result and the gate meta', async () => {
+    const { engine, seen } = mixSpy();
+    const win: Record<string, unknown> = {};
+    const r = await runAllSweeps(engine, generateUniform(5_000, 0, 5_000, true, 1), undefined, win);
+    expect(seen).toEqual([{ presentFraction: 0.5 }]);
+    expect(r.probeMix).toEqual({ presentFraction: 0.5, present: 64, absent: 64, atN: 5_000 });
+    expect((win.__compareMeta as { probeMix: unknown }).probeMix).toEqual(r.probeMix);
+  });
+
+  it('forwards a chosen mix to the one search call every structure shares', async () => {
+    const { engine, seen } = mixSpy();
+    const r = await runAllSweeps(engine, generateUniform(5_000, 0, 5_000, true, 1), undefined, {}, { presentFraction: 1 });
+    expect(seen).toEqual([{ presentFraction: 1 }]);
+    expect(r.probeMix).toMatchObject({ present: 128, absent: 0 });
+    const s = await runStringSweeps(engine, generateStringCorpus(500), undefined, {}, { presentFraction: 0 });
+    expect(seen[1]).toEqual({ presentFraction: 0 });
+    expect(s.probeMix).toMatchObject({ present: 0, absent: 128, atN: 500 });
+  });
+
+  it('carries the stored size at the top of the sweep into the gate proof', () => {
+    const s = series('hashset', 'search', [10, 1000], () => 3);
+    const deduped = { ...s, points: s.points.map((p) => ({ ...p, storedN: Math.round(p.n * 0.63) })) };
+    const [withCount] = toProof([toView(deduped)]);
+    expect(withCount).toMatchObject({ lastN: 1000, lastStoredN: 630 });
+    const [without] = toProof([toView(series('array', 'insert', [10, 1000], (n) => n))]);
+    expect(without).toMatchObject({ lastN: 1000, lastStoredN: null });
+  });
+});
+
 describe('helpers', () => {
   it('sizesFor caps the ladder at the dataset size', () => {
     const s = sizesFor(generateSorted(1234), 10, SWEEP_MAX);

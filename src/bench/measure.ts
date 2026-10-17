@@ -82,6 +82,14 @@ export interface SweepPoint {
   readonly minNanos: number;
   /** Slowest rep's per-op timing, in ns — the upper end of the spread. */
   readonly maxNanos: number;
+  /**
+   * How many keys the structure actually **holds** at this point, read back from the built
+   * structure (its `len()`), as distinct from {@link n}, the number of *input* keys it was
+   * built from. Equal for every multiset; smaller for a structure that de-duplicates (the
+   * hash sets, the trie) on data with repeats. Absent where the runner had no built
+   * instance to ask — the finite-difference series (docs/METHODOLOGY.md §4 hurdle 8).
+   */
+  readonly storedN?: number;
 }
 
 /** A full series: one structure × one operation across the size sweep. */
@@ -106,6 +114,11 @@ export interface OpRunner {
   opCountPerOp(): number;
   /** Release any held resources (e.g. free the WASM structure). */
   dispose?(): void;
+  /**
+   * Keys the built structure holds (untimed; see {@link SweepPoint.storedN}). Optional: a
+   * runner with no instance — the cumulative build/teardown ones — leaves it out.
+   */
+  storedSize?(): number;
 }
 
 /** Builds an {@link OpRunner} for a structure populated to size `n`. */
@@ -214,6 +227,7 @@ export function measurePoint(
 
     const mean = meanOf(perOpNanos);
     const sorted = [...perOpNanos].sort((a, b) => a - b);
+    const storedN = runner.storedSize?.();
 
     return {
       n,
@@ -224,6 +238,7 @@ export function measurePoint(
       stddevNanos: sampleStddev(perOpNanos, mean),
       minNanos: sorted[0],
       maxNanos: sorted[sorted.length - 1],
+      ...(storedN === undefined ? {} : { storedN }),
     };
   } finally {
     runner.dispose?.();

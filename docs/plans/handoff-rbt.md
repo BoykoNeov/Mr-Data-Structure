@@ -280,6 +280,13 @@ a textbook claim." The Layout section's file list (if it enumerates structures) 
 
 ### Merge conflicts to expect (shared hotspots, each edit additive)
 
+**Already merged with `main` @ 94a3168** (probe-mix + graph-animation slices). Two conflicts,
+both resolved keeping both sides: `engine.worker.ts` `runSweep` (the RB search runner now takes
+the run's `mix`, `searchRunnerFactory(RbtF64, keys, mix)`; `RbtF64` already exports `len()`), and
+`CompareSection.tsx`'s search callout (the RB sentence sits after main's mix-conditional
+skip-list allowance). Post-merge gates: cargo test lib 219 + all proptests green, typecheck
+clean, vitest 56 files / 1029 tests passed.
+
 - `src/bench/measure.ts` — `| 'rbt'` appended after `'triestr'` (the `;` moved).
 - `src/registry.ts` — entry appended at the end of `REGISTRY`, `REGISTRY.rbt` appended to `STRUCTURES`.
 - `src/registry.test.ts` — `'rbt'` appended to the ids array; one new `it`.

@@ -4,6 +4,7 @@ import 'uplot/dist/uPlot.min.css';
 import type { SweepPoint, SweepSeries } from '../bench/measure';
 import { CLASS_BASIS, type FitResult } from '../bench/fit';
 import { REGISTRY, theoreticalClass, type InputShape } from '../registry';
+import { legendValue, storedSizeNotes, topDedupedPoint } from './storedSize';
 
 /**
  * One overlaid line on the sweep chart: a measured series plus its fitted
@@ -163,6 +164,14 @@ export function SweepChart({
           stroke: v.color,
           width: 2,
           points: { show: true, size: 6 },
+          // A de-duplicating structure's hover read-out also says how many keys it held at
+          // that n (./storedSize); every other series keeps uPlot's default formatting.
+          ...(topDedupedPoint(v)
+            ? {
+                value: (_u: uPlot, y: number | null, _s: number, idx: number | null) =>
+                  legendValue(y, idx === null ? undefined : v.series.points[idx]),
+              }
+            : {}),
         })),
         ...theory.map((t, i) => ({
           label: `${REGISTRY[views[i].series.structure]?.label ?? views[i].series.structure} — theory ${t.cls}`,
@@ -184,5 +193,19 @@ export function SweepChart({
     };
   }, [views, signal, showTheory, shape, showSpread]);
 
-  return <div ref={hostRef} data-chart={name} />;
+  // Stored size next to input size (docs/METHODOLOGY.md §4 hurdle 8): said under the chart
+  // only when a structure on it actually dropped repeated keys. Kept outside the
+  // `data-chart` host so the PNG export's canvas lookup is unchanged; the PNG carries the
+  // same sentences as caption lines instead (CompareSection's `sheetNotes`).
+  const notes = storedSizeNotes(views);
+  return (
+    <>
+      <div ref={hostRef} data-chart={name} />
+      {notes.length > 0 && (
+        <p data-stored-size-note style={{ fontSize: 12, color: '#666', margin: '4px 0 0' }}>
+          <strong>Stored vs input size.</strong> {notes.join(' ')} Hover a point to see the count at each n.
+        </p>
+      )}
+    </>
+  );
 }
