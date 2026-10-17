@@ -806,8 +806,11 @@ const api = {
    * `delete`) tagged `'rbt'` (docs/PLAN.md §8 trees, §13). The AVL's recipe exactly — the
    * **two-key** churn runner (docs/METHODOLOGY.md §4.1) and the same build / teardown
    * factories — because the point of this line is to be read *against* the AVL's: same
-   * metric (comparisons + rotations), same probe, so any gap between the two is the
-   * balancing scheme and nothing else.
+   * metric (comparisons + rotations), same probe, so on the **op-count** signal any gap
+   * between the two is the balancing scheme and nothing else. On the **wall clock** it is
+   * not: the AVL is a recursive `Box` tree that allocates and frees a node on every churn
+   * pair, while this one is a pre-sized arena that reuses one slot, so the timed gap also
+   * carries allocator and memory-layout effects. Read the two wall-clock lines for shape.
    *
    * What the clock-free op-counts say that gap should be (docs/METHODOLOGY.md §2.9): on
    * shuffled keys the two are within a percent on comparisons and the red-black tree

@@ -416,9 +416,12 @@ export function CompareSection() {
               <>
                 <strong>This dataset is sorted</strong>, so the naive BST built into a chain and its dashed
                 twin is now the worst case, O(n): watch the purple line leave the brown AVL, which rotates to
-                stay O(log n) on the same input — the headline demo. The light-brown red-black tree holds too,
-                but sits a little above the AVL here: its looser balance lets the edges of the tree, where
-                sorted keys keep landing, grow deeper. That is a constant, not a class — both stay O(log n).
+                stay O(log n) on the same input — the headline demo. The light-brown red-black tree holds too.
+                On the <em>op-count</em> signal it sits a little above the AVL here: its looser balance lets the
+                edges of the tree, where sorted keys keep landing, grow deeper — a constant, not a class, and
+                both stay O(log n). On <em>wall-clock</em> that gap also carries how the two store their nodes
+                (the AVL allocates a node per insert, the red-black tree reuses slots in one array), so there
+                compare the two shapes, not which line is higher.
                 {reverse && (
                   <>
                     {' '}

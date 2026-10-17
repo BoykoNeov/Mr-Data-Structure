@@ -182,6 +182,14 @@ canonical balanced tree for animation; the RB tree is the comparison.
 >
 > The churn-vs-finite-difference regime (§2.3, the tenth) follows the AVL's direction and is
 > wider for reason 3.
+>
+> **Every number above is an op-count, and that is the only signal on which the RB-vs-AVL gap
+> is "the scheme and nothing else".** The two twins store their nodes differently — the AVL is a
+> recursive `Box` tree that allocates and frees a node on every churn pair and every build key;
+> the red-black tree is a pre-sized arena that reuses freed slots — so on the wall clock the gap
+> between their lines also carries allocator and memory-layout effects, and the red-black churn
+> line can sit *below* the AVL's while doing more comparisons. Read the two wall-clock lines for
+> shape; read the op-count lines for the scheme.
 
 ### §4 hurdle (append as 13, or renumber)
 
@@ -190,7 +198,10 @@ canonical balanced tree for animation; the RB tree is the comparison.
 >   against an AVL delete measured at 10). Every Compare curve is a mean over a batch, so that
 >   bound is invisible on the chart, on either signal; it lives in the Rust tests and the
 >   proptest. What the chart *can* show — the two trees' mean costs — is close on shuffled data
->   and favours the AVL on sorted data, which read alone would undersell the scheme.
+>   and favours the AVL on sorted data, which read alone would undersell the scheme. And that
+>   statement is about the **op-count** signal only: on wall-clock the AVL pays an allocation per
+>   insert that the red-black tree's slot-reusing arena does not, so the timed gap mixes the scheme
+>   with storage (§2.9).
 
 ### §5 proof-map rows
 
@@ -222,6 +233,12 @@ canonical balanced tree for animation; the RB tree is the comparison.
 >   random inserts and a wash elsewhere; and on *sorted* input the RB tree's churn sits *above*
 >   the AVL's (deeper spines). That is the finding, not a regression — don't add a gate check
 >   asserting the RB line below the AVL's.
+> - **RB vs AVL is a scheme comparison on op-counts only.** The AVL is a recursive `Box` tree that
+>   allocates a node per insert; the RB tree is a pre-sized arena that reuses slots. So the
+>   wall-clock gap between their lines includes allocator/layout effects (RB churn can read
+>   *faster* while doing more comparisons). Keep every "RB above/below AVL" sentence on the page
+>   qualified by signal (`CompareSection.tsx`'s sorted note is), and don't "fix" it by moving the
+>   AVL onto an arena without re-pinning its corpus and methodology numbers.
 > - **Splitting the AVL's op-count needs distinct keys.** The methodology tests derive AVL
 >   rotations as `op-count − search_one_counted(key)` taken just before the op; that identity
 >   holds only when the key is distinct (insert) or the first match is the one search finds
@@ -300,6 +317,10 @@ a textbook claim." The Layout section's file list (if it enumerates structures) 
 5. **Arena + parent links, not the AVL's recursive `Box`** — per the brief; the height bound would
    have made recursion safe. Insert/delete/traversals are all loops; `check_rb` is iterative too.
    `RbtF64::new` pre-sizes the arena (one allocation per build; the AVL allocates one Box per key).
+   **Consequence for reading the charts:** on the wall clock the RB-vs-AVL gap is not purely the
+   scheme — it also carries this storage difference (the AVL's churn pair allocates and frees a
+   node; the RB pair reuses a slot). The page copy, the worker JSDoc and the registry doc now say
+   the "gap = scheme" reading holds on op-counts only; §2.9 and hurdle 13 above carry the caveat.
 6. **AVL rotation split by subtraction** (op-count − pre-op search count, distinct keys) instead
    of adding a rotation counter to `avl.rs`. Avoided editing the sibling; valid only for distinct
    keys, which every methodology sequence is.

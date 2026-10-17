@@ -281,8 +281,9 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
    * The **red-black tree** (docs/PLAN.md §8 "Trees / heaps", §13's balancing-scheme
    * comparison) — classic CLRS, the second balanced tree beside the AVL. Same ordering
    * rule, same multiset semantics, same value-copy delete, same cost metric
-   * (comparisons + rotations), so the two lines compare unit for unit and any gap is the
-   * balancing scheme.
+   * (comparisons + rotations), so the two op-count lines compare unit for unit and any gap
+   * there is the balancing scheme. (Not on the wall clock: the AVL allocates a `Box` per
+   * insert, this tree reuses arena slots, so the timed gap also carries storage effects.)
    *
    * The trade it makes, and what the op-counts say about it (docs/METHODOLOGY.md §2.9):
    * a looser height bound (≤ 2·log₂(n+1), against the AVL's ≈ 1.44·log₂ n) for **at most
