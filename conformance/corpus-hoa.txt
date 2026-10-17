@@ -1,0 +1,189 @@
+# Mr Data Structure — open-addressing hash set conformance corpus (docs/PLAN.md §8, §12).
+# Generated from the Rust bench impl (hash_set_oa.rs); the TS teaching twin must match.
+# Op-count = hashes + slot probes (an occupied slot examined; the empty slot that ends a
+# walk is free). `hoa_slots*` is the SLOT LAYOUT: one token per slot, `.` empty, `x`
+# tombstone, else the live key. `hoa_shape*` = capacity live tombstones.
+# `hoa_churn_keys` is the churn block set_churn_key(churn_key) builds (clamp(len/32, 1, 16)
+# consecutive absent keys), `hoa_slots_churn` the layout after its priming pairs, and
+# `hoa_churn` the mean op-count of one counted pair per block key, from that state.
+# Regenerate: cargo test -- --ignored regen_corpus_hoa
+
+case empty
+keys 
+probes 1 2
+hoa_order 
+hoa_search 0:1 0:1
+hoa_slots . . . .
+hoa_shape 4 0 0
+deletes 1
+hoa_delete 0:1
+hoa_slots_after . . . .
+hoa_search_after 0:1 0:1
+reinserts 1
+hoa_insert 1:1
+hoa_slots_final . . 1 .
+hoa_shape_final 4 1 0
+churn_key 1
+hoa_churn_keys 1
+hoa_slots_churn . . x .
+hoa_churn 4
+
+case singleton
+keys 42
+probes 42 7
+hoa_order 42
+hoa_search 1:2 0:1
+hoa_slots . . . 42
+hoa_shape 4 1 0
+deletes 42
+hoa_delete 1:2
+hoa_slots_after . . . x
+hoa_search_after 0:2 0:1
+reinserts 42 7
+hoa_insert 1:2 1:1
+hoa_slots_final . 7 . 42
+hoa_shape_final 4 2 0
+churn_key 43
+hoa_churn_keys 43
+hoa_slots_churn . x . 42
+hoa_churn 4
+
+case ordered
+keys 10 20 30
+probes 10 20 30 99
+hoa_order 30 10 20
+hoa_search 1:2 1:2 1:2 0:3
+hoa_slots . 30 10 20
+hoa_shape 4 3 0
+deletes 20 99 10
+hoa_delete 1:2 0:3 1:2
+hoa_slots_after . 30 x x
+hoa_search_after 0:3 0:2 1:2 0:3
+reinserts 20 5
+hoa_insert 1:2 1:1
+hoa_slots_final 5 . . 20 . 30 . .
+hoa_shape_final 8 3 0
+churn_key 31
+hoa_churn_keys 31
+hoa_slots_churn x . 10 20 . 30 . .
+hoa_churn 4
+
+case duplicates
+keys 5 5 5 7 5 9
+probes 5 7 9 99
+hoa_order 5 7 9
+hoa_search 1:2 1:2 1:4 0:2
+hoa_slots 5 7 9 .
+hoa_shape 4 3 0
+deletes 5 5 9
+hoa_delete 1:2 0:4 1:4
+hoa_slots_after x 7 x .
+hoa_search_after 0:4 1:2 0:4 0:2
+reinserts 5 9 11 9
+hoa_insert 1:4 1:4 1:4 0:2
+hoa_slots_final 5 7 11 . 9 . . .
+hoa_shape_final 8 4 0
+churn_key 10
+hoa_churn_keys 10
+hoa_slots_churn 5 7 x . 9 . . .
+hoa_churn 4
+
+case rehash
+keys 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30
+probes 0 15 30 31 -1 1000
+hoa_order 0 13 6 10 26 2 29 22 16 24 30 18 5 11 28 23 25 19 1 12 9 14 8 20 7 17 27 4 3 15 21
+hoa_search 1:2 1:4 1:2 0:1 0:2 0:1
+hoa_slots 0 13 6 10 26 2 29 22 . . 16 24 . 30 18 . 5 11 . . . . . . . 28 . . . . . . . . 23 25 19 . 1 . . . . 12 9 14 8 20 . 7 17 . . . 27 . . . . . 4 3 15 21
+hoa_shape 64 31 0
+deletes 7 0 30 15
+hoa_delete 1:2 1:2 1:2 1:4
+hoa_slots_after x 13 6 10 26 2 29 22 . . 16 24 . x 18 . 5 11 . . . . . . . 28 . . . . . . . . 23 25 19 . 1 . . . . 12 9 14 8 20 . x 17 . . . 27 . . . . . 4 3 x 21
+hoa_search_after 0:9 0:13 0:3 0:1 0:2 0:1
+reinserts 15 100 7
+hoa_insert 1:13 1:3 1:3
+hoa_slots_final x 13 6 10 26 2 29 22 . . 16 24 . x 18 . 5 11 . . . . . . . 28 . . . . . . . . 23 25 19 . 1 . . . . 12 9 14 8 20 . 100 17 7 . . 27 . . . . . 4 3 15 21
+hoa_shape_final 64 30 2
+churn_key 31
+hoa_churn_keys 31
+hoa_slots_churn 0 13 6 10 26 2 29 22 x . 16 24 . 30 18 . 5 11 . . . . . . . 28 . . . . . . . . 23 25 19 . 1 . . . . 12 9 14 8 20 . 7 17 . . . 27 . . . . . 4 3 15 21
+hoa_churn 4
+
+case fractional
+keys 0 0.5 2.5 -1
+probes 0.5 2.5 -1 3
+hoa_order 0 2.5 0.5 -1
+hoa_search 1:2 1:2 1:2 0:2
+hoa_slots 0 2.5 . . . 0.5 . -1
+hoa_shape 8 4 0
+deletes 0.5 -1
+hoa_delete 1:2 1:2
+hoa_slots_after 0 2.5 . . . x . x
+hoa_search_after 0:2 1:2 0:4 0:2
+reinserts -1 4.5
+hoa_insert 1:4 1:3
+hoa_slots_final 0 2.5 4.5 . . x . -1
+hoa_shape_final 8 4 1
+churn_key 3.5
+hoa_churn_keys 3.5
+hoa_slots_churn 0 2.5 x . . 0.5 . -1
+hoa_churn 10
+
+case cluster
+keys 12 20 42 52 93 4
+probes 12 20 42 52 93 4 104 1000
+hoa_order 4 20 42 52 12 93
+hoa_search 1:5 1:2 1:3 1:4 1:6 1:6 0:7 0:3
+hoa_slots 4 . . 20 42 52 12 93
+hoa_shape 8 6 0
+deletes 12 42
+hoa_delete 1:5 1:3
+hoa_slots_after 4 . . 20 x 52 x 93
+hoa_search_after 0:7 1:2 0:7 1:4 1:6 1:6 0:7 0:3
+reinserts 104 42
+hoa_insert 1:7 1:7
+hoa_slots_final 4 . . 20 104 52 42 93
+hoa_shape_final 8 6 0
+churn_key 94
+hoa_churn_keys 94
+hoa_slots_churn . . . 93 . . x . . . . 20 4 42 52 12
+hoa_churn 4
+
+case purge
+keys 0 1 2 3 4 5
+probes 0 3 5 6
+hoa_order 0 5 4 2 1 3
+hoa_search 1:2 1:4 1:3 0:1
+hoa_slots 0 5 . . 4 2 1 3
+hoa_shape 8 6 0
+deletes 0 1 2 3
+hoa_delete 1:2 1:2 1:2 1:4
+hoa_slots_after x 5 . . 4 x x x
+hoa_search_after 0:3 0:6 1:3 0:1
+reinserts 10 1010 2
+hoa_insert 1:1 1:1 1:2
+hoa_slots_final 5 . 10 . 4 1010 2 .
+hoa_shape_final 8 5 0
+churn_key 6
+hoa_churn_keys 6
+hoa_slots_churn 0 5 x . . 2 1 . . . . . 4 3 . .
+hoa_churn 4
+
+case block
+keys 0 3 6 9 12 15 18 21 24 27 30 33 36 39 42 45 48 51 54 57 60 63 66 69 72 75 78 81 84 87 90 93 96 99 102 105 108 111 114 117 120 123 126 129 132 135 138 141 144 147 150 153 156 159 162 165 168 171 174 177 180 183 186 189 192 195 198 201 204 207 210 213 216 219 222 225 228 231 234 237 240 243 246 249 252 255 258 261 264 267 270 273 276 279 282 285 288 291 294 297
+probes 0 150 297 298 1000
+hoa_order 0 222 255 297 177 240 99 114 90 42 63 51 78 156 168 237 243 84 9 87 210 111 96 54 141 3 216 48 18 234 180 93 45 186 132 12 150 144 258 267 183 60 273 21 105 57 6 75 288 36 264 159 102 225 270 189 249 285 135 246 129 195 231 276 147 27 192 117 72 219 33 108 252 24 171 30 120 201 153 66 123 282 261 207 126 39 138 204 81 165 213 291 294 198 228 69 162 279 15 174
+hoa_search 1:2 1:2 1:4 0:1 0:1
+hoa_slots 0 . . . . . . . 222 255 297 . 177 240 99 . . . 114 . . . . . . . 90 42 63 . . . . . 51 . 78 156 . 168 237 243 84 . 9 . . 87 210 111 96 . . . . 54 141 . . . . 3 216 . . 48 . . . . . . . . . . . . 18 . . . . . . 234 . . . . . 180 . . . . . . . 93 . . . 45 186 . 132 12 150 . 144 . 258 . . . . 267 . . . . . . 183 60 273 21 105 57 6 75 288 36 . . . . . . . . 264 . . . 159 . 102 . 225 270 189 249 . . . . 285 135 246 . . . . . . . . 129 . . . . . 195 231 276 . . . 147 27 . . 192 . . 117 72 219 33 . . . . 108 . . 252 . . 24 171 . 30 . . 120 . 201 . 153 . . 66 123 . . 282 261 . 207 . . . 126 . . 39 138 . 204 81 165 213 291 294 . . 198 228 . . 69 . . . 162 279 . . 15 . 174 .
+hoa_shape 256 100 0
+deletes 0 150 297 151
+hoa_delete 1:2 1:2 1:4 0:1
+hoa_slots_after x . . . . . . . 222 255 x . 177 240 99 . . . 114 . . . . . . . 90 42 63 . . . . . 51 . 78 156 . 168 237 243 84 . 9 . . 87 210 111 96 . . . . 54 141 . . . . 3 216 . . 48 . . . . . . . . . . . . 18 . . . . . . 234 . . . . . 180 . . . . . . . 93 . . . 45 186 . 132 12 x . 144 . 258 . . . . 267 . . . . . . 183 60 273 21 105 57 6 75 288 36 . . . . . . . . 264 . . . 159 . 102 . 225 270 189 249 . . . . 285 135 246 . . . . . . . . 129 . . . . . 195 231 276 . . . 147 27 . . 192 . . 117 72 219 33 . . . . 108 . . 252 . . 24 171 . 30 . . 120 . 201 . 153 . . 66 123 . . 282 261 . 207 . . . 126 . . 39 138 . 204 81 165 213 291 294 . . 198 228 . . 69 . . . 162 279 . . 15 . 174 .
+hoa_search_after 0:2 0:2 0:4 0:1 0:1
+reinserts 150 151
+hoa_insert 1:2 1:1
+hoa_slots_final x . . . . . . . 222 255 x . 177 240 99 . . . 114 . . . . . . . 90 42 63 . . . . . 51 . 78 156 . 168 237 243 84 . 9 . . 87 210 111 96 . . . . 54 141 . . . . 3 216 . . 48 . . . . . . . . . . . . 18 . . . 151 . . 234 . . . . . 180 . . . . . . . 93 . . . 45 186 . 132 12 150 . 144 . 258 . . . . 267 . . . . . . 183 60 273 21 105 57 6 75 288 36 . . . . . . . . 264 . . . 159 . 102 . 225 270 189 249 . . . . 285 135 246 . . . . . . . . 129 . . . . . 195 231 276 . . . 147 27 . . 192 . . 117 72 219 33 . . . . 108 . . 252 . . 24 171 . 30 . . 120 . 201 . 153 . . 66 123 . . 282 261 . 207 . . . 126 . . 39 138 . 204 81 165 213 291 294 . . 198 228 . . 69 . . . 162 279 . . 15 . 174 .
+hoa_shape_final 256 99 2
+churn_key 298
+hoa_churn_keys 298 299 300
+hoa_slots_churn 0 . . . . . . . 222 255 297 . 177 240 99 . . . 114 . . . . . . . 90 42 63 . . . . . 51 . 78 156 . 168 237 243 84 . 9 . . 87 210 111 96 . . . . 54 141 . . . . 3 216 . . 48 . . . . . . . . . . . . 18 . . . . . . 234 . . . . . 180 x . . x . . . 93 . . . 45 186 . 132 12 150 . 144 . 258 . . . . 267 . . . . . . 183 60 273 21 105 57 6 75 288 36 . . . . . . . . 264 . . . 159 . 102 . 225 270 189 249 . . . . 285 135 246 . . . . . . . . 129 . . . . x 195 231 276 . . . 147 27 . . 192 . . 117 72 219 33 . . . . 108 . . 252 . . 24 171 . 30 . . 120 . 201 . 153 . . 66 123 . . 282 261 . 207 . . . 126 . . 39 138 . 204 81 165 213 291 294 . . 198 228 . . 69 . . . 162 279 . . 15 . 174 .
+hoa_churn 5.666666666666667
