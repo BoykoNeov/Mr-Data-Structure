@@ -18,6 +18,9 @@ import { SweepChart, seriesLabel, type SeriesView, type Signal } from './SweepCh
 import { SlopeChart } from './SlopeChart';
 import { download, downloadBlob, toCsv, toJson } from './export';
 import { plotCanvasOf, renderSheet, type ChartShot } from './png';
+import { DEFAULT_PROBE_MIX, describeMix } from '../bench/probeMix';
+import { ProbeMixControl, mixNotes, shareWord } from './ProbeMixControl';
+import { storedSizeNotes } from './storedSize';
 
 /**
  * The Compare mode (docs/PLAN.md §7, §10 Phase 5): a dataset panel, the sweeps
@@ -60,20 +63,24 @@ export function CompareSection() {
   const [signal, setSignal] = useState<Signal>('nanos');
   const [showTheory, setShowTheory] = useState(true);
   const [showSpread, setShowSpread] = useState(true);
+  // The search probe mix for the *next* run (docs/PLAN.md §6.3). What the charts on screen
+  // were measured at is `result.probeMix`, which the captions and exports report instead.
+  const [presentFraction, setPresentFraction] = useState(DEFAULT_PROBE_MIX.presentFraction);
 
   const run = async (d: Dataset) => {
     const engine = engineRef.current;
     if (!engine) return;
     setBusy(true);
     setDataset(d);
+    const mix = { presentFraction };
     try {
       await engine.ready();
       if (d.keyType === 'string') {
         setResult(null);
-        setStringResult(await runStringSweeps(engine, d, setStatus));
+        setStringResult(await runStringSweeps(engine, d, setStatus, undefined, mix));
       } else {
         setStringResult(null);
-        setResult(await runAllSweeps(engine, d, setStatus));
+        setResult(await runAllSweeps(engine, d, setStatus, undefined, mix));
       }
       setStatus('ready');
     } catch (err) {
@@ -162,6 +169,8 @@ export function CompareSection() {
 
   const shape = result?.shape ?? 'random';
   const sortedNote = shape === 'sorted';
+  /** The probe mix the on-screen results were measured at (not the control's next-run value). */
+  const ranMixSummary = result?.probeMix ?? stringResult?.probeMix ?? null;
   const reverse = dataset?.order.kind === 'reverse-sorted';
 
   /**
@@ -224,6 +233,10 @@ export function CompareSection() {
         'Wall-clock costs are specific to this machine and this run — compare the shapes, not the absolute nanoseconds.',
       );
     }
+    // A non-default probe mix and a structure that dropped repeated keys both change what a
+    // reader should conclude from the picture, and the boxes saying so stay on the page.
+    if (ranMixSummary) notes.push(...mixNotes(ranMixSummary, stringResult ? 'string' : 'number'));
+    notes.push(...storedSizeNotes(chartsOnScreen.flatMap((c) => c.views)));
     return notes;
   };
 
@@ -257,6 +270,7 @@ export function CompareSection() {
       `Mr Data Structure — ${dataset ? describeDataset(dataset) : 'no dataset'}`,
       `signal: ${signal === 'nanos' ? 'wall-clock ns/op (this machine)' : 'op-count (hardware-free)'}` +
         ` · engine: ${version || '—'} · ${new Date().toISOString()}`,
+      ...(ranMixSummary ? [describeMix(ranMixSummary)] : []),
       ...sheetNotes(),
     ];
     renderSheet(shots, caption).toBlob((blob) => {
@@ -282,6 +296,9 @@ export function CompareSection() {
       signal,
       engine: version,
       ...(stringResult ? { meanKeyBytes: stringResult.meanKeyBytes } : {}),
+      ...(ranMixSummary ? { probeMix: ranMixSummary } : {}),
+      // Says which size the x-axis is, now that a point can carry both (./storedSize).
+      nAxis: 'n = input keys in the prefix; points[].storedN = keys the structure held (its len())',
     };
     if (kind === 'csv') download('mr-data-structure-sweep.csv', toCsv(views), 'text/csv');
     else download('mr-data-structure-sweep.json', toJson(views, meta), 'application/json');
@@ -304,9 +321,12 @@ export function CompareSection() {
         <li>status: <strong>{status}</strong></li>
         <li>engine: <code>{version || '—'}</code></li>
         {dataset && <li>dataset: {describeDataset(dataset)}</li>}
+        {ranMixSummary && <li>{describeMix(ranMixSummary)}</li>}
       </ul>
 
       <DatasetPicker busy={busy} onRun={(d) => void run(d)} />
+      {/* After the picker on purpose: see ProbeMixControl's note on the gate's select lookup. */}
+      <ProbeMixControl value={presentFraction} onChange={setPresentFraction} disabled={busy} />
 
       <ChartGuide />
       <p style={{ color: '#555', marginBottom: 0 }}>Quick reference for the shapes you’ll read off the charts:</p>
@@ -369,7 +389,7 @@ export function CompareSection() {
             in the sorted array’s class by an unrelated route — it never sorts anything, it just keeps a few
             sparse lanes over the same keys and drops through them — which is why the two lines are worth
             reading together on the add/remove chart below. <em>Read the olive line’s height with one
-            allowance:</em> half of every structure’s query load here is keys just past the largest stored
+            allowance:</em> {shareWord(1 - (ranMixSummary?.presentFraction ?? 0.5))} of every structure’s query load here is keys just past the largest stored
             one, which for the skip list is the cheapest question it can be asked (it runs off the end of
             each lane and pays nothing for it) and for the sorted array is the dearest. That shifts the two
             lines apart a little without tilting either — the same shared-workload trade the trie’s section

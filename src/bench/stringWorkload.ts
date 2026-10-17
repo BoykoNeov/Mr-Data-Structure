@@ -1,4 +1,5 @@
 import { decodeStringKeys } from '../data/marshal';
+import { absentSeedsOf, DEFAULT_PROBE_MIX, probeCounts, spreadOf, type ProbeMix } from './probeMix';
 
 /**
  * The **string** measurement workload (docs/PLAN.md §6.3, docs/METHODOLOGY.md §2.5):
@@ -85,25 +86,34 @@ export function medianLengthKey(keys: readonly string[]): string {
   return byLength[byLength.length >> 1];
 }
 
-/** Present probes per sweep point (docs/PLAN.md §6.3 — the ~50/50 present/absent mix). */
+/** Present probes per sweep point **at the default mix** (docs/PLAN.md §6.3; ./probeMix). */
 export const PRESENT_STRING_PROBES = 64;
-/** Absent probes per sweep point, all derived from present keys by {@link absentLike}. */
+/** Absent probes per sweep point at the default mix, each derived by {@link absentLike}. */
 export const ABSENT_STRING_PROBES = 64;
 
 /**
  * The string query workload for one sweep point: a spread of keys that are present, plus a
- * block of absent ones derived from those same keys, so both halves cost what a real key
+ * block of absent ones derived from stored keys, so both halves cost what a real key
  * costs. Untimed setup.
+ *
+ * `mix` sets the present/absent split (docs/PLAN.md §6.3; see ./probeMix). At the default
+ * it returns exactly the fixed 64 + 64 workload this function always built — same keys,
+ * same order — which `probeMix.test.ts` pins against a frozen copy. Whatever the mix, the
+ * present half is real stored keys and every absent key comes from {@link absentLike} on a
+ * stored seed ({@link absentSeedsOf}), never an invented string.
  */
-export function buildStringProbes(keys: readonly string[]): string[] {
+export function buildStringProbes(
+  keys: readonly string[],
+  mix: ProbeMix = DEFAULT_PROBE_MIX,
+): string[] {
   const n = keys.length;
-  const present = Math.min(PRESENT_STRING_PROBES, n);
-  const probes: string[] = [];
-  for (let i = 0; i < present; i++) probes.push(keys[Math.floor((i * n) / present)]);
+  const counts = probeCounts(n, mix);
+  const probes: string[] = spreadOf(keys, n, counts.present);
 
+  const seeds = absentSeedsOf(keys, counts.absent);
   const taken = new Set(keys);
-  for (let i = 0; i < ABSENT_STRING_PROBES; i++) {
-    const absent = absentLike(present > 0 ? probes[i % present] : '', taken, i);
+  for (let i = 0; i < counts.absent; i++) {
+    const absent = absentLike(seeds.length > 0 ? seeds[i % seeds.length] : '', taken, i);
     taken.add(absent); // keep the absent block distinct from itself, too
     probes.push(absent);
   }

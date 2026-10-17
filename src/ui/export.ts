@@ -9,8 +9,15 @@ import type { SeriesView } from './SweepChart';
  * inspectable), and the deterministic op-count beside the wall-clock.
  */
 
+/**
+ * `n` is the number of **input** keys a point was built from; `stored_n` is how many the
+ * structure actually held (its own `len()`), smaller only for a de-duplicating structure on
+ * data with repeats, and empty where the series has no built instance (the
+ * finite-difference halves). Appended last so existing column positions do not move
+ * (docs/METHODOLOGY.md §4 hurdle 8).
+ */
 export const CSV_HEADER =
-  'structure,op,n,nanos_per_op,min_nanos,max_nanos,stddev_nanos,op_count,batch,reps';
+  'structure,op,n,nanos_per_op,min_nanos,max_nanos,stddev_nanos,op_count,batch,reps,stored_n';
 
 export function toCsv(views: readonly SeriesView[]): string {
   const rows = [CSV_HEADER];
@@ -28,6 +35,7 @@ export function toCsv(views: readonly SeriesView[]): string {
           p.opCount,
           p.batch,
           p.reps,
+          p.storedN ?? '',
         ].join(','),
       );
     }
