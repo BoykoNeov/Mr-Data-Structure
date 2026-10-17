@@ -3,6 +3,7 @@ import type { BenchEngine } from './BenchEngine';
 import type { BenchWorkerApi } from './engine.worker';
 import type { MeasureOptions, SweepSeries } from './measure';
 import type { GraphInput, GraphTraversalMeasure } from './graphBench';
+import type { ProbeMix } from './probeMix';
 
 /**
  * Default {@link BenchEngine} implementation: a Web Worker that hosts the
@@ -41,10 +42,11 @@ class WasmBenchEngine implements BenchEngine {
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,
+    mix?: ProbeMix,
   ): Promise<SweepSeries[]> {
     // Transfer the key buffer rather than clone it (docs/PLAN.md risk R7); this
     // detaches `keys` on this thread, so the caller must not reuse it.
-    return this.api.runSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts);
+    return this.api.runSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts, mix);
   }
 
   runMutationSweep(
@@ -97,6 +99,7 @@ class WasmBenchEngine implements BenchEngine {
     bytes: Uint8Array,
     sizes: number[],
     opts?: MeasureOptions,
+    mix?: ProbeMix,
   ): Promise<SweepSeries[]> {
     // Both halves of the string key buffer are transferred (docs/PLAN.md risk R7) —
     // detaches `offsets` and `bytes` here.
@@ -105,6 +108,7 @@ class WasmBenchEngine implements BenchEngine {
       Comlink.transfer(bytes, [bytes.buffer]),
       sizes,
       opts,
+      mix,
     );
   }
 

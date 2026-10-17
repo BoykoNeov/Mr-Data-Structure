@@ -208,7 +208,14 @@ step-animation, session persistence and performance polish remain open."
   three identity booleans true; ≥ 5 points per sweep. Wait timeout 120 s.
 - No `npm run verify` (it rebuilds wasm + runs everything; I ran its pieces individually).
 
-**What was run** (all at below-normal priority, on a machine shared with six other agents):
+**After merging local `main` @ 94a3168** (graph animation + probe mix): conflicts were three
+import lines (`BenchEngine.ts`, `wasmBenchEngine.ts`, `CompareSection.tsx`), both sides kept;
+`toGraphSweepProof` gained the new `SweepProof` fields (`lastN` = last `V' + 2E'`,
+`lastStoredN: null` — a graph stores no keys). Re-run post-merge: wasm rebuilt, typecheck clean,
+vitest **60 files / 1023 tests passed**, cargo lib **192 passed** (9 ignored) + integration
+binaries all ok, vite build clean. The gate's four passes are in order (fourth = graph).
+
+**What was run before the merge** (all at below-normal priority, on a machine shared with six other agents):
 
 > The Bash tool refused the `cmd //v:on //c "start /belownormal …"` wrapper in this worktree, so
 > every run used the same wrapper from PowerShell, where its **exit code did not propagate** (it

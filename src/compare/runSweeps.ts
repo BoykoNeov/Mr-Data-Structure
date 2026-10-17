@@ -1,6 +1,12 @@
 import type { BenchEngine } from '../bench/BenchEngine';
 import { fitComplexity } from '../bench/fit';
 import type { MeasureOptions, SweepSeries } from '../bench/measure';
+import {
+  DEFAULT_PROBE_MIX,
+  summarizeMix,
+  type ProbeMix,
+  type ProbeMixSummary,
+} from '../bench/probeMix';
 import { geometricSweep } from '../bench/sweep';
 import {
   marshalKeys,
@@ -110,6 +116,8 @@ export interface CompareResult {
   /** Sweep sizes actually used (bounded by the dataset). */
   readonly searchSizes: readonly number[];
   readonly mutationSizes: readonly number[];
+  /** The present/absent probe mix the search sweep ran at (docs/PLAN.md §6.3, ./probeMix). */
+  readonly probeMix: ProbeMixSummary;
 }
 
 /**
@@ -152,6 +160,14 @@ export interface SweepProof {
   r2: number;
   firstNanos: number;
   lastNanos: number;
+  /** Input size at the top of the sweep — the x-axis value of the last point. */
+  lastN: number;
+  /**
+   * Keys the structure actually held at that point (its `len()`), or `null` where the
+   * series has no built instance to ask (the finite-difference halves). Below {@link lastN}
+   * only for a de-duplicating structure on data with repeats (METHODOLOGY §4 hurdle 8).
+   */
+  lastStoredN: number | null;
 }
 
 export function toProof(views: readonly SeriesView[]): SweepProof[] {
@@ -166,6 +182,8 @@ export function toProof(views: readonly SeriesView[]): SweepProof[] {
     r2: v.fit.r2,
     firstNanos: v.series.points[0].nanosPerOp,
     lastNanos: v.series.points[v.series.points.length - 1].nanosPerOp,
+    lastN: v.series.points[v.series.points.length - 1].n,
+    lastStoredN: v.series.points[v.series.points.length - 1].storedN ?? null,
   }));
 }
 
@@ -187,6 +205,8 @@ interface ProofWindow {
     keyType: 'number' | 'string';
     /** Mean UTF-8 bytes per key — the string run's second cost axis, 0 for a numeric run. */
     meanKeyBytes: number;
+    /** The search probe mix this run measured (the gate's slope bands assume the default). */
+    probeMix?: ProbeMixSummary;
   };
 }
 
@@ -250,20 +270,25 @@ export function meanKeyBytes(offsets: Uint32Array): number {
  * Run every sweep on `dataset`, reporting progress through `onStatus`, and
  * mirror the results onto `window` for the runtime gate. Throws (after
  * `onStatus`) when the dataset can't be swept.
+ *
+ * `mix` is the search sweep's present/absent probe split (docs/PLAN.md §6.3); it reaches
+ * every structure alike, and the default is the workload the runtime gate was calibrated on.
  */
 export async function runAllSweeps(
   engine: BenchEngine,
   dataset: Dataset,
   onStatus: (s: string) => void = () => {},
   win: ProofWindow | undefined = typeof window === 'undefined' ? undefined : (window as ProofWindow),
+  mix: ProbeMix = DEFAULT_PROBE_MIX,
 ): Promise<CompareResult> {
   const data = numericOrThrow(dataset);
   const shape = inputShapeOf(data);
   const searchSizes = sizesFor(data, SWEEP_MIN, SWEEP_MAX);
   const mutationSizes = sizesFor(data, Math.min(MUT_MIN, data.size), MUT_MAX);
+  const probeMix = summarizeMix(mix, searchSizes[searchSizes.length - 1]);
 
   onStatus('running search sweep…');
-  const search = (await engine.runSweep(keyBuffer(data), searchSizes, SEARCH_OPTS)).map((s) => toView(s));
+  const search = (await engine.runSweep(keyBuffer(data), searchSizes, SEARCH_OPTS, mix)).map((s) => toView(s));
   if (win) win.__sweepProof = toProof(search);
 
   onStatus('running mutation sweep (array, hash set, sorted array, linked list)…');
@@ -291,6 +316,7 @@ export async function runAllSweeps(
       shape,
       keyType: 'number',
       meanKeyBytes: 0,
+      probeMix,
     };
     // Set last, so the runtime gate can poll this one global as the "all sweeps done" signal.
     win.__heapMutationProof = toProof(heap);
@@ -305,6 +331,7 @@ export async function runAllSweeps(
     shape,
     searchSizes,
     mutationSizes,
+    probeMix,
   };
 }
 
@@ -318,6 +345,8 @@ export interface StringCompareResult {
   readonly mutationSizes: readonly number[];
   /** Mean UTF-8 bytes per key: the run's key-length axis (see {@link meanKeyBytes}). */
   readonly meanKeyBytes: number;
+  /** The present/absent probe mix the string search sweep ran at (./probeMix). */
+  readonly probeMix: ProbeMixSummary;
 }
 
 /**
@@ -342,16 +371,18 @@ export async function runStringSweeps(
   dataset: Dataset,
   onStatus: (s: string) => void = () => {},
   win: ProofWindow | undefined = typeof window === 'undefined' ? undefined : (window as ProofWindow),
+  mix: ProbeMix = DEFAULT_PROBE_MIX,
 ): Promise<StringCompareResult> {
   const data = stringOrThrow(dataset);
   const searchSizes = sizesFor(data, SWEEP_MIN, STRING_SWEEP_MAX);
   const mutationSizes = sizesFor(data, Math.min(MUT_MIN, data.size), STRING_MUT_MAX);
+  const probeMix = summarizeMix(mix, searchSizes[searchSizes.length - 1]);
 
   onStatus('running string-key search sweep…');
   const sb = stringBuffers(data);
-  const search = (await engine.runStringSweep(sb.offsets, sb.bytes, searchSizes, SEARCH_OPTS)).map(
-    (s) => toView(s),
-  );
+  const search = (
+    await engine.runStringSweep(sb.offsets, sb.bytes, searchSizes, SEARCH_OPTS, mix)
+  ).map((s) => toView(s));
   if (win) win.__stringSweepProof = toProof(search);
 
   onStatus('running string-key mutation sweep…');
@@ -371,10 +402,11 @@ export async function runStringSweeps(
       shape: 'random',
       keyType: 'string',
       meanKeyBytes: bytesPerKey,
+      probeMix,
     };
     // Set last — the "string run done" signal for scripts/verify-browser.mjs.
     win.__stringMutationProof = toProof(mutation);
   }
 
-  return { search, mutation, searchSizes, mutationSizes, meanKeyBytes: bytesPerKey };
+  return { search, mutation, searchSizes, mutationSizes, meanKeyBytes: bytesPerKey, probeMix };
 }

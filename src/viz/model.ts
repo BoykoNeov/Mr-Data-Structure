@@ -15,7 +15,7 @@
 
 import type {
   ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
-  TrieEvent, SkipListEvent,
+  TrieEvent, SkipListEvent, GraphEvent, GraphAlgo,
 } from './events';
 import type { BstShape } from '../structures/bst';
 import type { TrieShape } from '../structures/trie';
@@ -607,4 +607,150 @@ export function skipLevelKeys(m: SkipModel): number[][] {
   const out: number[][] = [];
   for (let i = 0; i < top; i++) out.push(m.nodes.filter((n) => n.height > i).map((n) => n.value));
   return out;
+}
+
+// ── Graph (docs/PLAN.md §8, "Specialized") ───────────────────────────────────
+// The graph is **static** during a traversal — BFS and DFS read it and change
+// nothing — so the base model is built once from the edge list and only the
+// traversal's state is folded: each vertex's mark, the frontier, the visit order,
+// how many of each adjacency list's entries have been examined, and which edge
+// discovered which vertex (the BFS / DFS tree).
+//
+// **Adjacency entries are tied to drawn edges by construction.** `incident[u][slot]`
+// is the id of the edge behind entry `slot` of `adj[u]`, built by replaying
+// `GraphAdj.addEdge`'s two pushes per edge in insertion order — so a parallel edge
+// gets its own id per copy, and a self-loop's id appears **twice** in its vertex's
+// list. That is what lets the view light the exact edge copy an examine pays for.
+// `graphAdjacency` re-derives the neighbour lists from it and `model.test.ts` pins
+// them equal to `GraphAdj.adjacency()` (the corpus's adjacency dimension), plus
+// "every edge id appears exactly twice" — Σ deg = 2E, enforced in the drawing layer.
+
+/** A vertex's traversal state. `marked` = on the frontier, not yet visited — in DFS
+ * this is the mark-on-push state: a vertex is marked when *pushed*, long before it is
+ * popped. `visited` = taken off the frontier and processed. */
+export type GraphVertexState = 'unseen' | 'marked' | 'visited';
+
+/** The graph's display state: the static structure plus the folded traversal. */
+export interface GraphModel {
+  readonly numVertices: number;
+  /** Edge `k`'s endpoints, in insertion order (out-of-range pairs dropped, as
+   * `addEdge` drops them). */
+  readonly edges: readonly (readonly [number, number])[];
+  /** `incident[u][slot]` = the edge id behind entry `slot` of `adj[u]`. */
+  readonly incident: readonly (readonly number[])[];
+  /** The traversal in progress, or `null` before `graph.start`. */
+  readonly algo: GraphAlgo | null;
+  readonly state: readonly GraphVertexState[];
+  /** The frontier's live contents, insertion order: a BFS queue's front is index 0;
+   * a DFS stack's top is the last element. */
+  readonly frontier: readonly number[];
+  /** Vertices in the order they were visited. */
+  readonly order: readonly number[];
+  /** The vertex being processed (the last one visited), or `null`. */
+  readonly current: number | null;
+  /** Per vertex: how many entries of its adjacency list have been examined. */
+  readonly examined: readonly number[];
+  /** Per edge: how many of its two adjacency entries have been examined (0..2). */
+  readonly edgeHits: readonly number[];
+  /** Per vertex: the edge whose examine discovered it (the traversal tree), or `null`
+   * (the source, and anything not reached). */
+  readonly discoveredBy: readonly (number | null)[];
+  /** Running cost tallies — exactly the cost events folded so far. */
+  readonly vertexVisits: number;
+  readonly edgeVisits: number;
+  /** True once `graph.done` has been folded. */
+  readonly done: boolean;
+}
+
+/** Build the base graph model from a flat `[u0, v0, u1, v1, …]` edge buffer — the
+ * same input and the same push order as `GraphAdj.fromEdges`. */
+export function graphModel(numVertices: number, edgeBuffer: readonly number[]): GraphModel {
+  const edges: (readonly [number, number])[] = [];
+  const incident: number[][] = Array.from({ length: numVertices }, () => []);
+  for (let i = 0; i + 1 < edgeBuffer.length; i += 2) {
+    const u = edgeBuffer[i];
+    const v = edgeBuffer[i + 1];
+    if (u < 0 || v < 0 || u >= numVertices || v >= numVertices) continue;
+    const k = edges.length;
+    edges.push([u, v]);
+    incident[u].push(k); // addEdge: adj[u].push(v)
+    incident[v].push(k); //          adj[v].push(u) — a self-loop pushes onto adj[u] twice
+  }
+  return {
+    numVertices,
+    edges,
+    incident,
+    algo: null,
+    state: Array.from({ length: numVertices }, (): GraphVertexState => 'unseen'),
+    frontier: [],
+    order: [],
+    current: null,
+    examined: Array.from({ length: numVertices }, () => 0),
+    edgeHits: edges.map(() => 0),
+    discoveredBy: Array.from({ length: numVertices }, (): number | null => null),
+    vertexVisits: 0,
+    edgeVisits: 0,
+    done: false,
+  };
+}
+
+/** The endpoint of edge `k` that is not `u` (for a self-loop, `u` itself). */
+export function otherEnd(m: GraphModel, k: number, u: number): number {
+  const [a, b] = m.edges[k];
+  return a === u ? b : a;
+}
+
+/** The neighbour lists the model's `incident` table implies — mirrors
+ * `GraphAdj.adjacency()`; `model.test.ts` pins the two equal. */
+export function graphAdjacency(m: GraphModel): number[][] {
+  return m.incident.map((ks, u) => ks.map((k) => otherEnd(m, k, u)));
+}
+
+const setAt = <T,>(xs: readonly T[], i: number, v: T): T[] => {
+  const out = xs.slice();
+  out[i] = v;
+  return out;
+};
+
+/** Fold one graph event. `start` marks the source and seeds the frontier; `visit`
+ * takes the frontier's out-end (BFS front / DFS top — `model.test.ts` pins that it is
+ * the event's vertex at every visit); `examine` advances that list's cursor, counts
+ * the edge copy, and records a discovering edge; `mark` marks + enqueues/pushes. */
+export function reduceGraph(m: GraphModel, e: GraphEvent): GraphModel {
+  switch (e.kind) {
+    case 'graph.start':
+      return {
+        ...m,
+        algo: e.algo,
+        state: setAt(m.state, e.source, 'marked'),
+        frontier: [e.source],
+      };
+    case 'graph.visit':
+      return {
+        ...m,
+        frontier: e.algo === 'bfs' ? m.frontier.slice(1) : m.frontier.slice(0, -1),
+        state: setAt(m.state, e.vertex, 'visited'),
+        order: [...m.order, e.vertex],
+        current: e.vertex,
+        vertexVisits: m.vertexVisits + 1,
+      };
+    case 'graph.examine': {
+      const k = m.incident[e.from][e.slot];
+      return {
+        ...m,
+        examined: setAt(m.examined, e.from, e.slot + 1),
+        edgeHits: setAt(m.edgeHits, k, m.edgeHits[k] + 1),
+        discoveredBy: e.discovers ? setAt(m.discoveredBy, e.to, k) : m.discoveredBy,
+        edgeVisits: m.edgeVisits + 1,
+      };
+    }
+    case 'graph.mark':
+      return { ...m, state: setAt(m.state, e.vertex, 'marked'), frontier: [...m.frontier, e.vertex] };
+    case 'graph.done':
+      return { ...m, done: true };
+  }
+}
+
+export function foldGraph(initial: GraphModel, events: readonly GraphEvent[]): GraphModel {
+  return events.reduce(reduceGraph, initial);
 }

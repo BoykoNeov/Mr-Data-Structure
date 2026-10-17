@@ -10,3 +10,6 @@ bench-engine/pkg/
 
 # Claude Code harness state (lock files only — settings/agents stay trackable)
 .claude/*.lock
+
+# Agent worktrees (isolated per-agent checkouts; never commit)
+.claude/worktrees/

@@ -65,6 +65,35 @@ try {
   if (meta) {
     want('compare meta published (uniform default dataset)', meta.order && meta.order.kind === 'uniform');
     want('default dataset reads as the random shape', meta.shape === 'random');
+    // Probe mix (docs/PLAN.md §6.3; src/bench/probeMix.ts): every search slope band in this
+    // gate was calibrated on the fixed 64 present + 64 absent workload. The mix is now a
+    // user control, so assert the default run actually measured that workload — a changed
+    // default would otherwise move every search constant with no failing check to say why.
+    const pm = meta.probeMix;
+    want(
+      `default run measured the calibrated probe mix (${pm ? `${pm.present} + ${pm.absent}` : 'none reported'}; want 64 + 64)`,
+      pm && pm.presentFraction === 0.5 && pm.present === 64 && pm.absent === 64,
+    );
+  }
+  if (proof) {
+    // Stored size next to input size (METHODOLOGY §4 hurdle 8). The default uniform dataset
+    // draws integers *with replacement* from [0, n], so at the top of the sweep a set holds
+    // ~63% of its input while a multiset holds all of it. Deterministic (seeded data, `len()`
+    // read back from the built structure) — no clock involved.
+    const arrStored = proof.find((p) => p.structure === 'array');
+    const hsStored = proof.find((p) => p.structure === 'hashset');
+    if (arrStored && hsStored) {
+      want(
+        `array holds every input key at the top of the sweep (${arrStored.lastStoredN} of ${arrStored.lastN})`,
+        arrStored.lastStoredN === arrStored.lastN,
+      );
+      want(
+        `hash set holds only the distinct keys (${hsStored.lastStoredN} of ${hsStored.lastN}; want 50–75%)`,
+        typeof hsStored.lastStoredN === 'number' &&
+          hsStored.lastStoredN > 0.5 * hsStored.lastN &&
+          hsStored.lastStoredN < 0.75 * hsStored.lastN,
+      );
+    }
   }
   if (proof) {
     want(
@@ -505,6 +534,11 @@ try {
     want(
       `string run reports its mean key size (${(strMeta.meanKeyBytes ?? 0).toFixed(1)} bytes > 0)`,
       strMeta.meanKeyBytes > 0,
+    );
+    // The string slope bands were calibrated on the same 64 + 64 default (probeMix.ts).
+    want(
+      'string run measured the calibrated probe mix (64 + 64)',
+      strMeta.probeMix && strMeta.probeMix.present === 64 && strMeta.probeMix.absent === 64,
     );
   }
   if (strSearch) {

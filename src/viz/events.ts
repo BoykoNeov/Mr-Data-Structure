@@ -728,6 +728,84 @@ export type SkipListEvent =
   | SkipRemove
   | SkipResult;
 
+// ── Graph (docs/PLAN.md §8, "Specialized") ──────────────────────────────────
+//
+// An undirected adjacency-list **multigraph** over dense vertex ids `0..V` (see
+// `src/structures/graph.ts`). Its op set is not insert/search/delete but a
+// whole-graph **traversal** from a source — BFS (a queue, mark-on-enqueue) or DFS
+// (an explicit stack, **mark-on-push**, never recursion). An adjacency entry is
+// addressed by `(from, slot)`: entry `slot` of `adj[from]`. The graph is static
+// for the length of a traversal, so an address is stable across the whole stream.
+//
+// **Cost metric — vertex-visits + edge-visits (docs/PLAN.md §8):** one per vertex
+// taken off the frontier (`graph.visit`) and one per adjacency entry examined
+// (`graph.examine`), whether or not it leads anywhere new. Those are exactly the two
+// counter increments in both twins, so `countCostEvents(stream) === ops` — which is
+// `V + 2E` on a connected graph and the reached component's `V′ + 2E′` otherwise —
+// pinned against the Rust corpus (`conformance/corpus-graph.txt`) in
+// `src/viz/trace.graph.test.ts`. Marking a vertex and putting it on the frontier
+// (`graph.start` for the source, `graph.mark` for every later discovery) costs
+// nothing: it is a consequence of an examine already counted.
+//
+// **The mark is its own frame on purpose.** DFS marks a vertex when it is *pushed*,
+// not when it is popped — so a vertex can be marked and still waiting on the stack,
+// and a later edge to it is skipped even though it has not been visited yet. That is
+// the real rule both twins run (and the corpus's `dfs_variant` case pins), and it is
+// not textbook recursion; a separate `graph.mark` step is what makes it watchable.
+
+/** Which traversal a stream belongs to — it decides which end of the frontier a
+ * `graph.visit` takes from (the queue's front for BFS, the stack's top for DFS). */
+export type GraphAlgo = 'bfs' | 'dfs';
+
+/** Begin a traversal: mark `source` and put it on the (empty) frontier. Not a cost
+ * event. Emitted only for a valid source — an out-of-range source (or an empty
+ * graph) produces a stream with no start, no visit, and `ops: 0`. */
+export interface GraphStart {
+  readonly kind: 'graph.start';
+  readonly algo: GraphAlgo;
+  readonly source: number;
+}
+
+/** Take `vertex` off the frontier (dequeue for BFS, pop for DFS) and process it —
+ * one **vertex-visit**, a cost event. The vertex is always the frontier's out-end
+ * (front of the queue / top of the stack); the fold relies on that and
+ * `model.test.ts` pins it at every visit. */
+export interface GraphVisit {
+  readonly kind: 'graph.visit';
+  readonly algo: GraphAlgo;
+  readonly vertex: number;
+}
+
+/** Examine adjacency entry `slot` of `adj[from]`, whose neighbour is `to` — one
+ * **edge-visit**, a cost event, paid whether or not it discovers anything.
+ * `discovers` is true when `to` was not yet marked; the very next event is then the
+ * `graph.mark` that marks it and puts it on the frontier. When it is false, `to` is
+ * already marked — in DFS that can mean "still waiting on the stack", not "visited".
+ * A self-loop's two entries in `adj[from]` are examined as two separate events. */
+export interface GraphExamine {
+  readonly kind: 'graph.examine';
+  readonly from: number;
+  readonly slot: number;
+  readonly to: number;
+  readonly discovers: boolean;
+}
+
+/** Mark `vertex` and put it on the frontier (enqueue / push) — the step the examine
+ * just before it decided. Not a cost event. This is where mark-on-push happens. */
+export interface GraphMark {
+  readonly kind: 'graph.mark';
+  readonly vertex: number;
+}
+
+/** Terminal marker: the frontier is empty. `reached` is how many vertices were
+ * visited (the source's connected component). Not a cost event. */
+export interface GraphDone {
+  readonly kind: 'graph.done';
+  readonly reached: number;
+}
+
+export type GraphEvent = GraphStart | GraphVisit | GraphExamine | GraphMark | GraphDone;
+
 // ── Union + cost tagging ────────────────────────────────────────────────────
 
 export type VizEvent =
@@ -739,7 +817,8 @@ export type VizEvent =
   | AvlEvent
   | HeapEvent
   | TrieEvent
-  | SkipListEvent;
+  | SkipListEvent
+  | GraphEvent;
 export type VizEventKind = VizEvent['kind'];
 
 /** Sink the teaching impls emit into. Typed per family at the call site
@@ -781,6 +860,12 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   // nothing; the structural events (insert / remove) carry no comparison. So the
   // gate holds for search, insert, AND delete.
   'skip.inspect',
+  // Graph: vertex-visits + edge-visits (docs/PLAN.md §8) — one per vertex taken off
+  // the frontier, one per adjacency entry examined. Starting, marking and finishing
+  // are free, so the gate holds for BFS and DFS alike (and both total V + 2E on a
+  // connected graph).
+  'graph.visit',
+  'graph.examine',
 ]);
 
 /** Count the cost-bearing events in a stream (the op-count it represents). */

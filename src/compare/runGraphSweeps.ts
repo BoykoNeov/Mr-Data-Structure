@@ -338,6 +338,10 @@ function sweepProofOf(v: GraphSeriesView): SweepProof {
     r2: v.fit.r2,
     firstNanos: pts[0].nanosPerOp,
     lastNanos: pts[pts.length - 1].nanosPerOp,
+    // The x of the last point — the reached component's V' + 2E', not a key count.
+    lastN: pts[pts.length - 1].n,
+    // A graph stores edges, not keys: there is no stored-key count to report.
+    lastStoredN: null,
   };
 }
 
