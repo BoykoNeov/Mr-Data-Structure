@@ -41,7 +41,7 @@ try {
   // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
   // is set last, after the search sweep and the array/hashset, BST, AVL and skip-list
   // mutation sweeps — or until the app reports an error. Generous timeout: the sweeps do
-  // real timed work, and there are six search series and seven mutation sweeps.
+  // real timed work, and there are seven search series and seven mutation sweeps.
   await page.waitForFunction(
     () =>
       window.__heapMutationProof !== undefined ||
@@ -105,10 +105,11 @@ try {
     const hashset = proof.find((p) => p.structure === 'hashset');
     const heapSearch = proof.find((p) => p.structure === 'heap');
     const skipSearch = proof.find((p) => p.structure === 'skiplist');
+    const hashoaSearch = proof.find((p) => p.structure === 'hashoa');
 
     want(
-      'six search series measured',
-      proof.length === 6 && array && ll && sarrSearch && hashset && heapSearch && skipSearch,
+      'seven search series measured',
+      proof.length === 7 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && hashoaSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -170,6 +171,23 @@ try {
         skipSearch.slope < array.slope,
       );
     }
+    // Open-addressing hash set (docs/METHODOLOGY.md §2.8) — UNRUN at handoff. Same hash and
+    // table sizes as the chaining set, so it is flat for the same reason; but its probe count
+    // saws with the load factor more loudly than chaining's (2.0 … 3.9 probes per query
+    // across this ladder, clock-free), so the fitter's *label* can wobble and only the slope
+    // band and a loose rise limit are asserted — the band the sorted array and skip list use.
+    if (hashoaSearch && array) {
+      const ratio = hashoaSearch.lastNanos / hashoaSearch.firstNanos;
+      want(
+        `open-addressing search flat (slope ${hashoaSearch.slope.toFixed(2)} < 0.4)`,
+        hashoaSearch.slope < 0.4,
+      );
+      want(`open-addressing search stays flat (ratio ${ratio.toFixed(1)} < 10)`, ratio < 10);
+      want(
+        `open-addressing search flatter than array (${hashoaSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
+        hashoaSearch.slope < array.slope,
+      );
+    }
   }
 
   // Mutation (docs/PLAN.md §6.3): the real clock is too noisy for absolute-ns
@@ -183,7 +201,7 @@ try {
     const aIns = find('array', 'insert');
     const aDel = find('array', 'delete');
 
-    want('twelve mutation series measured (four flat structures)', mutation.length === 12);
+    want('fifteen mutation series measured (five flat structures)', mutation.length === 15);
     if (aChurn) {
       const ratio = aChurn.lastNanos / aChurn.firstNanos;
       want(`array churn rises (slope ${aChurn.slope.toFixed(2)} > 0.6)`, aChurn.slope > 0.6);
@@ -191,6 +209,24 @@ try {
     }
     if (hChurn) {
       want(`hashset churn stays flat (slope ${hChurn.slope.toFixed(2)} < 0.4)`, hChurn.slope < 0.4);
+    }
+    // Open-addressing churn (docs/METHODOLOGY.md §2.8) — UNRUN at handoff. The tombstone
+    // policy (reuse, count toward the load, prime the churn block) is what keeps this flat;
+    // a naive policy drifts with the rep count the batcher picks. Two-sided like the linked
+    // list's band, because a flat series' fitted slope noise is signed, and loose (0.6, the
+    // tree/heap churn threshold) because even the 16-key churn block is a sample of clusters.
+    const oChurn = find('hashoa', 'churn');
+    if (oChurn) {
+      want(
+        `open-addressing churn stays flat (|slope| ${Math.abs(oChurn.slope).toFixed(2)} < 0.6)`,
+        Math.abs(oChurn.slope) < 0.6,
+      );
+    }
+    if (oChurn && aChurn) {
+      want(
+        `open-addressing churn flatter than array churn (${oChurn.slope.toFixed(2)} < ${aChurn.slope.toFixed(2)})`,
+        oChurn.slope < aChurn.slope,
+      );
     }
     if (aIns && aDel) {
       want(

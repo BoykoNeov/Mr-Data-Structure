@@ -10,6 +10,7 @@ import init, {
   LinkedListF64,
   MinHeapF64,
   SkipListF64,
+  HashSetOaF64,
   ArrayStr,
   HashSetStr,
   TrieStr,
@@ -457,6 +458,13 @@ const api = {
     const hashset = measureSweep(sizes, searchRunnerFactory(HashSetF64, keys, mix), now, opts);
     const heap = measureSweep(sizes, searchRunnerFactory(MinHeapF64, keys, mix), now, opts);
     const skiplist = measureSweep(sizes, searchRunnerFactory(SkipListF64, keys, mix), now, opts);
+    // The **open-addressing hash set** (docs/METHODOLOGY.md §2.8) shares the chaining set's
+    // hash, start size, threshold and doubling, so at every n the two tables have the same
+    // capacity and load factor and only the collision strategy differs. It probes more —
+    // primary clustering — and its probe count saws with α more loudly than chaining's,
+    // with no trend in n. Its misses are its dear query (Knuth: ½(1 + 1/(1−α)²)), so a
+    // misses-heavy mix raises its constant more than the chaining set's.
+    const hashoa = measureSweep(sizes, searchRunnerFactory(HashSetOaF64, keys, mix), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
@@ -494,6 +502,7 @@ const api = {
       { structure: 'hashset', op: 'search', points: hashset },
       { structure: 'heap', op: 'search', points: heap },
       { structure: 'skiplist', op: 'search', points: skiplist },
+      { structure: 'hashoa', op: 'search', points: hashoa },
     ];
   },
   /**
@@ -534,6 +543,11 @@ const api = {
       ['hashset', HashSetF64 as unknown as MutationStructCtor, aboveMax],
       ['sarr', SortedArrayF64 as unknown as MutationStructCtor, belowMin],
       ['ll', LinkedListF64 as unknown as MutationStructCtor, aboveMax],
+      // Open addressing: `max + 1` as for the chaining set — a hash structure has no key
+      // position to bias. But `set_churn_key` expands it into a primed *block* of
+      // `max + 1 …` keys (docs/METHODOLOGY.md §2.8): one key under linear probing samples
+      // one cluster, and that alone made the curve jump several-fold between sweep points.
+      ['hashoa', HashSetOaF64 as unknown as MutationStructCtor, aboveMax],
     ];
     const out: SweepSeries[] = [];
     for (const [structure, Ctor, pickKey] of structures) {

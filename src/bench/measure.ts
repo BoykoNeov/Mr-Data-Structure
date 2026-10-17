@@ -35,6 +35,11 @@
  * `skiplist` is Phase 6's numeric addition: the ordered structure that reaches
  * O(log n) with no balancing at all, its node heights derived from each key's hash
  * rather than a coin (docs/PLAN.md §8 "Specialized").
+ *
+ * `hashoa` is the second hash set — open addressing with linear probing — held to the
+ * chaining `hashset`'s hash, start size, threshold and doubling so that only the
+ * collision strategy differs between the two curves (docs/PLAN.md §8, §13;
+ * docs/METHODOLOGY.md §2.8).
  */
 export type StructureId =
   | 'array'
@@ -45,6 +50,7 @@ export type StructureId =
   | 'll'
   | 'heap'
   | 'skiplist'
+  | 'hashoa'
   | 'arraystr'
   | 'hashsetstr'
   | 'triestr';

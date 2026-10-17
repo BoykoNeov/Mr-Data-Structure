@@ -21,4 +21,5 @@ export { BstF64, type BstShape } from './bst';
 export { AvlF64, type AvlShape } from './avl';
 export { MinHeapF64 } from './heap';
 export { SkipListF64, towerHeight, MAX_LEVEL as SKIP_MAX_LEVEL } from './skipList';
+export { HashSetOaF64, churnBlock as hashOaChurnBlock } from './hashSetOa';
 export { mixF64, mixStr } from './mix';

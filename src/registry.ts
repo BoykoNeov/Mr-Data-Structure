@@ -206,6 +206,35 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     shapeSensitive: false,
   },
   /**
+   * The **open-addressing hash set** (docs/PLAN.md §8 "Hashing", §13; docs/METHODOLOGY.md
+   * §2.8) — linear probing with tombstone delete, the second answer to "where does a
+   * colliding key go". It shares the chaining set's hash (`mix_f64`), start size, 0.75
+   * threshold and doubling, so at every n both tables have the same capacity and load
+   * factor and the pair of lines isolates the collision strategy.
+   *
+   * **The light pair of the chaining set's blue, on purpose**: the same structure family
+   * and the same classes, read as a comparison of *mechanisms*. Its cost metric is spelled
+   * to line up with the chaining set's unit for unit — one per occupied slot examined, the
+   * empty slot that ends a walk free, as the end of a chain is free — so on the op-count
+   * signal the gap between the two lines is primary clustering and nothing else.
+   *
+   * Classes are the chaining set's: O(1) average, O(n) worst (every key in one run).
+   * `shapeSensitive: false` — the hash scatters any input order; what can degrade it is a
+   * key *distribution* that collides in the hash, which a flag about order cannot express.
+   */
+  hashoa: {
+    id: 'hashoa',
+    label: 'hash set (open addressing)',
+    family: 'hashing',
+    keyType: 'number',
+    color: '#aec7e8',
+    costMetric: 'hashes + slot probes',
+    mechanism: 'hashes to a slot of one flat table and steps to the next slot on a collision (linear probing); delete leaves a tombstone',
+    average: { search: O1, insert: O1, delete: O1, churn: O1 },
+    worst: { search: ON, insert: ON, delete: ON, churn: ON },
+    shapeSensitive: false,
+  },
+  /**
    * The **string-key twins** (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5). Same
    * algorithms as `array` / `hashset`, same classes *in n* — and a second cost axis the
    * numeric structures do not have: the **key length L**. Every class below is in n only.
@@ -293,6 +322,7 @@ export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.avl,
   REGISTRY.heap,
   REGISTRY.skiplist,
+  REGISTRY.hashoa,
 ];
 
 /**

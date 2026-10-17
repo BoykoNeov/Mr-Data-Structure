@@ -59,6 +59,9 @@ function fakeEngine(log: string[]): BenchEngine {
         // The skip list shares the sorted array's O(log n) search class and, unlike it,
         // keeps a sub-linear add/remove — the pair the shared charts are meant to contrast.
         series('skiplist', 'search', sizes, (n) => Math.log2(n)),
+        // The open-addressing hash set: flat like the chaining one, higher constant
+        // (primary clustering) — the same class by a different collision strategy.
+        series('hashoa', 'search', sizes, () => 5),
       ];
     },
     runMutationSweep: async (_k, sizes) => {
@@ -72,6 +75,7 @@ function fakeEngine(log: string[]): BenchEngine {
         // canonical delete-by-value in the teardown is O(n). The two series disagree on
         // *class*, so the fake reproduces that here rather than a single cost shape.
         ...mutTrio('ll', sizes, () => 1, (n) => n),
+        ...mutTrio('hashoa', sizes, () => 4),
       ];
     },
     runBstMutationSweep: async (_k, sizes) => {
@@ -128,7 +132,7 @@ describe('runAllSweeps', () => {
     expect(statuses).toHaveLength(6);
 
     expect(r.search.map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist',
+      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'hashoa',
     ]);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
@@ -138,6 +142,7 @@ describe('runAllSweeps', () => {
       'hashset.churn', 'hashset.insert', 'hashset.delete',
       'sarr.churn', 'sarr.insert', 'sarr.delete',
       'll.churn', 'll.insert', 'll.delete',
+      'hashoa.churn', 'hashoa.insert', 'hashoa.delete',
     ]);
     // Regime 7 survives the pipeline: the list's churn and its delete land in different
     // classes, which is exactly what the UI has to show side by side.
@@ -145,6 +150,9 @@ describe('runAllSweeps', () => {
     expect(byKey('ll.churn').fit.best).toBe('O(1)');
     expect(byKey('ll.delete').fit.best).toBe('O(n)');
     expect(byKey('sarr.churn').fit.best).toBe('O(n)');
+    // The open-addressing set rides the flat-structure bucket, so its churn lands on the
+    // shared churn chart with no new engine call (docs/METHODOLOGY.md §2.8).
+    expect(byKey('hashoa.churn').fit.best).toBe('O(1)');
     expect(r.trees.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'bst.churn', 'bst.insert', 'bst.delete', 'avl.churn', 'avl.insert', 'avl.delete',
     ]);
@@ -165,7 +173,7 @@ describe('runAllSweeps', () => {
     // Risk R6 at the seam: the shared search chart sees only canonical structures, and
     // the heap's scan is available separately for its own section.
     expect(canonicalSearch(r).map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'skiplist',
+      'array', 'll', 'sarr', 'hashset', 'skiplist', 'hashoa',
     ]);
     expect(heapSearch(r).map((v) => v.series.structure)).toEqual(['heap']);
 

@@ -291,7 +291,7 @@ export async function runAllSweeps(
   const search = (await engine.runSweep(keyBuffer(data), searchSizes, SEARCH_OPTS, mix)).map((s) => toView(s));
   if (win) win.__sweepProof = toProof(search);
 
-  onStatus('running mutation sweep (array, hash set, sorted array, linked list)…');
+  onStatus('running mutation sweep (array, hash set, sorted array, linked list, open-addressing hash set)…');
   const mutation = (await engine.runMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
   if (win) win.__mutationProof = toProof(mutation);
 
