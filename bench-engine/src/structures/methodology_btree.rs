@@ -7,7 +7,7 @@
 //! What these pin, in one line each:
 //! - the B-tree makes about **as many comparisons** as the AVL per search, and about a
 //!   **quarter of the node-visits** — the mechanism the op-count chart cannot show;
-//! - its churn and its finite-difference sum agree **tightly** — the tenth regime, and the
+//! - its churn and its finite-difference sum agree **tightly** — the eleventh regime, and the
 //!   first tree whose churn probe is not a cheap spine, because every leaf is at one depth;
 //! - it keeps O(log n) on the reverse-sorted input that makes a naive BST an O(n) chain;
 //! - sorted input builds **half-full** nodes — more of them, sometimes one level deeper — a
@@ -103,7 +103,7 @@ fn btree_matches_the_avl_on_comparisons_but_takes_a_quarter_of_the_node_visits()
     }
 }
 
-/// **The tenth churn-vs-finite-difference regime: tight, for a tree.** Every other tree's
+/// **The eleventh churn-vs-finite-difference regime: tight, for a tree.** Every other tree's
 /// churn probe rides a spine whose depth differs from the average key's (METHODOLOGY §4.1):
 /// the BST's and the skip list's are cheaper, so their FD sums overshoot churn. A B-tree has
 /// no spine to be cheap on — all leaves sit at one depth, so `min − 1` and `max + 1` walk the

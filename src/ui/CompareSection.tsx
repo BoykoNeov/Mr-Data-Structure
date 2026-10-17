@@ -397,8 +397,9 @@ export function CompareSection() {
         <>
       <h3 style={h3}>Search — the cost of finding a key</h3>
       <p style={{ color: '#555', marginTop: 0 }}>
-        Six structures look up a key six different ways: the unsorted array scans from the front, the
-        linked list walks node by node, the sorted array binary-searches, the skip list drops down a tower of
+        Nine structures look up a key eight different ways: the unsorted array scans from the front, the two
+        linked lists walk node by node (the doubly list’s back-pointer never helps a lookup, so they share a
+        way), the sorted array binary-searches, the skip list drops down a tower of
         ever-sparser express lanes, the red-black tree descends a tree it keeps balanced, the B-tree
         binary-searches inside a few wide nodes, the hash set jumps straight to a bucket and walks its chain,
         and the open-addressing hash set jumps straight to a slot and steps along the table past any collisions.
@@ -556,7 +557,7 @@ export function CompareSection() {
                 the <em>op-count</em> signal; on <em>wall-clock</em> a single append is so cheap the timing is
                 mostly noise (watch the low R² and the wide error bars) — a live reminder of <em>why</em> there
                 are two signals. The two methods agree only in complexity class, and not always even then —
-                the eight regimes are tabulated in docs/METHODOLOGY.md §2.
+                the twelve regimes are tabulated in docs/METHODOLOGY.md §2.
               </p>
               <ul style={{ marginTop: 4 }}>
                 {split.map((v) => <FitRow key={`${v.series.structure}-${v.series.op}`} v={v} />)}

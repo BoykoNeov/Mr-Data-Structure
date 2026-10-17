@@ -1300,7 +1300,7 @@ mod methodology {
         assert!(swing(&oa_pts) < 2.5, "but stays bounded: {oa_pts:?}");
     }
 
-    /// The **tenth churn-vs-finite-difference regime**, and the one whose overshoot is the
+    /// The **twelfth churn-vs-finite-difference regime**, and the one whose overshoot is the
     /// tombstone policy rather than a key position. Churn's insert is a *miss* walk, and its
     /// delete a hit — the same two walks the finite-difference build (every insert is a new
     /// key) and teardown (every delete finds its key) average. So on a fresh table the two

@@ -150,9 +150,17 @@ try {
     // Its node is 24 bytes against 16, so the same walk may legitimately read slower; the
     // equality claim is an op-count claim and is pinned clock-free in Rust
     // (`structures::methodology::doubly_linked_list_buys_nothing_on_the_canonical_op_set`).
+    //
+    // The *label* is held to the string array's rule, not the singly list's, for the string
+    // array's reason: a bigger node walked further each step drifts the tail slope a little
+    // above 1, and the fitter can read that as the neighbouring class. First real run: slope
+    // 1.01 ± 0.006, tail 1.03, labelled O(n log n) — the band and the rise are the claim.
     if (dllSearch) {
       const ratio = dllSearch.lastNanos / dllSearch.firstNanos;
-      want('doubly-linked-list search labelled O(n)', dllSearch.best === 'O(n)');
+      want(
+        `doubly-linked-list search fitted at or above linear (${dllSearch.best})`,
+        dllSearch.best === 'O(n)' || dllSearch.best === 'O(n log n)',
+      );
       want('doubly-linked-list search slope ~1 (0.7..1.4)', dllSearch.slope >= 0.7 && dllSearch.slope <= 1.4);
       want(`doubly-linked-list search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
     }
