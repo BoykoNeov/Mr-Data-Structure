@@ -16,6 +16,7 @@ import init, {
   DoublyLinkedListF64,
   RbtF64,
   GraphAdj,
+  BTreeF64,
 } from '../../bench-engine/pkg/bench_engine.js';
 import { measureGraphs, type GraphInput, type GraphTraversalMeasure } from './graphBench';
 import { encodeStringKeys } from '../data/marshal';
@@ -469,6 +470,7 @@ const api = {
     // there to make.
     const dll = measureSweep(sizes, searchRunnerFactory(DoublyLinkedListF64, keys, mix), now, opts);
     const rbt = measureSweep(sizes, searchRunnerFactory(RbtF64, keys, mix), now, opts);
+    const btree = measureSweep(sizes, searchRunnerFactory(BTreeF64, keys, mix), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
@@ -515,6 +517,18 @@ const api = {
       { structure: 'skiplist', op: 'search', points: skiplist },
       { structure: 'dll', op: 'search', points: dll },
       { structure: 'rbt', op: 'search', points: rbt },
+      // The **B-tree** (docs/METHODOLOGY.md §2.10): the first tree on this chart, and the
+      // sorted array's nearest neighbour on it — both make ≈ log₂ n comparisons per lookup
+      // (pinned clock-free in `structures::methodology_btree`), so on the op-count signal
+      // the two lines should nearly coincide. What differs is *where* the comparisons
+      // happen: a B-tree search is one dependent hop per level (3–4 levels at these sizes)
+      // with a short binary search inside a contiguous 31-key node, where the sorted
+      // array's early probes are each a jump across the whole array. Whether the clock
+      // separates the two is a measurement, not a claim this code makes. The shared absent
+      // probes (`max + 1 …`) cost a B-tree within one comparison of a present key — every
+      // search walks to a leaf; an above-max probe only skips the final equality test — so,
+      // unlike the skip list, this line carries no probe-set bias at any mix.
+      { structure: 'btree', op: 'search', points: btree },
     ];
   },
   /**
@@ -689,6 +703,43 @@ const api = {
       opts,
     );
     return [{ structure: 'skiplist', op: 'churn', points: churn }, fd.insert, fd.delete];
+  },
+  /**
+   * Run the §6.3 size-mutating measurement for the **B-tree** across `sizes`: churn primary
+   * plus the finite-difference split, three series tagged `'btree'`, on the trees'
+   * **two-key** churn runner (docs/METHODOLOGY.md §4.1) so its curve stays comparable with
+   * the BST's and the AVL's.
+   *
+   * Two things are different here, both checked in Rust rather than assumed. **Neither
+   * churn end is a cheap spine**: every B-tree leaf sits at the same depth, so `min − 1` and
+   * `max + 1` walk the full height like any stored key, and churn agrees *tightly* with the
+   * finite-difference sum (`methodology_btree::btree_churn_and_finite_differences_agree_tightly`)
+   * — the first tree for which it does. And **the pair settles**: the delete repairs only
+   * true underflow, so after a few warm-up pairs an insert+delete of an edge key splits,
+   * merges and allocates nothing
+   * (`btree::tests::churn_settles_into_zero_restructures_and_zero_allocation`). CLRS's
+   * single-pass delete would split and re-merge a node on every pair, and this curve would
+   * then be measuring the allocator. `measure.ts` reads the op-count only after the warm-up
+   * and timed batches, i.e. in the settled state. `keys` is transferred in by the caller.
+   */
+  async runBTreeMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const Ctor = BTreeF64 as unknown as TreeMutationStructCtor;
+    const churn = measureSweep(sizes, treeChurnRunnerFactory(Ctor, keys), now, opts);
+    const fd = measureMutationFd(
+      'btree',
+      sizes,
+      buildRunnerFactory(Ctor, keys),
+      buildTeardownRunnerFactory(Ctor, keys),
+      now,
+      opts,
+    );
+    return [{ structure: 'btree', op: 'churn', points: churn }, fd.insert, fd.delete];
   },
   /**
    * Run the §6.3 size-mutating measurement for the **min-heap** across `sizes` — the churn

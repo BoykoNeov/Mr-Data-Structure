@@ -16,7 +16,7 @@ import type { StructureId } from './bench/measure';
  */
 describe('structure registry', () => {
   it('covers every StructureId exactly once, with a distinct colour each', () => {
-    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll', 'rbt'];
+    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll', 'rbt', 'btree'];
     for (const id of ids) expect(REGISTRY[id].id).toBe(id);
     // STRUCTURES is the *numeric* catalogue — the one the shared charts draw from.
     expect(STRUCTURES.map((s) => s.id).sort()).toEqual([...ids].sort());
@@ -96,6 +96,26 @@ describe('structure registry', () => {
     // Same three operations as the array and the trees, so it shares their charts.
     expect(isCanonical('skiplist')).toBe(true);
     expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('skiplist');
+  });
+
+  it('pins the B-tree at O(log n) average and worst, order-insensitive, on the shared charts', () => {
+    // Balanced by construction (it only grows at the root), so no input order changes the
+    // class — sorted input moves only the constant (half-full nodes), which is stated
+    // beside the chart, not encoded here (docs/METHODOLOGY.md §2.10).
+    for (const op of ['search', 'insert', 'delete', 'churn'] as const) {
+      expect(theoreticalClass('btree', op)).toBe('O(log n)');
+      expect(theoreticalClass('btree', op, 'sorted')).toBe('O(log n)');
+      expect(REGISTRY.btree.worst[op]).toBe('O(log n)');
+    }
+    expect(REGISTRY.btree.shapeSensitive).toBe(false);
+    expect(REGISTRY.btree.family).toBe('tree');
+    // The split/merge/borrow events are part of the declared cost, as rotations are the AVL's.
+    expect(REGISTRY.btree.costMetric).toMatch(/comparisons/);
+    expect(REGISTRY.btree.costMetric).toMatch(/split/);
+    // The light pair of the BST's purple — its own hue, distinct from every other numeric one.
+    expect(REGISTRY.btree.color).toBe('#c5b0d5');
+    expect(isCanonical('btree')).toBe(true);
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('btree');
   });
 
   it('pins the §8 search classes: O(n) scan/walk, O(log n) binary search, O(1) hash', () => {

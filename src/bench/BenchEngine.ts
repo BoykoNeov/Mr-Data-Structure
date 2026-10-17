@@ -102,6 +102,19 @@ export interface BenchEngine {
   ): Promise<SweepSeries[]>;
 
   /**
+   * Measure the size-mutating ops for the **B-tree** bench twin across a size sweep
+   * (docs/PLAN.md §6.3, §8 trees; docs/METHODOLOGY.md §2.10) — three {@link SweepSeries}
+   * (`churn`, `insert`, `delete`) tagged `'btree'`, on the trees' **two-key** churn recipe.
+   * A B-tree is balanced by construction (it only grows at the root), so no input order
+   * degenerates it. As with the other sweeps, the engine may transfer (consume) `keys`.
+   */
+  runBTreeMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
+  /**
    * Measure the size-mutating ops for the **min-heap** bench twin across a size sweep
    * (docs/PLAN.md §6.3, §8 trees/heaps) — three {@link SweepSeries} (`churn`, `insert`,
    * `delete`) tagged `'heap'`. Separate from the tree sweeps because the heap's **op set

@@ -56,6 +56,7 @@
 
 pub mod avl;
 pub mod bst;
+pub mod btree;
 pub mod dyn_array;
 pub mod dyn_array_str;
 pub mod graph;
@@ -73,6 +74,10 @@ pub mod rbt;
 mod conformance;
 #[cfg(test)]
 mod conformance_rbt;
+#[cfg(test)]
+mod conformance_btree;
+#[cfg(test)]
+mod methodology_btree;
 
 /// Decode the first `n` keys of an offsets+UTF-8-bytes marshal buffer
 /// (docs/PLAN.md §4.2) into owned `String`s. `offsets` has length `count + 1`

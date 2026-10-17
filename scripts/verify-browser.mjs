@@ -31,6 +31,8 @@ let revHeap = null;
 let revSkip = null;
 let rbt = null;
 let revRbt = null;
+let btree = null;
+let revBtree = null;
 let strSearch = null;
 let strMutation = null;
 let strMeta = null;
@@ -59,6 +61,7 @@ try {
   heap = await page.evaluate(() => window.__heapMutationProof ?? null);
   skip = await page.evaluate(() => window.__skipMutationProof ?? null);
   rbt = await page.evaluate(() => window.__rbtMutationProof ?? null);
+  btree = await page.evaluate(() => window.__btreeMutationProof ?? null);
   meta = await page.evaluate(() => window.__compareMeta ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
@@ -111,10 +114,10 @@ try {
     const skipSearch = proof.find((p) => p.structure === 'skiplist');
     const dllSearch = proof.find((p) => p.structure === 'dll');
     const rbtSearch = proof.find((p) => p.structure === 'rbt');
-
+    const btreeSearch = proof.find((p) => p.structure === 'btree');
     want(
-      'eight search series measured',
-      proof.length === 8 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch && rbtSearch,
+      'nine search series measured',
+      proof.length === 9 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch && rbtSearch && btreeSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -199,6 +202,23 @@ try {
       want(
         `red-black search flatter than array (${rbtSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
         rbtSearch.slope < array.slope,
+      );
+    }
+    // B-tree (docs/METHODOLOGY.md §2.10) — UNRUN when added. Class bands only, the same
+    // ones the sorted array and the skip list get: the fitter cannot separate log n from
+    // flat, so the label is not asserted. Deliberately **no** clock-advantage assertion
+    // against the sorted array: the B-tree's comparison count matches it (pinned clock-free
+    // in `structures::methodology_btree`), and whether its ~4 node hops beat the sorted
+    // array's scattered probes on this machine is the hypothesis being *measured*, logged
+    // below for reading, not a claim the gate makes.
+    if (btreeSearch && array) {
+      want(
+        `B-tree search sub-linear (slope ${btreeSearch.slope.toFixed(2)} < 0.4)`,
+        btreeSearch.slope < 0.4,
+      );
+      want(
+        `B-tree search flatter than array (${btreeSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
+        btreeSearch.slope < array.slope,
       );
     }
   }
@@ -439,6 +459,22 @@ try {
     }
   }
 
+  // B-tree mutation (docs/METHODOLOGY.md §2.10) — UNRUN when added. Two-key churn like the
+  // other trees'; it must stay sub-linear and near-flat. Settling (no split/merge per pair
+  // after warm-up) is pinned clock-free in Rust
+  // (`btree::tests::churn_settles_into_zero_restructures_and_zero_allocation`); a churn
+  // that split and re-merged every pair would still be O(log n) in class, so this check
+  // guards the class, not the settling.
+  if (btree) {
+    const bChurn = btree.find((m) => m.structure === 'btree' && m.op === 'churn');
+    want('three B-tree mutation series measured', btree.length === 3);
+    if (bChurn) {
+      const ratio = bChurn.lastNanos / bChurn.firstNanos;
+      want(`B-tree churn sub-linear (slope ${bChurn.slope.toFixed(2)} < 0.6)`, bChurn.slope < 0.6);
+      want(`B-tree churn stays near-flat (ratio ${ratio.toFixed(1)} < 6)`, ratio < 6);
+    }
+  }
+
   // Min-heap mutation (docs/PLAN.md §6.3, §8 trees/heaps): the churn primary here is
   // insert + **extract-min**, so it is read only against the heap's own split, never
   // against the structures above (risk R6). Two things the real clock can show that the
@@ -505,6 +541,7 @@ try {
     window.__avlMutationProof = undefined;
     window.__skipMutationProof = undefined;
     window.__rbtMutationProof = undefined;
+    window.__btreeMutationProof = undefined;
     window.__heapMutationProof = undefined;
   });
   await page.locator('select').first().selectOption('reverse-sorted');
@@ -522,6 +559,7 @@ try {
   revHeap = await page.evaluate(() => window.__heapMutationProof ?? null);
   revSkip = await page.evaluate(() => window.__skipMutationProof ?? null);
   revRbt = await page.evaluate(() => window.__rbtMutationProof ?? null);
+  revBtree = await page.evaluate(() => window.__btreeMutationProof ?? null);
   const revMeta = await page.evaluate(() => window.__compareMeta ?? null);
 
   want('reverse-sorted run measured', revMeta && revMeta.order.kind === 'reverse-sorted');
@@ -577,6 +615,21 @@ try {
     if (c) {
       want(
         `reverse-sorted red-black churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
+        c.slope < 0.6,
+      );
+    }
+  }
+
+  // The B-tree on the same reverse-sorted input — UNRUN when added. Balanced by
+  // construction (it grows only at the root), so it belongs on the sub-linear side with the
+  // AVL and the skip list, while the BST above reads O(n). Sorted input only moves its
+  // constant (half-full nodes). Pinned clock-free by
+  // `structures::methodology_btree::btree_keeps_its_class_on_the_input_that_degenerates_a_bst`.
+  if (revBtree) {
+    const c = revBtree.find((m) => m.op === 'churn');
+    if (c) {
+      want(
+        `reverse-sorted B-tree churn stays sub-linear (slope ${c.slope.toFixed(2)} < 0.6)`,
         c.slope < 0.6,
       );
     }
@@ -871,6 +924,34 @@ if (revBst) {
 if (revAvl) {
   console.log('--- avl mutation proof (reverse-sorted) ---');
   console.log(JSON.stringify(revAvl, null, 2));
+}
+if (btree) {
+  console.log('--- btree mutation proof ---');
+  console.log(JSON.stringify(btree, null, 2));
+}
+if (revBtree) {
+  console.log('--- btree mutation proof (reverse-sorted) ---');
+  console.log(JSON.stringify(revBtree, null, 2));
+}
+// The B-tree's clock hypothesis (docs/METHODOLOGY.md §2.10), printed for a human to read and
+// deliberately NOT asserted: equal comparisons, fewer pointer hops — does the clock see it?
+if (proof) {
+  const b = proof.find((p) => p.structure === 'btree');
+  const s = proof.find((p) => p.structure === 'sarr');
+  if (b && s) {
+    console.log(
+      `--- btree hypothesis (info only): search at top n, B-tree ${b.lastNanos.toFixed(1)} ns vs sorted array ${s.lastNanos.toFixed(1)} ns (ratio ${(b.lastNanos / s.lastNanos).toFixed(2)}) ---`,
+    );
+  }
+}
+if (btree && avl) {
+  const b = btree.find((m) => m.op === 'churn');
+  const a = avl.find((m) => m.op === 'churn');
+  if (b && a) {
+    console.log(
+      `--- btree hypothesis (info only): churn at top n, B-tree ${b.lastNanos.toFixed(1)} ns vs AVL ${a.lastNanos.toFixed(1)} ns (ratio ${(b.lastNanos / a.lastNanos).toFixed(2)}; confounded — the AVL allocates per pair) ---`,
+    );
+  }
 }
 if (strSearch) {
   console.log('--- string search proof ---');

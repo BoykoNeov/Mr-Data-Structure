@@ -111,6 +111,12 @@ export interface CompareResult {
    */
   readonly skiplist: readonly SeriesView[];
   /**
+   * churn + finite-difference insert/delete for the **B-tree** (docs/METHODOLOGY.md §2.10).
+   * Its own field rather than a member of {@link trees} so adding it changed no existing
+   * consumer of the BST/AVL pair; it lands on the same shared charts, as the skip list does.
+   */
+  readonly btree: readonly SeriesView[];
+  /**
    * churn + finite-difference insert/extract-min for the **min-heap**. Kept apart from
    * {@link trees} because the op set differs: `churn` here is insert + extract-min, so
    * these curves compare only against each other (docs/PLAN.md §4.1, §8, risk R6).
@@ -200,6 +206,7 @@ interface ProofWindow {
   __avlMutationProof?: SweepProof[];
   __skipMutationProof?: SweepProof[];
   __rbtMutationProof?: SweepProof[];
+  __btreeMutationProof?: SweepProof[];
   __heapMutationProof?: SweepProof[];
   /** The string run's mirrors; `__stringMutationProof` is set last (see {@link runStringSweeps}). */
   __stringSweepProof?: SweepProof[];
@@ -318,6 +325,9 @@ export async function runAllSweeps(
   onStatus('running red-black tree mutation sweep…');
   const rbt = (await engine.runRbtMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
   if (win) win.__rbtMutationProof = toProof(rbt);
+  onStatus('running B-tree mutation sweep…');
+  const btree = (await engine.runBTreeMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
+  if (win) win.__btreeMutationProof = toProof(btree);
 
   onStatus('running min-heap mutation sweep…');
   const heap = (await engine.runHeapMutationSweep(keyBuffer(data), mutationSizes, HEAP_OPTS)).map((s) => toView(s));
@@ -339,6 +349,7 @@ export async function runAllSweeps(
     mutation,
     trees: [...bst, ...avl, ...rbt],
     skiplist,
+    btree,
     heap,
     shape,
     searchSizes,

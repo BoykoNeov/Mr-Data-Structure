@@ -23,3 +23,4 @@ export { MinHeapF64 } from './heap';
 export { SkipListF64, towerHeight, MAX_LEVEL as SKIP_MAX_LEVEL } from './skipList';
 export { mixF64, mixStr } from './mix';
 export { RbtF64, type RbtShape, type RbtCost } from './rbt';
+export { BTreeF64, BTREE_MIN_DEGREE } from './btree';
