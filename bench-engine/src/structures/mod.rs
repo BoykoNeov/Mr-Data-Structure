@@ -28,9 +28,10 @@
 //! multiset with **binary-search** lookup (the O(log n) "missing middle" between the
 //! unsorted array's O(n) and the hash set's O(1)) and shift-based insert/delete (cost
 //! metric **comparisons + shifts**), pinned by `conformance/corpus-sarr.txt`.
-//! `linked_list::LinkedListF64` closes the Linear family — the bench twin of *both*
-//! `src/structures/linkedList.ts` teaching twins (singly and doubly are bench-identical
-//! under the **node-visit** cost metric), an index arena with O(1) head insert and O(n)
+//! `linked_list::LinkedListF64` closes the Linear family — the bench twin of the singly
+//! `src/structures/linkedList.ts` teaching twin (Phase 6 gave the doubly list its own,
+//! `doubly_linked_list::DoublyLinkedListF64`, to *measure* the op-count equality rather than
+//! claim it — METHODOLOGY §2.11), an index arena with O(1) head insert and O(n)
 //! search/delete, pinned by `conformance/corpus-ll.txt`. `heap::MinHeapF64` closes the
 //! Trees/heaps family — the bench twin of `src/structures/heap.ts`, an array-backed complete
 //! tree (cost metric **comparisons + swaps**) pinned by `conformance/corpus-heap.txt`. It is

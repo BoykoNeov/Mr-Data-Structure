@@ -70,7 +70,7 @@ try {
   // Session persistence (docs/PLAN.md §13, src/persist/): this gate runs in a fresh browser
   // context with empty storage, so the first run must be the default auto-run, not a restored
   // session — every band below was calibrated on that run. The note's wording is pinned in
-  // src/persist/SessionNote.test.ts. (Added UNRUN with the persistence slice.)
+  // src/persist/SessionNote.test.ts.
   want(
     'session: a fresh context restored nothing (the default auto-run ran)',
     text.includes('in this browser only') && !text.includes('Restored from this browser'),
@@ -210,7 +210,8 @@ try {
         skipSearch.slope < array.slope,
       );
     }
-    // Red-black tree (docs/PLAN.md §8 trees, §13): the one tree on the search chart. A
+    // Red-black tree (docs/PLAN.md §8 trees, §13): one of two trees on the search chart
+    // (the B-tree is the other). A
     // search is one root-to-leaf descent, so the curve is the tree's depth — sub-linear on
     // any order. Same band as the other sub-linear searches, label not asserted (§7.2).
     if (rbtSearch && array) {
@@ -223,7 +224,7 @@ try {
         rbtSearch.slope < array.slope,
       );
     }
-    // B-tree (docs/METHODOLOGY.md §2.10) — UNRUN when added. Class bands only, the same
+    // B-tree (docs/METHODOLOGY.md §2.10). Class bands only, the same
     // ones the sorted array and the skip list get: the fitter cannot separate log n from
     // flat, so the label is not asserted. Deliberately **no** clock-advantage assertion
     // against the sorted array: the B-tree's comparison count matches it (pinned clock-free
@@ -240,7 +241,7 @@ try {
         btreeSearch.slope < array.slope,
       );
     }
-    // Open-addressing hash set (docs/METHODOLOGY.md §2.8) — UNRUN at handoff. Same hash and
+    // Open-addressing hash set (docs/METHODOLOGY.md §2.8). Same hash and
     // table sizes as the chaining set, so it is flat for the same reason; but its probe count
     // saws with the load factor more loudly than chaining's (2.0 … 3.9 probes per query
     // across this ladder, clock-free), so the fitter's *label* can wobble and only the slope
@@ -279,7 +280,7 @@ try {
     if (hChurn) {
       want(`hashset churn stays flat (slope ${hChurn.slope.toFixed(2)} < 0.4)`, hChurn.slope < 0.4);
     }
-    // Open-addressing churn (docs/METHODOLOGY.md §2.8) — UNRUN at handoff. The tombstone
+    // Open-addressing churn (docs/METHODOLOGY.md §2.8). The tombstone
     // policy (reuse, count toward the load, prime the churn block) is what keeps this flat;
     // a naive policy drifts with the rep count the batcher picks. Two-sided like the linked
     // list's band, because a flat series' fitted slope noise is signed, and loose (0.6, the
@@ -513,7 +514,7 @@ try {
     }
   }
 
-  // B-tree mutation (docs/METHODOLOGY.md §2.10) — UNRUN when added. Two-key churn like the
+  // B-tree mutation (docs/METHODOLOGY.md §2.10). Two-key churn like the
   // other trees'; it must stay sub-linear and near-flat. Settling (no split/merge per pair
   // after warm-up) is pinned clock-free in Rust
   // (`btree::tests::churn_settles_into_zero_restructures_and_zero_allocation`); a churn
@@ -674,7 +675,7 @@ try {
     }
   }
 
-  // The B-tree on the same reverse-sorted input — UNRUN when added. Balanced by
+  // The B-tree on the same reverse-sorted input. Balanced by
   // construction (it grows only at the root), so it belongs on the sub-linear side with the
   // AVL and the skip list, while the BST above reads O(n). Sorted input only moves its
   // constant (half-full nodes). Pinned clock-free by
