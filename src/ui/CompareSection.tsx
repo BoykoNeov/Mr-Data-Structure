@@ -16,6 +16,7 @@ import { Callout, ChartGuide, ComplexityLadder } from './Explain';
 import { DatasetPicker, DEFAULT_PICKER, buildDataset, describeDataset } from './DatasetPicker';
 import { SweepChart, seriesLabel, type SeriesView, type Signal } from './SweepChart';
 import { SlopeChart } from './SlopeChart';
+import { BTreeChurnNote, BTreeSearchNote } from './BTreeNotes';
 import { download, downloadBlob, toCsv, toJson } from './export';
 import { plotCanvasOf, renderSheet, type ChartShot } from './png';
 
@@ -127,14 +128,14 @@ export function CompareSection() {
   const arrayScan = useMemo(() => search.filter((v) => v.series.structure === 'array'), [search]);
   const churn = useMemo(
     () =>
-      [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? [])]
+      [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? []), ...(result?.btree ?? [])]
         .filter((v) => v.series.op === 'churn')
         .map((v) => toView(v.series, signal)),
     [result, signal],
   );
   const split = useMemo(
     () =>
-      [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? [])]
+      [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? []), ...(result?.btree ?? [])]
         .filter((v) => v.series.op !== 'churn')
         .map((v) => toView(v.series, signal)),
     [result, signal],
@@ -348,9 +349,10 @@ export function CompareSection() {
         <>
       <h3 style={h3}>Search — the cost of finding a key</h3>
       <p style={{ color: '#555', marginTop: 0 }}>
-        Five structures look up a key five different ways: the unsorted array scans from the front, the
+        Six structures look up a key six different ways: the unsorted array scans from the front, the
         linked list walks node by node, the sorted array binary-searches, the skip list drops down a tower of
-        ever-sparser express lanes, and the hash set jumps straight to a bucket. (The min-heap is measured
+        ever-sparser express lanes, the B-tree binary-searches inside a few wide nodes, and the hash set
+        jumps straight to a bucket. (The min-heap is measured
         too, but it answers a different question and gets its own section below.)
       </p>
       {search.length > 0 && (
@@ -378,6 +380,7 @@ export function CompareSection() {
             structure’s textbook class scaled onto its points — where a solid line peels away from its dashed
             twin, the machine (cache, memory traffic) or the data is doing something the textbook doesn’t say.
           </Callout>
+          <BTreeSearchNote present={search.some((v) => v.series.structure === 'btree')} />
         </>
       )}
 
@@ -431,6 +434,8 @@ export function CompareSection() {
               </>
             )}
           </Callout>
+
+          <BTreeChurnNote present={churn.some((v) => v.series.structure === 'btree')} sorted={sortedNote} />
 
           <Callout title="The flat orange line is a trap — read it with the split below" tone="caveat">
             The linked list’s add/remove line sits flat at <strong>O(1)</strong>, right down with the hash set.

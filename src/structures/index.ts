@@ -22,3 +22,4 @@ export { AvlF64, type AvlShape } from './avl';
 export { MinHeapF64 } from './heap';
 export { SkipListF64, towerHeight, MAX_LEVEL as SKIP_MAX_LEVEL } from './skipList';
 export { mixF64, mixStr } from './mix';
+export { BTreeF64, BTREE_MIN_DEGREE } from './btree';

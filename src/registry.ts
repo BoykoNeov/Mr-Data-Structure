@@ -206,6 +206,40 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     shapeSensitive: false,
   },
   /**
+   * The **B-tree** (docs/PLAN.md §8 trees, Phase 6; docs/METHODOLOGY.md §2.10) — the
+   * balanced tree of *wide* nodes: minimum degree 16, so up to 31 keys a node and only
+   * 3–4 levels at the sizes swept here, against the AVL's 12–20.
+   *
+   * It is on the chart for a finding the op-count signal cannot show by itself. Its
+   * declared cost is **comparisons** (+ one per split/merge/borrow, the counterpart of the
+   * AVL's rotations), and a lookup makes about as many comparisons as the AVL's or the
+   * sorted array's — ≈ log₂ n, because binary search is binary search however the keys are
+   * laid out (pinned clock-free in `structures::methodology_btree`). What it does *not* do
+   * is take one dependent pointer hop per comparison: its node-visits are its height, about
+   * a quarter of the AVL's. So the op-count curve should sit on the AVL's and the sorted
+   * array's, and any gap on the wall clock is the memory hierarchy, not the work — a
+   * hypothesis the browser clock tests, not a claim this entry makes.
+   *
+   * **`shapeSensitive: false`.** A B-tree is balanced by construction — it only ever grows
+   * at the root, so every leaf sits at one depth — and no input order changes its class.
+   * Order does move a *constant*: a proactive split on sorted input leaves every left half
+   * at the minimum fill, so a sorted build has ~40 % more nodes and is sometimes one level
+   * deeper (`methodology_btree::sorted_input_builds_half_full_nodes_without_changing_the_class`).
+   * That is stated beside the chart rather than encoded in a flag about class.
+   */
+  btree: {
+    id: 'btree',
+    label: 'B-tree',
+    family: 'tree',
+    keyType: 'number',
+    color: '#c5b0d5',
+    costMetric: 'comparisons + splits/merges/borrows',
+    mechanism: 'binary-searches inside wide 31-key nodes, so a lookup makes the AVL’s comparisons in a quarter of its node hops; splits and merges keep every leaf at one depth',
+    average: { search: OLOG, insert: OLOG, delete: OLOG, churn: OLOG },
+    worst: { search: OLOG, insert: OLOG, delete: OLOG, churn: OLOG },
+    shapeSensitive: false,
+  },
+  /**
    * The **string-key twins** (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5). Same
    * algorithms as `array` / `hashset`, same classes *in n* — and a second cost axis the
    * numeric structures do not have: the **key length L**. Every class below is in n only.
@@ -293,6 +327,7 @@ export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.avl,
   REGISTRY.heap,
   REGISTRY.skiplist,
+  REGISTRY.btree,
 ];
 
 /**

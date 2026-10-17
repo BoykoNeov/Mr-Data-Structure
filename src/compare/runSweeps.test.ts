@@ -59,6 +59,8 @@ function fakeEngine(log: string[]): BenchEngine {
         // The skip list shares the sorted array's O(log n) search class and, unlike it,
         // keeps a sub-linear add/remove — the pair the shared charts are meant to contrast.
         series('skiplist', 'search', sizes, (n) => Math.log2(n)),
+        // The B-tree makes the sorted array's ≈ log₂ n comparisons (METHODOLOGY §2.10).
+        series('btree', 'search', sizes, (n) => Math.log2(n)),
       ];
     },
     runMutationSweep: async (_k, sizes) => {
@@ -85,6 +87,10 @@ function fakeEngine(log: string[]): BenchEngine {
     runSkipMutationSweep: async (_k, sizes) => {
       log.push(`skip:${sizes.length}`);
       return mutTrio('skiplist', sizes, (n) => Math.log2(n));
+    },
+    runBTreeMutationSweep: async (_k, sizes) => {
+      log.push(`btree:${sizes.length}`);
+      return mutTrio('btree', sizes, (n) => Math.log2(n));
     },
     runHeapMutationSweep: async (_k, sizes) => {
       log.push(`heap:${sizes.length}`);
@@ -125,10 +131,10 @@ describe('runAllSweeps', () => {
     expect(r.searchSizes[r.searchSizes.length - 1]).toBe(50_000); // capped by the dataset
     expect(r.mutationSizes[r.mutationSizes.length - 1]).toBe(MUT_MAX);
     expect(log[0]).toBe(`search:50000:${r.searchSizes.length}`);
-    expect(statuses).toHaveLength(6);
+    expect(statuses).toHaveLength(7);
 
     expect(r.search.map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist',
+      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'btree',
     ]);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
@@ -155,6 +161,13 @@ describe('runAllSweeps', () => {
       'skiplist.churn', 'skiplist.insert', 'skiplist.delete',
     ]);
     expect(r.skiplist[0].fit.best).toBe('O(log n)');
+    // The B-tree gets its own bucket too (bookkeeping, so the BST/AVL pair's consumers did
+    // not change), and lands on the same shared charts.
+    expect(r.btree.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
+      'btree.churn', 'btree.insert', 'btree.delete',
+    ]);
+    expect(r.btree[0].fit.best).toBe('O(log n)');
+    expect(log).toContain(`btree:${r.mutationSizes.length}`);
     // The heap is kept in its own bucket: its op set differs, so its churn (insert +
     // extract-min) is comparable only against its own split (docs/PLAN.md §8, risk R6).
     expect(r.heap.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
@@ -165,7 +178,7 @@ describe('runAllSweeps', () => {
     // Risk R6 at the seam: the shared search chart sees only canonical structures, and
     // the heap's scan is available separately for its own section.
     expect(canonicalSearch(r).map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'skiplist',
+      'array', 'll', 'sarr', 'hashset', 'skiplist', 'btree',
     ]);
     expect(heapSearch(r).map((v) => v.series.structure)).toEqual(['heap']);
 
@@ -176,6 +189,7 @@ describe('runAllSweeps', () => {
       '__bstMutationProof',
       '__avlMutationProof',
       '__skipMutationProof',
+      '__btreeMutationProof',
       '__compareMeta',
       '__heapMutationProof',
     ]);
@@ -201,7 +215,7 @@ describe('runAllSweeps', () => {
 
   it('never puts a string-keyed structure in a numeric result (docs/METHODOLOGY.md §2.5)', async () => {
     const r = await runAllSweeps(fakeEngine([]), generateUniform(5_000, 0, 5_000, true, 1));
-    const every = [...r.search, ...r.mutation, ...r.trees, ...r.skiplist, ...r.heap];
+    const every = [...r.search, ...r.mutation, ...r.trees, ...r.skiplist, ...r.btree, ...r.heap];
     // Sharing a chart takes the same op set *and* the same key type. The two runs produce
     // different result objects precisely so no chart can be handed a mixture.
     expect(every.every((v) => REGISTRY[v.series.structure].keyType === 'number')).toBe(true);

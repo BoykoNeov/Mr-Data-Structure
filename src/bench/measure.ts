@@ -47,7 +47,13 @@ export type StructureId =
   | 'skiplist'
   | 'arraystr'
   | 'hashsetstr'
-  | 'triestr';
+  | 'triestr'
+  /**
+   * The **B-tree** (Phase 6; docs/PLAN.md §8 trees, docs/METHODOLOGY.md §2.10): a
+   * balanced tree of wide nodes whose comparison count matches the AVL's while its
+   * node-visits are about a quarter of them — the op-count and the clock may disagree.
+   */
+  | 'btree';
 
 /**
  * Which operation a series measured (docs/PLAN.md §4.1, §6.3).
