@@ -188,7 +188,8 @@ re-measured) …".
    saved mix not in the new list drops the whole run section (defaults run) rather than
    restoring an un-offerable radio state.
 7. **Forget clears storage, not the page.** The current form and charts stay; the note says
-   the next run will be saved again. There is no "stop saving" switch.
+   running again — or changing a chart or tab setting, which saves immediately — starts saving
+   again. There is no "stop saving" switch.
 8. **The picker remounts once when a saved paste arrives** (or when a saved run is dropped).
    The restore races the engine boot, so it normally lands before the user could type — but a
    keystroke into the form in that first instant would be overwritten. Not guarded.

@@ -39,7 +39,7 @@ describe('sessionNoteText', () => {
       fmt,
     );
     expect(text).toContain('forgotten');
-    expect(text).toContain('next run will be saved again');
+    expect(text).toContain('Running again, or changing a chart or tab setting, starts saving again');
   });
 
   it('cannot steal the browser gate’s click on the run button', () => {

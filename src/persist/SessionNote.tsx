@@ -40,7 +40,8 @@ export function sessionNoteText(
   }
   if (p.cleared) {
     return {
-      text: 'Saved session forgotten — the next reload starts from the defaults. Your next run will be saved again.',
+      text: 'Saved session forgotten — a reload now starts from the defaults. Running again, or changing a chart or tab ' +
+        'setting, starts saving again.',
       showForget: true,
     };
   }
