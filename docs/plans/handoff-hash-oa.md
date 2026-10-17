@@ -146,7 +146,10 @@ a fresh table they agree (unprimed pair 5.81 vs FD sum 6.06). After priming, the
 tombstones never revert to empty: each bridges its run to the next, and every later insert walks
 the merged run. Measured at n = 4 000 over 64 tables: insert_fd 3.54, delete_fd 2.52, sum 6.06,
 primed churn 7.69 — a ~27 % overshoot, class agreement O(1)
-(`open_addressing_churn_overshoots_finite_differences_by_its_own_tombstone`). One more trap the
+(`open_addressing_churn_overshoots_finite_differences_by_its_own_tombstone`). Against the
+chaining set's churn on the same 64 keys (3.94), the OA churn line sits higher for two causes of
+about equal size, pinned in the same test: clustering (+1.87, chained → unprimed) and the
+tombstones (+1.88, unprimed → primed). The churn chart's copy says exactly that. One more trap the
 same test pins: the chaining row's endpoints (1 500 → 1 600) straddle a doubling, and for linear
 probing that makes the "marginal delete" **negative** (−10.77; chaining +2.00), because every
 stored key's walk shortens at once. A finite difference of a doubling table is a marginal cost
@@ -234,7 +237,14 @@ N. **Open addressing's curves are samples of clusters.** Its search op-count saw
 and `runMutationSweep` tuple list (appended), the worker's wasm import list,
 `structures/index.ts` (one export line), `mod.rs` (`pub mod hash_set_oa;` + an appended block at
 the end of `mod methodology`), the `runSweeps.ts` mutation status string, two sentences
-appended in `CompareSection.tsx` callouts, the gate counts above.
+appended in `CompareSection.tsx` callouts **and the search intro paragraph ("Five … five" →
+"Six … six", plus the OA mechanism)**, the "four flat structures" → "five" JSDoc in
+`runSweeps.ts` (`CompareResult.mutation`, now "Fifteen series"), `engine.worker.ts`
+(`runMutationSweep`) and `BenchEngine.ts` (`runMutationSweep`), the gate counts above.
+
+**Stated, not measured:** the search callout's wall-clock sentence ("the order can flip … kinder
+to the memory cache") is a mechanism, not a result any test pins. The history also carries an
+intermediate commit "(WIP, unwired)" before the merge with main — squash it if preferred.
 
 **Judgement calls**
 1. **Tombstones, not backward-shift deletion.** Tombstones are the textbook teaching choice and

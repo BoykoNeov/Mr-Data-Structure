@@ -89,8 +89,8 @@ export interface CompareResult {
    */
   readonly search: readonly SeriesView[];
   /**
-   * churn + finite-difference insert/delete for the four **flat** structures — unsorted
-   * array, hash set, sorted array, linked list. Twelve series: each structure's churn
+   * churn + finite-difference insert/delete for the five **flat** structures — unsorted
+   * array, hash set, sorted array, linked list, open-addressing hash set. Fifteen series: each structure's churn
    * primary plus its two finite-difference halves. The list's pair is the one that must
    * be read together rather than separately (METHODOLOGY §2.3 regime 7): its churn is
    * honestly O(1) and its delete-by-value honestly O(n).

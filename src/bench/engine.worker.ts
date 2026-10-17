@@ -506,13 +506,13 @@ const api = {
     ];
   },
   /**
-   * Run the §6.3 size-mutating measurement for the four **flat** structures across
-   * `sizes` — unsorted array, hash set, sorted array, linked list: the **churn**
+   * Run the §6.3 size-mutating measurement for the five **flat** structures across
+   * `sizes` — unsorted array, hash set, sorted array, linked list, open-addressing hash set: the **churn**
    * primary (combined insert+delete cost at fixed n) plus the **finite-difference**
    * cross-check that separates per-insert (cumulative build) from per-delete
    * (cumulative teardown). Returns three series per structure: `churn`, `insert`,
    * `delete`. `keys` is transferred in by the caller. Keep `sizes` modest — three of
-   * the four have an O(n²) build or teardown (the array's ordered delete, the sorted
+   * the five have an O(n²) build or teardown (the array's ordered delete, the sorted
    * array's shifting insert *and* delete, the linked list's walk-to-the-tail teardown).
    *
    * Each structure names its own {@link ChurnKeyPicker}, because where the spare key

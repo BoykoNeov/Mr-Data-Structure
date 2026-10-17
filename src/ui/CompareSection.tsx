@@ -369,10 +369,11 @@ export function CompareSection() {
         <>
       <h3 style={h3}>Search — the cost of finding a key</h3>
       <p style={{ color: '#555', marginTop: 0 }}>
-        Five structures look up a key five different ways: the unsorted array scans from the front, the
+        Six structures look up a key six different ways: the unsorted array scans from the front, the
         linked list walks node by node, the sorted array binary-searches, the skip list drops down a tower of
-        ever-sparser express lanes, and the hash set jumps straight to a bucket. (The min-heap is measured
-        too, but it answers a different question and gets its own section below.)
+        ever-sparser express lanes, the hash set jumps straight to a bucket and walks its chain, and the
+        open-addressing hash set jumps straight to a slot and steps along the table past any collisions. (The
+        min-heap is measured too, but it answers a different question and gets its own section below.)
       </p>
       {search.length > 0 && (
         <>
@@ -447,8 +448,9 @@ export function CompareSection() {
             honest only because of a rule you cannot see: a removed key leaves a marker (a tombstone) that
             the next insert reuses. Without that rule every add-and-remove would strand one more marker, each
             lookup would walk further, and the cost would grow with how many repetitions the timer happened
-            to run — not with n. Its line still sits a little high, because the marker its own key leaves
-            joins neighbouring runs together (docs/METHODOLOGY.md §2.8).{' '}
+            to run — not with n. Counted in steps, its line sits above the blue one for two reasons of
+            about equal size: clustering (as on the search chart), and the markers its own add-and-remove
+            keys leave behind, which join neighbouring runs together (docs/METHODOLOGY.md §2.8).{' '}
             {sortedNote ? (
               <>
                 <strong>This dataset is sorted</strong>, so the naive BST built into a chain and its dashed

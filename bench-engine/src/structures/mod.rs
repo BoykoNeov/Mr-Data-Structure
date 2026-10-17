@@ -955,7 +955,9 @@ mod methodology {
     /// Measured: insert_fd 3.54, delete_fd 2.52, sum 6.06; unprimed single pair 5.81; primed
     /// (the churn the sweep reports) 7.69 — a ~27% overshoot of the sum, which the unprimed
     /// pair shows is the tombstones' doing. The sweep's own single table (block from
-    /// `n + 1`) reads 5.38 here: one table is still a sample. Straddle check: OA's
+    /// `n + 1`) reads 5.38 here: one table is still a sample. Against the chaining set's churn
+    /// on the same 64 keys (3.94), the OA line sits higher for two roughly equal reasons:
+    /// clustering (+1.87, chained → unprimed) and the tombstones (+1.88). Straddle check: OA's
     /// 1500 → 1600 marginal delete is −10.77 where the chaining set's is +2.00.
     #[test]
     fn open_addressing_churn_overshoots_finite_differences_by_its_own_tombstone() {
@@ -972,10 +974,13 @@ mod methodology {
             / (n2 - n1) as f64;
         let sum = insert_fd + delete_fd;
 
-        let (mut primed, mut unprimed) = (0.0, 0.0);
+        let (mut primed, mut unprimed, mut chained) = (0.0, 0.0, 0.0);
         let block = 64;
         for j in 0..block {
             let key = 1e6 + j as f64; // absent (each table is independent)
+            let mut ch = HashSetF64::new(&ks, n2);
+            ch.set_churn_key(key);
+            chained += ch.churn_counted();
             let mut fresh = HashSetOaF64::new(&ks, n2);
             let (_, ins) = fresh.insert_one_counted(key);
             let (_, del) = fresh.delete_one_counted(key);
@@ -986,6 +991,16 @@ mod methodology {
             assert_eq!(s.len(), n2);
         }
         let (primed, unprimed) = (primed / block as f64, unprimed / block as f64);
+        let chained = chained / block as f64;
+        // (0) Against the chaining set on the same keys and table size, the gap has two
+        //     parts of about the same size here: clustering (chained → unprimed) and the
+        //     tombstones (unprimed → primed). This is what the churn chart's copy says.
+        assert!(chained < unprimed && unprimed < primed, "{chained:.2} < {unprimed:.2} < {primed:.2}");
+        let (clustering, tombstones) = (unprimed - chained, primed - unprimed);
+        assert!(
+            clustering > 0.5 * tombstones && tombstones > 0.5 * clustering,
+            "two comparable causes: clustering {clustering:.2}, tombstones {tombstones:.2}"
+        );
 
         // (1) Before any tombstone exists, churn and the FD sum measure the same two walks.
         assert!((unprimed - sum).abs() / sum < 0.15, "unprimed {unprimed:.2} vs fd sum {sum:.2}");
