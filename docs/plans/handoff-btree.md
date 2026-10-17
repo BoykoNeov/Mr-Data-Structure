@@ -47,7 +47,8 @@ Shared files touched (additive): `bench-engine/src/structures/mod.rs` (3 module 
       (`btree::tests::churn_settles_into_zero_restructures_and_zero_allocation`, ascending /
       descending / shuffled, t = 2 and 16). Insert keeps the CLRS proactive split.
     Gates: cargo test 234 passed (incl. 3 new proptests), vitest 1023 passed, typecheck clean;
-    `verify:browser` **UNRUN** (five new B-tree checks, conservative class bands only). No new
+    `verify:browser` **UNRUN** (six new B-tree checks, conservative class bands only, and the
+    existing search-count check changed to seven series). No new
     deps.
 
 ## 2. docs/PLAN.md §8 — table row (Trees / heaps)
@@ -96,8 +97,10 @@ are the on-disk answer and irrelevant in memory.)
 **Search defers the equality test.** Each node is binary-searched for the first key ≥ k using `<`
 only, the candidate is remembered, and the descent always continues to a leaf; one equality test
 at the end decides membership. That is what makes the comparison count ≈ log₂ n with no per-node
-equality overhead, and it makes a missing key cost the same as a present one — so the shared
-`max + 1 …` absent probes carry no bias for this structure (contrast the skip list, hurdle 9).
+equality overhead, and it makes a missing key cost within one comparison of a present one (an
+above-max probe never finds a candidate, so it skips the final test) — so the shared
+`max + 1 …` absent probes carry no bias for this structure at any probe mix (contrast the skip
+list, hurdle 9).
 
 **The delete is not CLRS's, and that is a measurement decision.** CLRS's single-pass delete
 pre-fills every node it enters that holds exactly t − 1 keys. Combined with the proactive split

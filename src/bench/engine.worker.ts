@@ -504,8 +504,9 @@ const api = {
       // with a short binary search inside a contiguous 31-key node, where the sorted
       // array's early probes are each a jump across the whole array. Whether the clock
       // separates the two is a measurement, not a claim this code makes. The shared absent
-      // probes (`max + 1 …`) cost a B-tree the same as a present key — every search walks
-      // to a leaf — so, unlike the skip list, this line carries no probe-set bias.
+      // probes (`max + 1 …`) cost a B-tree within one comparison of a present key — every
+      // search walks to a leaf; an above-max probe only skips the final equality test — so,
+      // unlike the skip list, this line carries no probe-set bias at any mix.
       { structure: 'btree', op: 'search', points: btree },
     ];
   },

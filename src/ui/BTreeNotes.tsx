@@ -23,7 +23,8 @@ export function BTreeSearchNote({ present }: { readonly present: boolean }) {
       comparisons, not the memory each one touches. So if the pale purple line sits apart from the green
       one on <em>wall-clock</em>, that gap is this machine’s memory doing it, not extra work. If it does
       not, that is a result too: at these sizes everything may already fit in cache. Every B-tree search
-      walks all the way to a leaf, so a key that is missing costs the same as one that is found, and
+      walks all the way to a leaf, so a key that is missing costs within one comparison of one that is
+      found, and
       the shared workload’s many “just past the largest key” queries do not flatter this line the way
       they flatter the skip list’s (docs/METHODOLOGY.md §2.10).
     </Callout>
@@ -37,7 +38,7 @@ export function BTreeChurnNote({ present, sorted }: { readonly present: boolean;
       The pale purple line is the B-tree. It stays <strong>O(log n)</strong> on any input order, because
       it only ever grows at the root and every leaf sits at the same depth. The same fact makes this line
       unusually trustworthy. The test key we add and remove sits just below the smallest key or just
-      above the largest, and for the other trees those are cheap edges. A B-tree has no cheap edge: its
+      above the largest, and for the BST and the skip list those are cheap edges. A B-tree has no cheap edge: its
       ends are as deep as its middle. So on the op-count signal this line and the per-operation split
       below agree closely, which they do not for the BST or the skip list. (On wall-clock the split is
       noisier, as it is for every structure.) Once the first few rounds have settled, each
