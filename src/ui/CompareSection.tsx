@@ -215,7 +215,8 @@ export function CompareSection() {
           'list just put at its own head. Removing a key already stored is the O(n) delete-by-value (METHODOLOGY §2.3).',
       );
     }
-    if (stringSearch.some((v) => v.series.structure === 'triestr')) {
+    // Only while the run asked absent keys at all — a hits-only run has no "shared absent probes".
+    if (stringSearch.some((v) => v.series.structure === 'triestr') && (ranMixSummary?.absent ?? 64) > 0) {
       notes.push(
         'The trie’s flat line is a pessimistic constant: every structure here is asked the same questions, and the ' +
           'shared absent probes (a stored key with its last character changed) are the deepest miss a trie can have — ' +
@@ -388,13 +389,20 @@ export function CompareSection() {
             straight to the right bucket and stays flat (<strong>O(1)</strong>). The skip list (olive) lands
             in the sorted array’s class by an unrelated route — it never sorts anything, it just keeps a few
             sparse lanes over the same keys and drops through them — which is why the two lines are worth
-            reading together on the add/remove chart below. <em>Read the olive line’s height with one
+            reading together on the add/remove chart below.{' '}
+            {/* Only true while the run asked absent keys at all — a hits-only run has none. */}
+            {(ranMixSummary?.absent ?? 64) > 0 && (
+              <>
+            <em>Read the olive line’s height with one
             allowance:</em> {shareWord(1 - (ranMixSummary?.presentFraction ?? 0.5))} of every structure’s query load here is keys just past the largest stored
             one, which for the skip list is the cheapest question it can be asked (it runs off the end of
             each lane and pays nothing for it) and for the sorted array is the dearest. That shifts the two
             lines apart a little without tilting either — the same shared-workload trade the trie’s section
             explains, and the alternative (a workload tuned per structure) would stop this being a
-            comparison at all. The dashed lines are each
+            comparison at all.{' '}
+              </>
+            )}
+            The dashed lines are each
             structure’s textbook class scaled onto its points — where a solid line peels away from its dashed
             twin, the machine (cache, memory traffic) or the data is doing something the textbook doesn’t say.
           </Callout>

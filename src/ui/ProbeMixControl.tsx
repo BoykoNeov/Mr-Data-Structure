@@ -106,8 +106,9 @@ export function ProbeMixControl({
         ))}
       </div>
       <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-        Every structure is asked the <em>same</em> {PROBES_PER_POINT} questions at each size; this sets how many
-        are for keys it holds. It applies to the next run. The mix moves each search line up or down and never
+        Every structure is asked the <em>same</em> questions at each size — {PROBES_PER_POINT} of them, or fewer
+        at the smallest sizes, where there are not enough stored keys to ask about; this sets how many are for
+        keys it holds. It applies to the next run. The mix moves each search line up or down and never
         tilts it: a scan finds a stored key about halfway through on average but has to read everything to rule a
         key out, the hash sets stay flat either way, numeric misses sit just past your largest key — the cheapest
         thing to ask a skip list — and a trie pays about the same for a hit as for a text miss, which is one of

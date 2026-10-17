@@ -199,6 +199,12 @@ CSV / JSON / PNG export;" add:
 - `runAllSweeps` / `runStringSweeps` gained a trailing `mix` parameter (after `win`);
   `CompareResult` / `StringCompareResult` gained a required `probeMix` field.
 - CSV gained a trailing `stored_n` column (column positions unchanged).
+- **Worktree cleanup hazard:** this worktree's `node_modules` is a *junction* into the main
+  checkout's `node_modules`. Remove it with `rmdir` (not a recursive delete) before removing the
+  worktree, or the delete follows the junction into the main checkout.
+- Copy that depends on the mix is gated on the run's absent count: the search callout's skip-list
+  "allowance" passage and the trie's PNG caption line are omitted on a hits-only run (they
+  describe absent probes that run did not ask).
 
 ### Judgement calls a reviewer might disagree with
 
