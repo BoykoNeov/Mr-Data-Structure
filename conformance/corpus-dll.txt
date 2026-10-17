@@ -1,0 +1,80 @@
+# Mr Data Structure — doubly-linked-list conformance corpus (docs/PLAN.md §8, §12).
+# Generated from the Rust bench impl (doubly_linked_list.rs); the TS teaching twin must match.
+# Op-count = node-visits. *_rev lines walk tail→head via prev (back-link integrity).
+# mixed: +k inserts at the head (1:0), -k deletes by value.
+# Regenerate: cargo test -- --ignored regen_corpus_dll
+
+case empty
+keys 
+probes 1 2
+dll_order 
+dll_order_rev 
+dll_search 0:0 0:0
+deletes 1
+dll_delete 0:0
+dll_order_after 
+dll_order_rev_after 
+mixed +1 -1 -1
+dll_mixed 1:0 1:1 0:0
+dll_order_mixed 
+dll_order_rev_mixed 
+
+case singleton
+keys 42
+probes 42 7
+dll_order 42
+dll_order_rev 42
+dll_search 1:1 0:1
+deletes 42
+dll_delete 1:1
+dll_order_after 
+dll_order_rev_after 
+mixed -42 +7 +8 -7
+dll_mixed 1:1 1:0 1:0 1:2
+dll_order_mixed 8
+dll_order_rev_mixed 8
+
+case ordered
+keys 10 20 30
+probes 10 20 30 99
+dll_order 30 20 10
+dll_order_rev 10 20 30
+dll_search 1:3 1:2 1:1 0:3
+deletes 20 99 30
+dll_delete 1:2 0:2 1:1
+dll_order_after 10
+dll_order_rev_after 10
+mixed -10 +40 -30 +50 -40
+dll_mixed 1:3 1:0 1:2 1:0 1:2
+dll_order_mixed 50 20
+dll_order_rev_mixed 20 50
+
+case duplicates
+keys 5 5 5 7 5 9
+probes 5 7 9 99
+dll_order 9 5 7 5 5 5
+dll_order_rev 5 5 5 7 5 9
+dll_search 1:2 1:3 1:1 0:6
+deletes 5 5
+dll_delete 1:2 1:3
+dll_order_after 9 7 5 5
+dll_order_rev_after 5 5 7 9
+mixed +5 -5 -9 -5 +9
+dll_mixed 1:0 1:1 1:1 1:1 1:0
+dll_order_mixed 9 7 5 5 5
+dll_order_rev_mixed 5 5 5 7 9
+
+case tail-first
+keys 1 2 3 4 5
+probes 1 5 0
+dll_order 5 4 3 2 1
+dll_order_rev 1 2 3 4 5
+dll_search 1:5 1:1 0:5
+deletes 1 2 3
+dll_delete 1:5 1:4 1:3
+dll_order_after 5 4
+dll_order_rev_after 4 5
+mixed -1 +6 -2 +7 -6
+dll_mixed 1:5 1:0 1:5 1:0 1:2
+dll_order_mixed 7 5 4 3
+dll_order_rev_mixed 3 4 5 7

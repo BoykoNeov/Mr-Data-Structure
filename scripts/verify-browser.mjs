@@ -41,7 +41,7 @@ try {
   // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
   // is set last, after the search sweep and the array/hashset, BST, AVL and skip-list
   // mutation sweeps — or until the app reports an error. Generous timeout: the sweeps do
-  // real timed work, and there are six search series and seven mutation sweeps.
+  // real timed work, and there are seven search series and seven mutation sweeps.
   await page.waitForFunction(
     () =>
       window.__heapMutationProof !== undefined ||
@@ -105,10 +105,11 @@ try {
     const hashset = proof.find((p) => p.structure === 'hashset');
     const heapSearch = proof.find((p) => p.structure === 'heap');
     const skipSearch = proof.find((p) => p.structure === 'skiplist');
+    const dllSearch = proof.find((p) => p.structure === 'dll');
 
     want(
-      'six search series measured',
-      proof.length === 6 && array && ll && sarrSearch && hashset && heapSearch && skipSearch,
+      'seven search series measured',
+      proof.length === 7 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -123,6 +124,18 @@ try {
       want('linked-list search labelled O(n)', ll.best === 'O(n)');
       want('linked-list search slope ~1 (0.7..1.4)', ll.slope >= 0.7 && ll.slope <= 1.4);
       want(`linked-list search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
+    }
+    // Doubly linked list (docs/METHODOLOGY.md §2.11): the singly list's walk, visit for visit —
+    // its `prev` link has nothing to offer a search — so it gets the singly list's bands and
+    // nothing tighter. Deliberately NOT asserted: that its wall-clock equals the singly list's.
+    // Its node is 24 bytes against 16, so the same walk may legitimately read slower; the
+    // equality claim is an op-count claim and is pinned clock-free in Rust
+    // (`structures::methodology::doubly_linked_list_buys_nothing_on_the_canonical_op_set`).
+    if (dllSearch) {
+      const ratio = dllSearch.lastNanos / dllSearch.firstNanos;
+      want('doubly-linked-list search labelled O(n)', dllSearch.best === 'O(n)');
+      want('doubly-linked-list search slope ~1 (0.7..1.4)', dllSearch.slope >= 0.7 && dllSearch.slope <= 1.4);
+      want(`doubly-linked-list search rises with n (ratio ${ratio.toFixed(1)} > 20)`, ratio > 20);
     }
     // Sorted array: the "missing middle" — binary search is sub-linear (O(log n)). Assert
     // the slope *band* (well below the array's ~1), NOT the label: the §7.2 fitter cannot
@@ -183,7 +196,7 @@ try {
     const aIns = find('array', 'insert');
     const aDel = find('array', 'delete');
 
-    want('twelve mutation series measured (four flat structures)', mutation.length === 12);
+    want('fifteen mutation series measured (five flat structures)', mutation.length === 15);
     if (aChurn) {
       const ratio = aChurn.lastNanos / aChurn.firstNanos;
       want(`array churn rises (slope ${aChurn.slope.toFixed(2)} > 0.6)`, aChurn.slope > 0.6);
@@ -276,6 +289,40 @@ try {
       const gap = lDel.lastNanos / lChurn.lastNanos;
       want(
         `linked-list delete-by-value costs vastly more than head churn (${gap.toFixed(0)}x > 20x)`,
+        gap > 20,
+      );
+    }
+
+    // ── Doubly linked list (docs/METHODOLOGY.md §2.3 regime 7, §2.11) — the same pair, the
+    // same honesty rule. Its churn is flat for the singly list's reason (head insert puts *any*
+    // churn key at the head), and its delete-by-value is the same O(n) walk — the back pointer
+    // speeds only the uncounted splice. Mirrors the singly checks above, thresholds unchanged,
+    // including the two-sided `|slope| < 0.6` for a churn line expected to sit on the timer's
+    // floor. Not asserted: any dll-vs-ll wall-clock ratio (a bigger node may cost cache).
+    const dChurn = find('dll', 'churn');
+    const dDel = find('dll', 'delete');
+    if (dChurn) {
+      want(
+        `doubly-linked-list churn stays flat (|slope| ${Math.abs(dChurn.slope).toFixed(2)} < 0.6)`,
+        Math.abs(dChurn.slope) < 0.6,
+      );
+    }
+    if (dDel) {
+      const ratio = dDel.lastNanos / dDel.firstNanos;
+      want(
+        `doubly-linked-list delete-by-value reads O(n) (slope ${dDel.slope.toFixed(2)} > 0.6)`,
+        dDel.slope > 0.6,
+      );
+      want(`doubly-linked-list delete grows with n (ratio ${ratio.toFixed(1)} > 3)`, ratio > 3);
+    }
+    if (dChurn && dDel) {
+      want(
+        `doubly linked list: churn and delete-by-value disagree on class (${dChurn.slope.toFixed(2)} vs ${dDel.slope.toFixed(2)})`,
+        Math.abs(dChurn.slope) < 0.6 && dDel.slope > 0.6,
+      );
+      const gap = dDel.lastNanos / dChurn.lastNanos;
+      want(
+        `doubly-linked-list delete-by-value costs vastly more than head churn (${gap.toFixed(0)}x > 20x)`,
         gap > 20,
       );
     }

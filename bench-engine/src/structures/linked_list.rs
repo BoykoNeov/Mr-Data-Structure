@@ -6,14 +6,16 @@
 //! so the head→tail iteration order is the reverse of insertion order (duplicates kept —
 //! docs/PLAN.md "Keys are identity; never dedupe").
 //!
-//! **One impl for both list flavours.** The singly and doubly lists are
+//! **The singly list; the doubly list has its own twin since Phase 6.** The two are
 //! *observationally identical* under this module's cost metric: same iteration order, same
 //! search op-count, same delete op-count. The doubly list's extra `prev` pointer only buys
 //! an O(1) unlink-*with-a-handle*, but the unlink is uncounted in **both** and the
-//! find-walk that dominates is identical — so a second struct, a second corpus, and a
-//! second sweep wiring would be pure duplication. The back-pointers are a *visualization*
-//! concern, already handled by the Phase 3 teaching twins; the bench has one
-//! `LinkedListF64`, pinned to *both* TS twins by `conformance/corpus-ll.txt`.
+//! find-walk that dominates is identical. That equality used to be an argument for having
+//! one struct; it is now a *measured* claim instead — `doubly_linked_list::DoublyLinkedListF64`
+//! carries real `prev` links, is swept on the same charts (StructureId `'dll'`), and is pinned
+//! op-count-equal to this list by `structures::methodology` and its proptest, so the chart
+//! shows the second pointer buying nothing rather than a comment asserting it. This corpus
+//! (`conformance/corpus-ll.txt`) still pins *both* TS teaching twins.
 //!
 //! **Index arena, by the repo's own rule.** `Box<Node>`/recursion is used where height is
 //! bounded (the AVL); an **index arena** where a deep chain would overflow the WASM stack
@@ -66,8 +68,9 @@ struct Node {
     next: Option<u32>,
 }
 
-/// A linked list (multiset) over `f64` keys, stored in an index arena. Represents both the
-/// singly and doubly teaching twins, which are bench-identical under the node-visit metric.
+/// A singly linked list (multiset) over `f64` keys, stored in an index arena. Its corpus also
+/// pins the doubly TS teaching twin, which is bench-identical under the node-visit metric; the
+/// doubly *bench* twin is `doubly_linked_list::DoublyLinkedListF64`.
 #[wasm_bindgen]
 pub struct LinkedListF64 {
     nodes: Vec<Node>,
@@ -264,6 +267,10 @@ impl LinkedListF64 {
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+
+    /// Bytes per arena node — compared against the doubly node's (`doubly_linked_list.rs`,
+    /// `node_is_half_again_the_singly_node`) to pin what the second pointer costs.
+    pub(crate) const NODE_BYTES: usize = std::mem::size_of::<Node>();
 
     /// Allocate a node, reusing a freed slot when one is available.
     fn alloc(&mut self, value: f64, next: Option<u32>) -> u32 {

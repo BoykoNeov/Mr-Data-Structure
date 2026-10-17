@@ -18,6 +18,7 @@ import { SweepChart, seriesLabel, type SeriesView, type Signal } from './SweepCh
 import { SlopeChart } from './SlopeChart';
 import { download, downloadBlob, toCsv, toJson } from './export';
 import { plotCanvasOf, renderSheet, type ChartShot } from './png';
+import { DllChurnCaveat, DllSearchNote, dllSheetNote } from './DoublyListNotes';
 import { DEFAULT_PROBE_MIX, describeMix } from '../bench/probeMix';
 import { ProbeMixControl, mixNotes, shareWord } from './ProbeMixControl';
 import { storedSizeNotes } from './storedSize';
@@ -215,6 +216,8 @@ export function CompareSection() {
           'list just put at its own head. Removing a key already stored is the O(n) delete-by-value (METHODOLOGY §2.3).',
       );
     }
+    const dllNote = dllSheetNote(churn.map((v) => v.series.structure));
+    if (dllNote) notes.push(dllNote);
     // Only while the run asked absent keys at all — a hits-only run has no "shared absent probes".
     if (stringSearch.some((v) => v.series.structure === 'triestr') && (ranMixSummary?.absent ?? 64) > 0) {
       notes.push(
@@ -406,6 +409,7 @@ export function CompareSection() {
             structure’s textbook class scaled onto its points — where a solid line peels away from its dashed
             twin, the machine (cache, memory traffic) or the data is doing something the textbook doesn’t say.
           </Callout>
+          {search.some((v) => v.series.structure === 'dll') && <DllSearchNote />}
         </>
       )}
 
@@ -484,6 +488,7 @@ export function CompareSection() {
             exact operation counts, where a churn pair is literally one node visit at every size. Switch the
             <strong>Signal</strong> selector above to op-count to see that curve without the clock in it.
           </Callout>
+          {churn.some((v) => v.series.structure === 'dll') && <DllChurnCaveat />}
 
           {split.length > 0 && (
             <>

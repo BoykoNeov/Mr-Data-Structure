@@ -66,6 +66,7 @@ pub mod linked_list;
 pub mod skip_list;
 pub mod sorted_array;
 pub mod trie;
+pub mod doubly_linked_list;
 
 #[cfg(test)]
 mod conformance;
@@ -828,5 +829,71 @@ mod methodology {
             "doubling V at fixed degree just doubles the cost (ratio {ratio}) — a V-sweep alone \
              can't separate O(V) from O(V+E)"
         );
+    }
+
+    // ── Doubly linked list (docs/METHODOLOGY.md §2.11): regime 7 again, and a second pointer
+    // that buys nothing on the canonical op set.
+    //
+    // The doubly list differs from the singly list by one `prev` link per node. On insert /
+    // search / delete-by-key that link is only ever *written* — no walk reads it — and the one
+    // place it shortens work (the splice after a delete's find) carries no node-visit on either
+    // list. So the claim to pin is not "close": it is **equal**, op-count for op-count, on the
+    // same sequences, across every signal the Compare sweeps read (search, churn, the cumulative
+    // build and the cumulative teardown). If these ever differ, the twins have drifted apart or
+    // the doubly list has started using `prev` in a way the op set does not allow (the trap:
+    // unlinking the tail through its handle in the teardown, which reads O(1) and erases the
+    // class disagreement the singly list is honest about).
+
+    /// The doubly list's every op-count signal equals the singly list's, at several sizes and on
+    /// both a sorted and a shuffled build — and the regime-7 class disagreement holds for it
+    /// exactly as for the singly list (churn 1 visit, finite-difference delete ≈ 3n/4).
+    #[test]
+    fn doubly_linked_list_buys_nothing_on_the_canonical_op_set() {
+        use super::doubly_linked_list::DoublyLinkedListF64 as Dll;
+
+        for ks in [keys(4000), shuffled(4000)] {
+            for n in [250usize, 1000, 2000, 4000] {
+                // Search: the Compare workload's shape — present keys spread through the prefix
+                // plus a block just past the max.
+                let max = ks[..n].iter().cloned().fold(f64::MIN, f64::max);
+                let probes: Vec<f64> = (0..64)
+                    .map(|i| ks[i * n / 64])
+                    .chain((0..64).map(|i| max + 1.0 + i as f64))
+                    .collect();
+                let mut d = Dll::new(&ks, n);
+                let mut s = LinkedListF64::new(&ks, n);
+                d.set_probes(&probes);
+                s.set_probes(&probes);
+                assert_eq!(d.search_counted(), s.search_counted(), "search ops at n {n}");
+
+                // Churn: the engine's `max + 1` key, identical on both, and exactly 1.
+                d.set_churn_key(max + 1.0);
+                s.set_churn_key(max + 1.0);
+                assert_eq!(d.churn_counted(), s.churn_counted(), "churn ops at n {n}");
+                assert_eq!(d.churn_counted(), 1.0);
+
+                // Cumulative build and teardown — what the finite-difference split differences.
+                assert_eq!(Dll::build_insert_counted(&ks, n), LinkedListF64::build_insert_counted(&ks, n));
+                assert_eq!(Dll::teardown_counted(&ks, n), LinkedListF64::teardown_counted(&ks, n));
+                // Distinct keys, tail by value: Σ_{i=1..n} i, a full walk each — not 0, which a
+                // tail-handle unlink would have reported.
+                assert_eq!(Dll::teardown_counted(&ks, n), (n * (n + 1) / 2) as f64, "teardown at n {n}");
+            }
+        }
+
+        // Regime 7 for the doubly list, the singly test's numbers verbatim.
+        let ks = keys(4000);
+        let (n1, n2) = (2000usize, 4000usize);
+        let insert_fd = (Dll::build_insert_counted(&ks, n2) - Dll::build_insert_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let delete_fd = (Dll::teardown_counted(&ks, n2) - Dll::teardown_counted(&ks, n1))
+            / (n2 - n1) as f64;
+        let mut l = Dll::new(&ks, n2);
+        l.set_churn_key(n2 as f64 + 1.0);
+        let churn = l.churn_counted();
+        assert_eq!(insert_fd, 0.0, "head insert is O(1) on the doubly list too");
+        assert_eq!(churn, 1.0, "doubly-list churn is O(1) for the singly list's reason");
+        assert!(delete_fd > n2 as f64 / 2.0 && delete_fd < n2 as f64, "delete_fd {delete_fd} ≈ 3n/4");
+        assert!(insert_fd + delete_fd > churn * 100.0, "the class disagreement survives the second pointer");
     }
 }

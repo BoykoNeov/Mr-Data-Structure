@@ -117,11 +117,29 @@ export class SinglyLinkedListF64 extends LinkedListF64 {
 }
 
 /** Doubly linked list — `next` + `prev` pointers per node (docs/PLAN.md §8).
- * Same observable cost as the singly list; the renderer draws the back-pointers. */
+ * Same observable cost as the singly list; the renderer draws the back-pointers.
+ *
+ * Since Phase 6 this is also the teaching twin of a bench structure of its own
+ * (`bench-engine/src/structures/doubly_linked_list.rs`, StructureId `'dll'`), pinned by
+ * `conformance/corpus-dll.txt` — the measurement that shows the second pointer buys
+ * nothing on insert / search / delete-by-key (docs/METHODOLOGY.md §2.11). */
 export class DoublyLinkedListF64 extends LinkedListF64 {
   static fromKeys(keys: readonly number[]): DoublyLinkedListF64 {
     const l = new DoublyLinkedListF64();
     for (const k of keys) l.insert(k);
     return l;
+  }
+
+  /** Keys tail → head — the walk a doubly list can do by following `prev`, and the
+   * dimension `corpus-dll.txt` adds over the singly corpus (`dll_order_rev*`).
+   *
+   * Honest scope: this twin models the *observable surface* on a plain array (see the
+   * module doc), so here the backward walk is the forward order reversed and cannot itself
+   * be mis-linked. The back-link integrity the corpus line exists for is exercised for real
+   * on the Rust side (`keys_in_reverse` follows `prev`, pinned after every op by
+   * `bench-engine/tests/proptest_doubly_linked_list.rs`); on this side it pins that the
+   * teaching twin agrees with what the bench twin's links say. */
+  keysReversed(): number[] {
+    return this.nodes.slice().reverse();
   }
 }

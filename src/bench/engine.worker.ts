@@ -13,6 +13,7 @@ import init, {
   ArrayStr,
   HashSetStr,
   TrieStr,
+  DoublyLinkedListF64,
 } from '../../bench-engine/pkg/bench_engine.js';
 import { encodeStringKeys } from '../data/marshal';
 import {
@@ -457,6 +458,13 @@ const api = {
     const hashset = measureSweep(sizes, searchRunnerFactory(HashSetF64, keys, mix), now, opts);
     const heap = measureSweep(sizes, searchRunnerFactory(MinHeapF64, keys, mix), now, opts);
     const skiplist = measureSweep(sizes, searchRunnerFactory(SkipListF64, keys, mix), now, opts);
+    // The doubly linked list walks exactly the singly list's path — its `prev` link has
+    // nothing to offer a search — so its op-count line lands *on* the singly list's, and its
+    // wall-clock line should differ by a constant, not a slope: a 24-byte node against a
+    // 16-byte one (docs/METHODOLOGY.md §2.11; no ratio between the two is asserted anywhere).
+    // Same probes, same runner: a different workload would end the comparison the line is
+    // there to make.
+    const dll = measureSweep(sizes, searchRunnerFactory(DoublyLinkedListF64, keys, mix), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
@@ -494,17 +502,18 @@ const api = {
       { structure: 'hashset', op: 'search', points: hashset },
       { structure: 'heap', op: 'search', points: heap },
       { structure: 'skiplist', op: 'search', points: skiplist },
+      { structure: 'dll', op: 'search', points: dll },
     ];
   },
   /**
-   * Run the §6.3 size-mutating measurement for the four **flat** structures across
-   * `sizes` — unsorted array, hash set, sorted array, linked list: the **churn**
+   * Run the §6.3 size-mutating measurement for the five **flat** structures across
+   * `sizes` — unsorted array, hash set, sorted array, linked list, doubly linked list: the **churn**
    * primary (combined insert+delete cost at fixed n) plus the **finite-difference**
    * cross-check that separates per-insert (cumulative build) from per-delete
    * (cumulative teardown). Returns three series per structure: `churn`, `insert`,
-   * `delete`. `keys` is transferred in by the caller. Keep `sizes` modest — three of
-   * the four have an O(n²) build or teardown (the array's ordered delete, the sorted
-   * array's shifting insert *and* delete, the linked list's walk-to-the-tail teardown).
+   * `delete`. `keys` is transferred in by the caller. Keep `sizes` modest — four of
+   * the five have an O(n²) build or teardown (the array's ordered delete, the sorted
+   * array's shifting insert *and* delete, both linked lists' walk-to-the-tail teardown).
    *
    * Each structure names its own {@link ChurnKeyPicker}, because where the spare key
    * lands is a measurement decision that can set the reported class (§2.3, §4.1):
@@ -534,6 +543,13 @@ const api = {
       ['hashset', HashSetF64 as unknown as MutationStructCtor, aboveMax],
       ['sarr', SortedArrayF64 as unknown as MutationStructCtor, belowMin],
       ['ll', LinkedListF64 as unknown as MutationStructCtor, aboveMax],
+      // The doubly list takes the singly list's key, `max + 1`, so the two curves are the same
+      // experiment. That is a comparability choice, not a rescue: head insert puts *any* churn
+      // key at the head, so every key is one visit and none recovers the O(n) delete-by-value
+      // (`doubly_linked_list::tests::no_churn_key_recovers_the_linear_delete`). Its flat churn
+      // is the singly list's regime-7 finding, and its teardown deletes the tail *by value* —
+      // never through the tail handle, which would read O(1) and erase the disagreement.
+      ['dll', DoublyLinkedListF64 as unknown as MutationStructCtor, aboveMax],
     ];
     const out: SweepSeries[] = [];
     for (const [structure, Ctor, pickKey] of structures) {
