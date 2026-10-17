@@ -106,6 +106,12 @@ interface ControlsBase<E, O extends string> {
   readonly caption: string;
   /** Op buttons to show; defaults to the canonical insert / search / delete. */
   readonly ops?: readonly OpSpec<O>[];
+  /** Placeholder for the input box; defaults to `key`. The graph tab reads it as a
+   * start vertex, not a key (docs/PLAN.md §8 — the graph's own op set). */
+  readonly placeholder?: string;
+  /** The op Enter fires, overriding {@link enterSpecFor}. Needed where every op is
+   * `needsValue: false` yet still reads the box (the graph's BFS / DFS start). */
+  readonly enterOp?: O;
 }
 
 /** Numeric keys (the default, seven structures) or string keys (the trie). The
@@ -138,7 +144,8 @@ export function Controls<E, O extends string = DefaultOp>(props: ControlsProps<E
       if (d) props.onOp(d.op, d.value);
     }
   };
-  const enterSpec = enterSpecFor(opList);
+  const enterSpec =
+    props.enterOp !== undefined ? opList.find((o) => o.op === props.enterOp) : enterSpecFor(opList);
 
   const { state } = player;
   const len = P.length(state);
@@ -153,7 +160,7 @@ export function Controls<E, O extends string = DefaultOp>(props: ControlsProps<E
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && enterSpec) run(enterSpec); }}
-          placeholder="key"
+          placeholder={props.placeholder ?? 'key'}
           style={{ width: stringKeys ? 140 : 90, padding: '4px 6px', fontSize: 13 }}
         />
         {opList.map((spec) => (

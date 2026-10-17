@@ -8,7 +8,8 @@ import { AvlF64 } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent } from './events';
+import { GraphAdj } from '../structures/graph';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList, type LinkedListModel,
@@ -17,6 +18,7 @@ import {
   heapModel, foldHeap, type HeapModel,
   trieModel, foldTrie, type TrieModel,
   skipModel, foldSkip, type SkipModel,
+  graphModel, foldGraph, type GraphModel,
 } from './model';
 import * as P from './player';
 import { usePlayer } from './usePlayer';
@@ -29,6 +31,7 @@ import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
 import { TrieView, byteLabel } from './TrieView';
 import { SkipListView } from './SkipListView';
+import { GraphView } from './GraphView';
 import { Controls, type OpSpec } from './Controls';
 
 /**
@@ -43,7 +46,7 @@ import { Controls, type OpSpec } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst' | 'avl' | 'heap' | 'trie' | 'skiplist';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst' | 'avl' | 'heap' | 'trie' | 'skiplist' | 'graph';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
@@ -75,6 +78,41 @@ const TRIE_SEED = ['car', 'cart', 'cat', 'café', 'dog'];
 // multiset keeping equal keys in insertion order along the bottom lane. Change a key
 // and the shape changes with it; that is the point of hash-derived heights.
 const SKIP_SEED = [10, 30, 40, 50, 50, 90, 220, 270];
+/**
+ * The graph seed (docs/PLAN.md §5, §8). Every part is a teaching decision, and
+ * `trace.graph.test.ts` pins each consequence by computing it from the twin:
+ *  - **BFS and DFS visibly disagree on order** (BFS 0 3 1 5 2 6 4, DFS 0 5 6 4 2 1 3)
+ *    while costing the same 27 — the headline.
+ *  - **Mark-on-push DFS differs from textbook recursion** (which would go
+ *    0 3 2 1 4 6 5), so the animation demonstrates the rule the twins actually run;
+ *    when DFS pops 2 it meets 3 and 1 still *waiting on the stack* and skips them.
+ *  - a **parallel 1–2 edge** (edges 4 and 8) and a **self-loop on 4** (edge 9): each
+ *    is two adjacency entries, so each costs two edge-visits (Σ deg = 2E).
+ *  - **vertex 7 is isolated**, so a traversal from 0 reaches 7 of 8 vertices and costs
+ *    0's component's V′ + 2E′ = 7 + 20, not the whole graph's V + 2E = 28.
+ * Ids are deliberately *not* numbered by BFS layer, so BFS order is not mistaken for
+ * "ascending id order". The layout is hand-placed in columns by distance from 0
+ * (0 | 3 1 5 | 2 6 | 4), with 7 set apart.
+ */
+export const GRAPH_SEED: {
+  readonly vertices: number;
+  readonly edges: readonly number[];
+  readonly layout: readonly (readonly [number, number])[];
+} = {
+  vertices: 8,
+  // edge k = pair k:  0–3  0–1  0–5  3–2  1–2  5–6  2–4  6–4  1–2 (parallel)  4–4 (loop)
+  edges: [0, 3, 0, 1, 0, 5, 3, 2, 1, 2, 5, 6, 2, 4, 6, 4, 1, 2, 4, 4],
+  layout: [
+    [50, 140], // 0 — the default source
+    [165, 140], // 1
+    [290, 90], // 2
+    [165, 50], // 3
+    [400, 160], // 4 — carries the self-loop
+    [165, 230], // 5
+    [290, 225], // 6
+    [400, 40], // 7 — isolated, set apart
+  ],
+};
 
 type Op = 'search' | 'insert' | 'delete';
 type HeapOp = 'insert' | 'extractMin' | 'peek' | 'search';
@@ -268,6 +306,87 @@ export function describeSkip(e: SkipListEvent | undefined): string {
       return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
+
+/**
+ * The graph's step caption. It reads the folded model at the active frame, because
+ * the honest wording of a skipped entry depends on *why* it is skipped: a neighbour
+ * already **visited**, or one only **marked** — in DFS, marked on push and still
+ * waiting on the stack, which is exactly where this traversal parts from textbook
+ * recursion. Exported for `VizPanel.test.ts` (a render smoke can't catch a wrong
+ * caption).
+ */
+export function describeGraph(e: GraphEvent | undefined, m: GraphModel): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'graph.start':
+      return e.algo === 'bfs'
+        ? `start at ${e.source}: mark it and put it in the queue (free — marking is not a visit)`
+        : `start at ${e.source}: mark it and push it onto the stack (free — marking is not a visit)`;
+    case 'graph.visit':
+      return e.algo === 'bfs'
+        ? `dequeue ${e.vertex} from the front of the queue and visit it — one vertex-visit`
+        : `pop ${e.vertex} off the top of the stack and visit it — one vertex-visit`;
+    case 'graph.examine': {
+      const deg = m.incident[e.from]?.length ?? 0;
+      const where = `entry ${e.slot + 1} of ${deg} in ${e.from}’s list`;
+      if (e.to === e.from)
+        return `${where} is ${e.from} itself — a self-loop sits in its own list twice, so it costs two edge-visits and leads nowhere new`;
+      const copies = m.edges.filter(([a, b]) => (a === e.from && b === e.to) || (a === e.to && b === e.from)).length;
+      const par = copies > 1 ? ` (one of ${copies} parallel ${e.from}–${e.to} edges — each copy is its own entry)` : '';
+      if (e.discovers) return `${where}: ${e.to} is unmarked → discovered — one edge-visit${par}`;
+      if (m.state[e.to] === 'visited') return `${where}: ${e.to} is already visited → skip, still one edge-visit${par}`;
+      return m.algo === 'dfs'
+        ? `${where}: ${e.to} is already marked — marked when it was pushed and still waiting on the stack, not yet visited — so it is not pushed again (recursive DFS would go there now). Still one edge-visit${par}`
+        : `${where}: ${e.to} is already marked and waiting in the queue → not enqueued twice, still one edge-visit${par}`;
+    }
+    case 'graph.mark':
+      return m.algo === 'dfs'
+        ? `mark ${e.vertex} now, on push — before it is visited — and push it onto the stack (free)`
+        : `mark ${e.vertex} and add it to the back of the queue (free)`;
+    case 'graph.done': {
+      const missed = m.numVertices - e.reached;
+      return missed === 0
+        ? `frontier empty — all ${e.reached} vertices reached`
+        : `frontier empty — reached ${e.reached} of ${m.numVertices}; the ${missed === 1 ? 'other vertex is' : `other ${missed} are`} not connected to the start and cost nothing`;
+    }
+  }
+}
+
+/**
+ * The graph's summary line after a traversal (docs/PLAN.md §8): the cost split into
+ * its two counted parts, **both** traversals' orders and counts (the other one run
+ * untraced), and — when the start's component is not the whole graph — the reached
+ * count and why the total is `V′ + 2E′` rather than `V + 2E`. `E′` is counted here
+ * independently, from the edges with both endpoints reached, so the `= V′ + 2E′`
+ * claim is a check rather than a relabelling (pinned in `VizPanel.test.ts`).
+ */
+export function summarizeGraph(g: GraphAdj, m: GraphModel, source: number, ran: GraphAlgo): string {
+  const bfs = g.bfs(source);
+  const dfs = g.dfs(source);
+  const first = ran === 'bfs' ? { name: 'BFS', t: bfs } : { name: 'DFS', t: dfs };
+  const second = ran === 'bfs' ? { name: 'DFS', t: dfs } : { name: 'BFS', t: bfs };
+  const reachedSet = new Set(first.t.order);
+  const eReached = m.edges.filter(([a, b]) => reachedSet.has(a) && reachedSet.has(b)).length;
+  const v = first.t.reached;
+  const whole = v === m.numVertices;
+  const formula = whole ? `V + 2E = ${v} + 2·${eReached}` : `V′ + 2E′ = ${v} + 2·${eReached}`;
+  const orders = `${first.name} from ${source} → ${first.t.order.join(' ')} · ${second.name} from ${source} → ${second.t.order.join(' ')}`;
+  const cost =
+    bfs.ops === dfs.ops
+      ? `the same ${bfs.ops} ops each (${v} vertex-visits + ${bfs.ops - v} edge-visits = ${formula})${bfs.order.join() === dfs.order.join() ? '' : ', in different orders'}`
+      : `${first.name} ${first.t.ops} ops, ${second.name} ${second.t.ops} ops`;
+  const total = m.numVertices + 2 * m.edges.length;
+  const scope =
+    whole
+      ? `Reached all ${v} vertices, so this is the whole graph’s V + 2E.`
+      : `Reached ${v} of ${m.numVertices} vertices: the rest are not connected to ${source} and cost nothing, so this is ${source}’s component, not the whole graph’s V + 2E = ${total}.`;
+  return `${orders} — ${cost}. ${scope}`;
+}
+
+const GRAPH_OPS: readonly OpSpec<GraphAlgo>[] = [
+  { op: 'bfs', label: 'BFS', needsValue: false },
+  { op: 'dfs', label: 'DFS', needsValue: false },
+];
 
 function ArrayPanel() {
   const ref = useRef<DynArrayF64 | null>(null);
@@ -647,6 +766,52 @@ export function SkipListPanel() {
   );
 }
 
+export function GraphPanel() {
+  const ref = useRef<GraphAdj | null>(null);
+  if (ref.current === null) ref.current = GraphAdj.fromEdges(GRAPH_SEED.edges, GRAPH_SEED.vertices);
+  // The graph is static (the op set here is traversal only), so the base never changes.
+  const base = useMemo(() => graphModel(GRAPH_SEED.vertices, GRAPH_SEED.edges), []);
+  const intro = useMemo(() => {
+    const g = GraphAdj.fromEdges(GRAPH_SEED.edges, GRAPH_SEED.vertices);
+    const b = g.bfs(0);
+    const d = g.dfs(0);
+    return `From 0, BFS visits ${b.order.join(' ')} and DFS ${d.order.join(' ')} — ${b.ops} and ${d.ops} ops.`;
+  }, []);
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<GraphEvent>();
+
+  const onOp = (op: GraphAlgo, value: number) => {
+    const g = ref.current!;
+    // A source must be a real vertex id: `adjLists[1.5]` is undefined (PLAN §10 trap 3).
+    if (!Number.isInteger(value) || value < 0 || value >= g.numVertices()) {
+      setSummary(`no vertex ${value} — the vertices are 0 to ${g.numVertices() - 1} (leave the box blank to start at 0)`);
+      player.loadEvents([]);
+      return;
+    }
+    const events: GraphEvent[] = [];
+    const push = (e: GraphEvent) => events.push(e);
+    if (op === 'bfs') g.bfs(value, push);
+    else g.dfs(value, push);
+    setSummary(summarizeGraph(g, base, value, op));
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldGraph(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>
+        <strong>BFS and DFS cost the same V + 2E and visit in different orders.</strong>{' '}
+        {summary ||
+          `Graph — an undirected adjacency list that keeps parallel edges and self-loops; its op set is a whole-graph traversal, not insert/search/delete. The cost is one vertex-visit per vertex taken off the frontier (a queue for BFS, a stack for DFS) plus one edge-visit per adjacency entry examined. DFS here marks a vertex when it is pushed — not when it is popped, and not by recursion — so watch it skip edges to vertices still waiting on the stack. This graph has a parallel 1–2 edge and a self-loop on 4 (two entries each), and vertex 7 is not connected to 0. ${intro} Run BFS or DFS (blank box = start at 0, or type a start vertex).`}
+      </p>
+      <GraphView model={model} active={active} layout={GRAPH_SEED.layout} />
+      <Controls<GraphEvent, GraphAlgo> player={player} onOp={onOp} caption={describeGraph(active, model)} ops={GRAPH_OPS} placeholder="start vertex" enterOp="bfs" />
+    </>
+  );
+}
+
 const tab = (selected: boolean): React.CSSProperties => ({
   padding: '6px 14px', fontSize: 14, cursor: 'pointer', borderRadius: 6,
   border: '1px solid ' + (selected ? '#4a90d9' : '#ccc'),
@@ -664,6 +829,7 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'heap', label: 'min-heap' },
   { kind: 'trie', label: 'trie (text keys)' },
   { kind: 'skiplist', label: 'skip list' },
+  { kind: 'graph', label: 'graph (BFS / DFS)' },
 ];
 
 function panelFor(kind: Kind) {
@@ -679,6 +845,7 @@ function panelFor(kind: Kind) {
     case 'heap': return <HeapPanel />;
     case 'trie': return <TriePanel />;
     case 'skiplist': return <SkipListPanel />;
+    case 'graph': return <GraphPanel />;
   }
 }
 

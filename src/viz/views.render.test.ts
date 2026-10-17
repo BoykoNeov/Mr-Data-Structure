@@ -15,12 +15,16 @@ import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
 import { TrieView } from './TrieView';
 import { SkipListView } from './SkipListView';
-import { SortedPanel, LinkedPanel, BstPanel, AvlPanel, HeapPanel, TriePanel, SkipListPanel } from './VizPanel';
+import { GraphView } from './GraphView';
+import { GraphAdj } from '../structures/graph';
+import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
+import { SortedPanel, LinkedPanel, BstPanel, AvlPanel, HeapPanel, TriePanel, SkipListPanel, GraphPanel, GRAPH_SEED } from './VizPanel';
 import {
   arrayModel, foldSortedArray, linkedModel, foldLinkedList, bstModel, foldBst,
   avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie, skipModel, foldSkip,
+  graphModel, foldGraph,
 } from './model';
-import type { SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, Tracer } from './events';
+import type { SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, Tracer } from './events';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -284,6 +288,71 @@ describe('SkipListView renders every frame without throwing', () => {
   });
 });
 
+describe('GraphView renders every frame without throwing', () => {
+  // The graph is the only view with three linked panels (drawing, adjacency lists,
+  // frontier) driven by one fold, and the only one drawing parallel edges and
+  // self-loops — a bad (from, slot) → edge lookup would crash mid-stream, at the
+  // first examine of a loop or a second parallel copy, not at the final frame.
+  const corpusGraphs: [string, number, number[]][] = [];
+  for (const raw of graphCorpusText.split('\n')) {
+    const line = raw.trim();
+    const sp = line.indexOf(' ');
+    const tag = sp === -1 ? line : line.slice(0, sp);
+    const rest = sp === -1 ? '' : line.slice(sp + 1);
+    if (tag === 'case') corpusGraphs.push([rest, 0, []]);
+    else if (tag === 'vertices') corpusGraphs[corpusGraphs.length - 1][1] = Number(rest);
+    else if (tag === 'edges') corpusGraphs[corpusGraphs.length - 1][2] = rest.split(/\s+/).filter((t) => t.length > 0).map(Number);
+  }
+  const cases: [string, number, readonly number[], number][] = [
+    ['the seed from 0', GRAPH_SEED.vertices, GRAPH_SEED.edges, 0],
+    ['the seed from its isolated vertex', GRAPH_SEED.vertices, GRAPH_SEED.edges, 7],
+    ['the seed from an out-of-range source (no events)', GRAPH_SEED.vertices, GRAPH_SEED.edges, 99],
+    ['nested self-loops', 2, [0, 0, 0, 0, 0, 1], 0],
+    ['three parallel copies', 2, [0, 1, 0, 1, 0, 1], 0],
+    ...corpusGraphs.map(([name, v, e]): [string, number, readonly number[], number] => [`corpus "${name}"`, v, e, 0]),
+  ];
+  describe.each(['bfs', 'dfs'] as const)('%s', (algo) => {
+    it.each(cases)('%s', (_label, vertices, edges, source) => {
+      const g = GraphAdj.fromEdges(edges, vertices);
+      const before = graphModel(vertices, edges);
+      const events: GraphEvent[] = [];
+      const push = (e: GraphEvent) => events.push(e);
+      if (algo === 'bfs') g.bfs(source, push);
+      else g.dfs(source, push);
+      // The seed renders with its hand-placed layout; everything else on the circle.
+      const layout = edges === GRAPH_SEED.edges ? GRAPH_SEED.layout : undefined;
+      renderEveryFrame(before, events, foldGraph, (model, active) =>
+        renderToStaticMarkup(createElement(GraphView, { model, active, layout })),
+      );
+    });
+  });
+
+  it('renders the empty graph', () => {
+    const html = renderToStaticMarkup(createElement(GraphView, { model: graphModel(0, []), active: undefined }));
+    expect(html).toContain('(empty)');
+  });
+
+  it('draws every parallel copy and self-loop as its own path', () => {
+    // Each is real cost (two adjacency entries), so each must be visible: one <path>
+    // per edge, never one per vertex pair.
+    const m = graphModel(GRAPH_SEED.vertices, GRAPH_SEED.edges);
+    const html = renderToStaticMarkup(createElement(GraphView, { model: m, active: undefined, layout: GRAPH_SEED.layout }));
+    const edgePaths = html.match(/<path d="M [^"]*"[^>]*fill="none"/g) ?? [];
+    expect(edgePaths).toHaveLength(m.edges.length); // 10, including the 1–2 pair and the loop
+    expect(new Set(edgePaths).size).toBe(m.edges.length); // and no two drawn on top of each other
+  });
+
+  it('marks a vertex the finished traversal never reached', () => {
+    const g = GraphAdj.fromEdges(GRAPH_SEED.edges, GRAPH_SEED.vertices);
+    const events: GraphEvent[] = [];
+    g.bfs(0, (e) => events.push(e));
+    const end = foldGraph(graphModel(GRAPH_SEED.vertices, GRAPH_SEED.edges), events);
+    const html = renderToStaticMarkup(createElement(GraphView, { model: end, active: undefined, layout: GRAPH_SEED.layout }));
+    expect(html).toContain('not reached');
+    expect(html).toContain('7 vertex-visits + 20 edge-visits = 27 ops');
+  });
+});
+
 describe('new panels mount without throwing', () => {
   // The views above are pure SVG; the panels add the hook wiring (ref-held
   // structure, usePlayer, the singly↔doubly key-remount). A single SSR pass runs
@@ -315,5 +384,12 @@ describe('new panels mount without throwing', () => {
   });
   it('SkipListPanel renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(SkipListPanel))).toContain('<svg');
+  });
+  it('GraphPanel renders its seeded SVG, the headline, and BFS / DFS buttons', () => {
+    const html = renderToStaticMarkup(createElement(GraphPanel));
+    expect(html).toContain('<svg');
+    expect(html).toContain('BFS and DFS cost the same V + 2E and visit in different orders');
+    expect(html).toContain('>BFS<');
+    expect(html).toContain('>DFS<');
   });
 });

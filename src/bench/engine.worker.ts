@@ -22,6 +22,7 @@ import {
   decodeStringKeys,
   prefixOf,
 } from './stringWorkload';
+import { buildNumericProbes, DEFAULT_PROBE_MIX, type ProbeMix } from './probeMix';
 import {
   measureSweep,
   measureMutationFd,
@@ -55,49 +56,49 @@ interface SearchStruct {
   set_probes(probes: Float64Array): void;
   search_n(k: number): number;
   search_counted(): number;
+  /** Keys held after the build — fewer than `n` for a de-duplicating structure. */
+  len(): number;
   free(): void;
 }
 type SearchStructCtor = new (keys: Float64Array, n: number) => SearchStruct;
 
-const PRESENT_PROBES = 64;
-const ABSENT_PROBES = 64;
-
 /**
- * Build the query workload for size `n`: a spread of keys that are present, plus
- * a block guaranteed absent (just past the max key). The ~50/50 present/absent
- * mix (docs/PLAN.md §6.3) keeps the array's linear-search cost a clean function
- * of `n` while the hash set stays flat.
+ * A measurement runner factory backed by a WASM structure, for `search`. The query workload
+ * for size `n` — a spread of present keys plus a block guaranteed absent just past the max
+ * key — is built by `buildNumericProbes` (./probeMix) at the run's `mix`. Its default is the
+ * calibrated 64 + 64 workload (docs/PLAN.md §6.3), which keeps the array's linear-search
+ * cost a clean function of `n` while the hash set stays flat.
+ *
+ * `mix` is **required**, not defaulted, on purpose: every structure in one run must get the
+ * same probe set (the shared-probes rule), so a structure added to `runSweep` without the
+ * run's mix fails to compile rather than silently measuring the default.
  */
-function buildProbes(keys: Float64Array, n: number): Float64Array {
-  const present = Math.min(PRESENT_PROBES, n);
-  let max = -Infinity;
-  for (let i = 0; i < n; i++) if (keys[i] > max) max = keys[i];
-  if (!Number.isFinite(max)) max = 0; // n === 0 guard
-  const probes = new Float64Array(present + ABSENT_PROBES);
-  for (let i = 0; i < present; i++) {
-    probes[i] = keys[Math.floor((i * n) / present)];
-  }
-  for (let i = 0; i < ABSENT_PROBES; i++) {
-    probes[present + i] = max + 1 + i;
-  }
-  return probes;
-}
-
-/** A measurement runner factory backed by a WASM structure, for `search`. */
 function searchRunnerFactory(
   Ctor: SearchStructCtor,
   keys: Float64Array,
+  mix: ProbeMix,
 ): OpRunnerFactory {
   return (n) => {
     const s = new Ctor(keys.subarray(0, n), n);
-    const probes = buildProbes(keys, n);
+    const probes = buildNumericProbes(keys, n, mix);
     s.set_probes(probes);
+    const stored = s.len();
     return {
       run: (k) => s.search_n(k),
       opCountPerOp: () => s.search_counted() / probes.length,
+      storedSize: () => stored,
       dispose: () => s.free(),
     };
   };
+}
+
+/**
+ * Keys a built structure holds, if it can say (docs/METHODOLOGY.md §4 hurdle 8). Every bench
+ * twin exports `len()`, but the mutation constructors are reached through `as unknown as`
+ * casts the compiler cannot check, so this asks rather than assumes.
+ */
+function storedSizeOf(s: { len?: () => number }): number | undefined {
+  return typeof s.len === 'function' ? s.len() : undefined;
 }
 
 // ── String keys (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5) ──────────────
@@ -117,6 +118,8 @@ interface StringSearchStruct {
   set_probes(offsets: Uint32Array, bytes: Uint8Array): void;
   search_n(k: number): number;
   search_counted(): number;
+  /** Keys held after the build — fewer than `n` for the hash set and the trie on repeats. */
+  len(): number;
   free(): void;
 }
 type StringSearchStructCtor = new (
@@ -130,6 +133,7 @@ interface StringMutationStruct {
   set_churn_key(key: string): void;
   churn_n(k: number): number;
   churn_counted(): number;
+  len?(): number;
   free(): void;
 }
 interface StringMutationStatics {
@@ -145,21 +149,27 @@ type StringMutationStructCtor = (new (
 ) => StringMutationStruct) &
   StringMutationStatics;
 
-/** A string search runner (docs/PLAN.md §6.3), the mirror of {@link searchRunnerFactory}. */
+/**
+ * A string search runner (docs/PLAN.md §6.3), the mirror of {@link searchRunnerFactory} —
+ * and, like it, `mix` is required so all three string structures share one probe set.
+ */
 function stringSearchRunnerFactory(
   Ctor: StringSearchStructCtor,
   offsets: Uint32Array,
   bytes: Uint8Array,
+  mix: ProbeMix,
 ): OpRunnerFactory {
   return (n) => {
     const prefix = prefixOf(offsets, bytes, n);
     const s = new Ctor(prefix.offsets, prefix.bytes, n);
-    const probes = buildStringProbes(decodeStringKeys(offsets, bytes, n));
+    const probes = buildStringProbes(decodeStringKeys(offsets, bytes, n), mix);
     const encoded = encodeStringKeys(probes);
     s.set_probes(encoded.offsets, encoded.bytes);
+    const stored = s.len();
     return {
       run: (k) => s.search_n(k),
       opCountPerOp: () => s.search_counted() / probes.length,
+      storedSize: () => stored,
       dispose: () => s.free(),
     };
   };
@@ -186,9 +196,11 @@ function stringChurnRunnerFactory(
     const prefix = prefixOf(offsets, bytes, n);
     const s = new Ctor(prefix.offsets, prefix.bytes, n);
     s.set_churn_key(churnKeyFor(decodeStringKeys(offsets, bytes, n)));
+    const stored = storedSizeOf(s);
     return {
       run: (k) => s.churn_n(k),
       opCountPerOp: () => s.churn_counted(),
+      ...(stored === undefined ? {} : { storedSize: () => stored }),
       dispose: () => s.free(),
     };
   };
@@ -246,6 +258,8 @@ interface MutationStruct {
   set_churn_key(key: number): void;
   churn_n(k: number): number;
   churn_counted(): number;
+  /** Keys held (see {@link storedSizeOf}); optional because the ctor casts cannot check it. */
+  len?(): number;
   free(): void;
 }
 interface MutationStructStatics {
@@ -273,6 +287,7 @@ interface TreeMutationStruct {
   set_churn_keys(lo: number, hi: number): void;
   churn_n(k: number): number;
   churn_counted(): number;
+  len?(): number;
   free(): void;
 }
 type TreeMutationStructCtor = (new (
@@ -334,9 +349,11 @@ function churnRunnerFactory(
   return (n) => {
     const s = new Ctor(keys.subarray(0, n), n);
     s.set_churn_key(pickKey(keys, n));
+    const stored = storedSizeOf(s);
     return {
       run: (k) => s.churn_n(k),
       opCountPerOp: () => s.churn_counted(),
+      ...(stored === undefined ? {} : { storedSize: () => stored }),
       dispose: () => s.free(),
     };
   };
@@ -362,9 +379,11 @@ function treeChurnRunnerFactory(
   return (n) => {
     const s = new Ctor(keys.subarray(0, n), n);
     s.set_churn_keys(minOfFirst(keys, n) - 1, maxOfFirst(keys, n) + 1);
+    const stored = storedSizeOf(s);
     return {
       run: (k) => s.churn_n(k),
       opCountPerOp: () => s.churn_counted(),
+      ...(stored === undefined ? {} : { storedSize: () => stored }),
       dispose: () => s.free(),
     };
   };
@@ -422,22 +441,24 @@ const api = {
   /**
    * Run the §6.3 search measurement for both Phase 2 structures across `sizes`,
    * timing each point against the worker's `performance.now()` (docs/PLAN.md §6).
-   * `keys` is the marshalled numeric key buffer (transferred in by the caller).
+   * `keys` is the marshalled numeric key buffer (transferred in by the caller). `mix` is
+   * the run's present/absent probe split (./probeMix), one value for every structure.
    */
   async runSweep(
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,
+    mix: ProbeMix = DEFAULT_PROBE_MIX,
   ): Promise<SweepSeries[]> {
     await ready;
     const now = () => performance.now();
-    const array = measureSweep(sizes, searchRunnerFactory(ArrayF64, keys), now, opts);
-    const ll = measureSweep(sizes, searchRunnerFactory(LinkedListF64, keys), now, opts);
-    const sarr = measureSweep(sizes, searchRunnerFactory(SortedArrayF64, keys), now, opts);
-    const hashset = measureSweep(sizes, searchRunnerFactory(HashSetF64, keys), now, opts);
-    const heap = measureSweep(sizes, searchRunnerFactory(MinHeapF64, keys), now, opts);
-    const skiplist = measureSweep(sizes, searchRunnerFactory(SkipListF64, keys), now, opts);
-    const btree = measureSweep(sizes, searchRunnerFactory(BTreeF64, keys), now, opts);
+    const array = measureSweep(sizes, searchRunnerFactory(ArrayF64, keys, mix), now, opts);
+    const ll = measureSweep(sizes, searchRunnerFactory(LinkedListF64, keys, mix), now, opts);
+    const sarr = measureSweep(sizes, searchRunnerFactory(SortedArrayF64, keys, mix), now, opts);
+    const hashset = measureSweep(sizes, searchRunnerFactory(HashSetF64, keys, mix), now, opts);
+    const heap = measureSweep(sizes, searchRunnerFactory(MinHeapF64, keys, mix), now, opts);
+    const skiplist = measureSweep(sizes, searchRunnerFactory(SkipListF64, keys, mix), now, opts);
+    const btree = measureSweep(sizes, searchRunnerFactory(BTreeF64, keys, mix), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
@@ -452,10 +473,11 @@ const api = {
     // mutation costs, both visible on the churn chart below (docs/PLAN.md §8).
     //
     // One bias to read that pair with, and it is the shared probe set's, not the skip
-    // list's: `buildProbes` puts its 64 absent probes at `max + 1 …`, which for the skip
+    // list's: `buildNumericProbes` puts its absent probes (64 at the default mix, all 128
+    // on a misses-only run) at `max + 1 …`, which for the skip
     // list is the *cheapest* query it has — the rightmost staircase runs out of forward
     // links, and a null costs no comparison, where a mid-range absent key fails one per
-    // level. So half this series' workload is its best case and its constant reads low
+    // level. So the absent share of this series' workload (half, by default) is its best case and its constant reads low
     // against the sorted array's, for which the same probes are the worst case. The slope
     // is unaffected (a fixed per-level saving, not a function of n), and the probes stay
     // shared anyway — retuning them per structure is what would end the comparison
@@ -760,24 +782,25 @@ const api = {
     bytes: Uint8Array,
     sizes: number[],
     opts?: MeasureOptions,
+    mix: ProbeMix = DEFAULT_PROBE_MIX,
   ): Promise<SweepSeries[]> {
     await ready;
     const now = () => performance.now();
     const arraystr = measureSweep(
       sizes,
-      stringSearchRunnerFactory(ArrayStr, offsets, bytes),
+      stringSearchRunnerFactory(ArrayStr, offsets, bytes, mix),
       now,
       opts,
     );
     const hashsetstr = measureSweep(
       sizes,
-      stringSearchRunnerFactory(HashSetStr, offsets, bytes),
+      stringSearchRunnerFactory(HashSetStr, offsets, bytes, mix),
       now,
       opts,
     );
     const triestr = measureSweep(
       sizes,
-      stringSearchRunnerFactory(TrieStr, offsets, bytes),
+      stringSearchRunnerFactory(TrieStr, offsets, bytes, mix),
       now,
       opts,
     );
