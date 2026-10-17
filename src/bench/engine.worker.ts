@@ -15,7 +15,9 @@ import init, {
   TrieStr,
   DoublyLinkedListF64,
   RbtF64,
+  GraphAdj,
 } from '../../bench-engine/pkg/bench_engine.js';
+import { measureGraphs, type GraphInput, type GraphTraversalMeasure } from './graphBench';
 import { encodeStringKeys } from '../data/marshal';
 import {
   buildStringProbes,
@@ -878,6 +880,22 @@ const api = {
       opts,
     );
     return [{ structure: 'rbt', op: 'churn', points: churn }, fd.insert, fd.delete];
+  },
+  /**
+   * Run the **graph** traversal measurement (docs/METHODOLOGY.md §2.7): BFS and DFS from
+   * vertex 0 on each graph, in order. The loop is `measureGraphs` (./graphBench, unit-tested
+   * there with the TS twin and a virtual clock); this method only supplies the real bench
+   * twin and the worker clock. The adjacency lists are built before timing and the traversal
+   * reuses preallocated scratch, so the timed region allocates nothing. `edges` buffers are
+   * transferred in by the caller.
+   */
+  async runGraphSweep(
+    graphs: GraphInput[],
+    opts?: MeasureOptions,
+  ): Promise<GraphTraversalMeasure[]> {
+    await ready;
+    const now = () => performance.now();
+    return measureGraphs(graphs, (edges, numVertices) => new GraphAdj(edges, numVertices), now, opts);
   },
 };
 

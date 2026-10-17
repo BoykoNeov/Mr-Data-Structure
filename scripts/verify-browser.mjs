@@ -34,6 +34,7 @@ let revRbt = null;
 let strSearch = null;
 let strMutation = null;
 let strMeta = null;
+let graphProof = null;
 let meta = null;
 let text = '(no text captured)';
 const checks = [];
@@ -761,6 +762,67 @@ try {
     }
   }
 
+  // ── Fourth pass: the **graph** (docs/METHODOLOGY.md §2.7) ──
+  //
+  // The graph is not driven by the dataset picker at all: it has its own data (edges, not
+  // keys), its own section and its own button, and it never runs on page load — so the three
+  // key passes above are untouched by it and their order still holds. It runs after the string
+  // pass and reads only `__graphProof`, which no other pass sets.
+  //
+  // The default graph source is the synthetic connected random family at average degree 4,
+  // so both sweeps run on connected graphs and every traversal reaches every vertex.
+  await page.evaluate(() => {
+    window.__graphProof = undefined;
+  });
+  // Exact name; it deliberately does not match the key runs' /run the sweeps/ locator.
+  await page.getByRole('button', { name: /^measure the graph$/i }).click();
+  await page.waitForFunction(
+    () => window.__graphProof !== undefined || /graph status:\s*error/.test(document.body.innerText),
+    { timeout: 120000 },
+  );
+  graphProof = await page.evaluate(() => window.__graphProof ?? null);
+  want('graph run measured (both sweeps)', graphProof && graphProof.vertexSweep && graphProof.degreeSweep);
+  if (graphProof) {
+    for (const [name, s] of [
+      ['V-sweep', graphProof.vertexSweep],
+      ['degree-sweep', graphProof.degreeSweep],
+    ]) {
+      // The cost identity, checked at runtime on the real bench twin against the reached
+      // component the page computed itself (PLAN §10 trap 4) — clock-free, so exact.
+      want(`graph ${name}: op-count = V′ + 2E′ at every point`, s.countsMatchComponent === true);
+      want(`graph ${name}: BFS and DFS cost the same at every point`, s.bfsEqualsDfs === true);
+      want(`graph ${name}: synthetic graphs are connected (all reached)`, s.allReached === true);
+      want(`graph ${name}: ${s.points.length} points measured (≥ 5)`, s.points.length >= 5);
+    }
+    // The V-sweep on the wall clock: both traversals linear in V′ + 2E′. The band is wide on
+    // the high side on purpose: the sweep grows the graph from cache-resident (1k vertices)
+    // to well past it (50k), so each visit gets a little dearer and the slope can sit above 1
+    // for a reason that is memory, not algorithm (the same call the string array's band makes).
+    for (const t of [graphProof.vertexSweep.bfs, graphProof.vertexSweep.dfs]) {
+      want(
+        `graph V-sweep ${t.op} linear in V′ + 2E′ (slope ${t.slope.toFixed(2)} in 0.7..1.6)`,
+        t.slope >= 0.7 && t.slope <= 1.6,
+      );
+    }
+    // The degree-sweep is the "+E made visible" assertion: V is fixed, so an O(V) traversal
+    // would read flat (ratio ≈ 1, slope ≈ 0). The measured cost must rise with the edges. The
+    // bounds are loose on the low side because a per-vertex visit costs more than a per-edge
+    // read, which flattens the low-degree end (slope below 1 for an honest O(V + E)) — the
+    // point is "clearly rises", not "slope exactly 1". Clock-free, the +2-per-edge identity is
+    // pinned in Rust (`graph_plus_e_term_is_only_visible_when_degree_grows_at_fixed_v`).
+    for (const t of [graphProof.degreeSweep.bfs, graphProof.degreeSweep.dfs]) {
+      const rise = t.lastNanos / t.firstNanos;
+      want(
+        `graph degree-sweep ${t.op} rises with E at fixed V (${rise.toFixed(1)}× over a ${graphProof.degreeSweep.xRatio.toFixed(1)}× V′ + 2E′ range, > 3×)`,
+        rise > 3,
+      );
+      want(
+        `graph degree-sweep ${t.op} slope well above flat (${t.slope.toFixed(2)} in 0.4..1.4)`,
+        t.slope >= 0.4 && t.slope <= 1.4,
+      );
+    }
+  }
+
   ok = checks.length > 0 && checks.every((c) => c.pass);
 } catch (err) {
   logs.push(`[harness] ${err.message}`);
@@ -817,6 +879,10 @@ if (strSearch) {
 if (strMutation) {
   console.log('--- string mutation proof ---');
   console.log(JSON.stringify(strMutation, null, 2));
+}
+if (graphProof) {
+  console.log('--- graph proof ---');
+  console.log(JSON.stringify(graphProof, null, 2));
 }
 if (meta) {
   console.log('--- compare meta (uniform pass) ---');

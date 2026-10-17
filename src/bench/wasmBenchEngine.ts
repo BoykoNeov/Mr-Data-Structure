@@ -2,6 +2,7 @@ import * as Comlink from 'comlink';
 import type { BenchEngine } from './BenchEngine';
 import type { BenchWorkerApi } from './engine.worker';
 import type { MeasureOptions, SweepSeries } from './measure';
+import type { GraphInput, GraphTraversalMeasure } from './graphBench';
 import type { ProbeMix } from './probeMix';
 
 /**
@@ -133,6 +134,18 @@ class WasmBenchEngine implements BenchEngine {
   ): Promise<SweepSeries[]> {
     // Transfer the key buffer (docs/PLAN.md risk R7) — detaches `keys` here.
     return this.api.runRbtMutationSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts);
+  }
+
+  runGraphSweep(
+    graphs: GraphInput[],
+    opts?: MeasureOptions,
+  ): Promise<GraphTraversalMeasure[]> {
+    // Every graph's edge buffer is transferred (docs/PLAN.md risk R7) — detaches them here.
+    // Each must own its buffer: one buffer twice in a transfer list is a DataCloneError.
+    return this.api.runGraphSweep(
+      Comlink.transfer(graphs, graphs.map((g) => g.edges.buffer)),
+      opts,
+    );
   }
 
   dispose(): void {

@@ -19,6 +19,7 @@ import { SlopeChart } from './SlopeChart';
 import { download, downloadBlob, toCsv, toJson } from './export';
 import { plotCanvasOf, renderSheet, type ChartShot } from './png';
 import { DllChurnCaveat, DllSearchNote, dllSheetNote } from './DoublyListNotes';
+import { GraphCompareSection } from './GraphCompareSection';
 import { DEFAULT_PROBE_MIX, describeMix } from '../bench/probeMix';
 import { ProbeMixControl, mixNotes, shareWord } from './ProbeMixControl';
 import { storedSizeNotes } from './storedSize';
@@ -709,6 +710,15 @@ export function CompareSection() {
         </>
       )}
 
+      {/* The graph has its own data, op set and x-axis, so its own section — measured on
+          request, sharing this engine (docs/METHODOLOGY.md §2.7). */}
+      <GraphCompareSection
+        engineOf={() => engineRef.current}
+        busy={busy}
+        signal={signal}
+        showTheory={showTheory}
+        showSpread={showSpread}
+      />
     </section>
   );
 }

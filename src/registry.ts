@@ -54,11 +54,68 @@ export interface StructureInfo {
   readonly shapeSensitive: boolean;
 }
 
+/**
+ * The ids of the structures that store **keys** — every structure but the graph. Only these
+ * have an {@link OpComplexity}: a graph has no insert/search/delete of a key, so it gets
+ * its own {@link GraphStructureInfo} instead of false theory in those slots
+ * (docs/PLAN.md §8, risk R6; docs/METHODOLOGY.md §2.7).
+ */
+export type KeyStructureId = Exclude<StructureId, 'graph'>;
+
+/**
+ * The graph's theoretical classes, in its **own** notation. Its size has two axes, so the
+ * classes are written in `V` and `E` rather than `n` — and the chart's x-axis is
+ * `V' + 2E'` (the reached component's vertex-visits + edge-visits), never `n`.
+ */
+export type GraphComplexity = 'O(1)' | 'O(V + E)';
+
+/**
+ * Registry entry for the **graph** (docs/PLAN.md §8 "Specialized", Phase 6) — a deliberately
+ * different shape from {@link StructureInfo}. No `keyType` (it stores edges, not keys), no
+ * `average`/`worst` {@link OpComplexity} (it has no search/delete/churn to fill them with),
+ * no `shapeSensitive` (its cost is `V + 2E` on every edge order). Its two operations are
+ * named for what they are: add an edge, and traverse the whole reachable graph.
+ */
+export interface GraphStructureInfo {
+  readonly id: 'graph';
+  readonly label: string;
+  readonly family: 'graph';
+  /**
+   * Always absent: a graph stores edges, not keys, so it has no key type to share a chart
+   * on. Declared (as `never`) only so code that reads `keyType` off an arbitrary registry
+   * entry still typechecks — and reads `undefined`, which matches neither run.
+   */
+  readonly keyType?: never;
+  /** Chart colour — tab10 grey, unused by every key structure. */
+  readonly color: string;
+  /** The unit the op-count signal counts: vertex-visits + edge-visits (`V + 2E`, connected). */
+  readonly costMetric: string;
+  readonly mechanism: string;
+  /** Textbook classes. No average/worst split: a traversal costs `V + 2E` on any input. */
+  readonly ops: {
+    /** Push each endpoint onto the other's list — no dedup, so O(1) (a multigraph). */
+    readonly addEdge: GraphComplexity;
+    /** BFS and DFS alike: every reached vertex once, every adjacency entry once. */
+    readonly traversal: GraphComplexity;
+  };
+}
+
+/**
+ * The registry's shape: a {@link StructureInfo} for every key structure, and the graph's own
+ * {@link GraphStructureInfo} under `'graph'`. Indexing it with an arbitrary `StructureId`
+ * yields the union, so the common fields (`id`, `label`, `color`, `costMetric`) read as
+ * before, while the key-only theory (`average`/`worst`) needs the graph narrowed away first —
+ * which is the point: nothing can read search/delete theory off the graph by accident.
+ */
+export type Registry = {
+  readonly [K in StructureId]: K extends 'graph' ? GraphStructureInfo : StructureInfo;
+};
+
 const O1 = 'O(1)';
 const OLOG = 'O(log n)';
 const ON = 'O(n)';
 
-export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
+export const REGISTRY: Registry = {
   array: {
     id: 'array',
     label: 'unsorted array',
@@ -341,7 +398,26 @@ export const REGISTRY: Readonly<Record<StructureId, StructureInfo>> = {
     worst: { search: OLOG, insert: OLOG, delete: OLOG, churn: OLOG },
     shapeSensitive: false,
   },
+  /**
+   * The **graph** (docs/PLAN.md §8 "Specialized", Phase 6) — an undirected adjacency-list
+   * multigraph, and the third own-op-set structure after the heap and (by data type) the
+   * trie. Its own info shape ({@link GraphStructureInfo}): it is measured in its own Compare
+   * section against `V' + 2E'`, the reached component's size, and is **never canonical**
+   * ({@link isCanonical}) — a traversal is not an insert, a search or a delete of a key.
+   */
+  graph: {
+    id: 'graph',
+    label: 'graph (adjacency list)',
+    family: 'graph',
+    color: '#7f7f7f',
+    costMetric: 'vertex-visits + edge-visits',
+    mechanism: 'each vertex keeps a list of its neighbours; a traversal takes every reached vertex once and reads every entry of its list once',
+    ops: { addEdge: 'O(1)', traversal: 'O(V + E)' },
+  },
 };
+
+/** The graph's registry entry — its own shape, not a {@link StructureInfo}. */
+export const GRAPH: GraphStructureInfo = REGISTRY.graph;
 
 /**
  * Every **numeric-key** structure, in catalogue order (§8: linear, hashing, trees/heaps,
@@ -366,10 +442,12 @@ export const STRUCTURES: readonly StructureInfo[] = [
  * the only ones comparable against each other (docs/PLAN.md §4.1, §8, risk R6). The
  * min-heap is excluded: its op set is insert / peek / extract-min, so putting it on a
  * shared chart would invite a comparison that isn't meaningful. The Compare UI filters
- * the shared charts through this list and gives the heap its own section.
+ * the shared charts through this list and gives the heap its own section. Filtered through
+ * {@link isCanonical} rather than an inline id test, so the graph's exclusion holds here too
+ * even if it is ever added to {@link STRUCTURES}.
  */
 export const CANONICAL_STRUCTURES: readonly StructureInfo[] = STRUCTURES.filter(
-  (s) => s.id !== 'heap',
+  (s) => isCanonical(s.id),
 );
 
 /**
@@ -401,7 +479,9 @@ export const STRING_STRUCTURES: readonly StructureInfo[] = [
  * filter a merged list, filter on both.
  */
 export function isCanonical(id: StructureId): boolean {
-  return id !== 'heap';
+  // The graph is excluded as well as the heap: its op set is add-edge + traversal, and its
+  // size has two axes, so it can never share an insert/search/delete chart (risk R6).
+  return id !== 'heap' && id !== 'graph';
 }
 
 /** The input order the dataset arrived in, as far as the theoretical overlay cares. */
@@ -418,6 +498,11 @@ export function theoreticalClass(
   shape: InputShape = 'random',
 ): ComplexityClass {
   const info = REGISTRY[structure];
+  if (info.family === 'graph') {
+    // A graph has no insert/search/delete/churn theory to overlay — its classes are in V and
+    // E (`GRAPH.ops`), and its charts are drawn by `ui/GraphChart`, never by `SweepChart`.
+    throw new Error('the graph has no insert/search/delete theory; read GRAPH.ops instead');
+  }
   const table = shape === 'sorted' && info.shapeSensitive ? info.worst : info.average;
   return table[op];
 }
