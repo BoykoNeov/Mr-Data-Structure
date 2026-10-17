@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 // The committed corpus is loaded as a raw string via Vite's `?raw` (typed by
 // vite/client) — no Node `fs`, matching the other conformance tests.
 import corpusText from '../../conformance/corpus-ll.txt?raw';
-import { SinglyLinkedListF64, DoublyLinkedListF64, type LinkedListF64 } from './linkedList';
+import { SinglyLinkedListF64, DoublyLinkedListF64, type LinkedListTwin } from './linkedList';
 
 /**
  * Cross-language conformance for the linked list (docs/PLAN.md §8 Linear, §12, risk R1).
@@ -108,7 +108,7 @@ function parseCorpus(text: string): Case[] {
 const corpus = parseCorpus(corpusText);
 
 // Both teaching twins share one algorithm; both must reproduce the single Rust corpus.
-const twins: ReadonlyArray<[string, (keys: readonly number[]) => LinkedListF64]> = [
+const twins: ReadonlyArray<[string, (keys: readonly number[]) => LinkedListTwin]> = [
   ['SinglyLinkedListF64', (keys) => SinglyLinkedListF64.fromKeys(keys)],
   ['DoublyLinkedListF64', (keys) => DoublyLinkedListF64.fromKeys(keys)],
 ];

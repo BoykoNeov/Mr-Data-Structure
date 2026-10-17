@@ -14,10 +14,11 @@
  */
 
 import type {
-  ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
+  ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
   TrieEvent, SkipListEvent, GraphEvent, GraphAlgo,
 } from './events';
 import type { BstShape } from '../structures/bst';
+import type { DoublyShape } from '../structures/linkedList';
 import type { TrieShape } from '../structures/trie';
 
 /** A stored array cell with a stable identity for animation. */
@@ -224,6 +225,93 @@ export function reduceLinkedList(m: LinkedListModel, e: LinkedListEvent): Linked
 
 export function foldLinkedList(initial: LinkedListModel, events: readonly LinkedListEvent[]): LinkedListModel {
   return events.reduce(reduceLinkedList, initial);
+}
+
+// ── Doubly linked list ──────────────────────────────────────────────────────
+// Unlike the singly model this one stores **real links** (by node id), because the
+// doubly animation's subject is the pointer writes: mid-delete the removed node is
+// still drawn, already bypassed by both of its neighbours, until `ll.unlink` drops it;
+// mid-insert the new node is drawn before anything points at it. Deriving the arrows
+// from display order (as the singly view does) would draw neither state. The fold is
+// checked against the twin's own links after every op (`model.test.ts`), so the
+// picture is the structure's, not a reconstruction.
+
+/** A drawn doubly-list node: its links name other nodes' ids (`null` = ∅). */
+export interface DoublyNode {
+  readonly id: number;
+  readonly value: number;
+  readonly next: number | null;
+  readonly prev: number | null;
+}
+
+/** Nodes in display order (op-start head→tail, plus a just-inserted head or a
+ * not-yet-dropped removed node), the two handles (ids), and the next free id. */
+export interface DoublyListModel {
+  readonly nodes: readonly DoublyNode[];
+  readonly head: number | null;
+  readonly tail: number | null;
+  readonly nextId: number;
+}
+
+/** Build the model from the twin's positional snapshot; ids start as positions. */
+export function doublyModel(shape: DoublyShape): DoublyListModel {
+  return {
+    nodes: shape.values.map((value, id) => ({ id, value, next: shape.next[id], prev: shape.prev[id] })),
+    head: shape.head,
+    tail: shape.tail,
+    nextId: shape.values.length,
+  };
+}
+
+/** The model's links by display position — comparable to the twin's `snapshot()`. A
+ * link to an id no longer drawn maps to `-1`, as the twin maps an unreachable slot. */
+export function doublyShapeOf(m: DoublyListModel): DoublyShape {
+  const pos = new Map(m.nodes.map((n, p) => [n.id, p] as const));
+  const at = (id: number | null): number | null => (id === null ? null : (pos.get(id) ?? -1));
+  return {
+    values: m.nodes.map((n) => n.value),
+    next: m.nodes.map((n) => at(n.next)),
+    prev: m.nodes.map((n) => at(n.prev)),
+    head: at(m.head),
+    tail: at(m.tail),
+  };
+}
+
+/** Fold one doubly-list event. `ll.insertHead` prepends an unlinked node; each
+ * `dll.relink` writes one link (or handle) exactly as the event names it; `ll.unlink`
+ * drops the node at that position — by then nothing points at it. Visits and results
+ * are highlight-only. */
+export function reduceDoublyList(m: DoublyListModel, e: DoublyListEvent): DoublyListModel {
+  switch (e.kind) {
+    case 'll.insertHead':
+      return { ...m, nodes: [{ id: m.nextId, value: e.value, next: null, prev: null }, ...m.nodes], nextId: m.nextId + 1 };
+    case 'dll.relink': {
+      const to = e.to === null ? null : m.nodes[e.to].id;
+      if (e.from === null) return e.link === 'next' ? { ...m, head: to } : { ...m, tail: to };
+      const from = e.from;
+      return { ...m, nodes: m.nodes.map((n, i) => (i === from ? { ...n, [e.link]: to } : n)) };
+    }
+    case 'll.unlink':
+      return { ...m, nodes: m.nodes.filter((_, i) => i !== e.index) };
+    default:
+      return m;
+  }
+}
+
+export function foldDoublyList(initial: DoublyListModel, events: readonly DoublyListEvent[]): DoublyListModel {
+  return events.reduce(reduceDoublyList, initial);
+}
+
+/** Ids reachable from the head by following `next` (bounded, so a bad frame cannot
+ * hang the view). A drawn node outside this set is *not in the list*: a new node no
+ * handle points at yet, or a removed one its neighbours already skip. */
+export function doublyReachable(m: DoublyListModel): ReadonlySet<number> {
+  const byId = new Map(m.nodes.map((n) => [n.id, n] as const));
+  const seen = new Set<number>();
+  for (let cur = m.head; cur !== null && !seen.has(cur) && seen.size <= m.nodes.length; cur = byId.get(cur)?.next ?? null) {
+    seen.add(cur);
+  }
+  return seen;
 }
 
 // ── Binary search tree (docs/PLAN.md §8, "Trees / heaps", unbalanced) ────────

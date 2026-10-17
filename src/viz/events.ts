@@ -246,6 +246,30 @@ export interface LlResult {
 
 export type LinkedListEvent = LlVisit | LlInsertHead | LlUnlink | LlResult;
 
+/**
+ * One pointer write of the **doubly** list — the steps a back pointer adds (docs/PLAN.md
+ * §8; docs/METHODOLOGY.md §2.11). Not a cost event: the node-visit counter never ticks
+ * on a link update, on either list, which is why the doubly list's counts equal the
+ * singly list's exactly while it does more writes.
+ *
+ * Addressing (duplicates rule out values): `from` / `to` are **display positions** —
+ * indices into the list's nodes as drawn at that frame, which change only on
+ * `ll.insertHead` (the new node is prepended, still unlinked) and `ll.unlink` (the
+ * bypassed node is dropped). So a delete's two relinks name the node *being removed*
+ * by its op-start position even though the forward walk can no longer reach it.
+ * `from: null` is the list's own handle in that direction — `head` for a `next`
+ * write, `tail` for a `prev` write; `to: null` is ∅ (end of the list that way).
+ */
+export interface DllRelink {
+  readonly kind: 'dll.relink';
+  readonly link: 'next' | 'prev';
+  readonly from: number | null;
+  readonly to: number | null;
+}
+
+/** The doubly list's stream: the singly list's events plus its pointer writes. */
+export type DoublyListEvent = LinkedListEvent | DllRelink;
+
 // ── Binary search tree (docs/PLAN.md §8, "Trees / heaps", unbalanced) ───────
 //
 // Nodes are addressed by a **root path** — the sequence of left/right steps from
@@ -812,7 +836,7 @@ export type VizEvent =
   | ArrayEvent
   | HashSetEvent
   | SortedArrayEvent
-  | LinkedListEvent
+  | DoublyListEvent
   | BstEvent
   | AvlEvent
   | HeapEvent
@@ -836,6 +860,8 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   'hs.probe',
   'sarr.compare',
   'll.visit',
+  // Doubly list: `dll.relink` is deliberately absent — a pointer write is not a
+  // node-visit, so the doubly list's cost events equal the singly list's.
   // BST: the in-order-successor descend (`bst.descend`) follows pointers, not
   // key comparisons, so only `bst.compare` is a cost event (see the convention
   // note above and risk R1). This holds for search, insert, *and* delete.

@@ -10,6 +10,7 @@ import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
+import { DoublyListView } from './DoublyListView';
 import { BstView } from './BstView';
 import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
@@ -18,13 +19,13 @@ import { SkipListView } from './SkipListView';
 import { GraphView } from './GraphView';
 import { GraphAdj } from '../structures/graph';
 import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
-import { SortedPanel, LinkedPanel, BstPanel, AvlPanel, HeapPanel, TriePanel, SkipListPanel, GraphPanel, GRAPH_SEED } from './VizPanel';
+import { SortedPanel, LinkedPanel, DoublyPanel, DOUBLY_INTRO, BstPanel, AvlPanel, HeapPanel, TriePanel, SkipListPanel, GraphPanel, GRAPH_SEED } from './VizPanel';
 import {
-  arrayModel, foldSortedArray, linkedModel, foldLinkedList, bstModel, foldBst,
+  arrayModel, foldSortedArray, linkedModel, foldLinkedList, doublyModel, foldDoublyList, bstModel, foldBst,
   avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie, skipModel, foldSkip,
   graphModel, foldGraph,
 } from './model';
-import type { SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, Tracer } from './events';
+import type { SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, Tracer } from './events';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -76,11 +77,8 @@ describe('SortedArrayView renders every frame without throwing', () => {
   });
 });
 
-describe.each([
-  ['singly', false, SinglyLinkedListF64],
-  ['doubly', true, DoublyLinkedListF64],
-] as const)('LinkedListView (%s) renders every frame without throwing', (_label, doubly, List) => {
-  const cases: [string, number[], (l: InstanceType<typeof List>, t: Tracer<LinkedListEvent>) => void][] = [
+describe('LinkedListView (singly) renders every frame without throwing', () => {
+  const cases: [string, number[], (l: SinglyLinkedListF64, t: Tracer<LinkedListEvent>) => void][] = [
     ['search found', [10, 20, 30, 40], (l, t) => l.search(20, t)],
     ['search absent', [10, 20, 30, 40], (l, t) => l.search(99, t)],
     ['insert head', [10, 20, 30], (l, t) => l.insert(5, t)],
@@ -89,20 +87,64 @@ describe.each([
     ['delete absent', [10, 20, 30], (l, t) => l.delete(99, t)],
   ];
   it.each(cases)('%s', (_c, build, op) => {
-    const l = List.fromKeys(build);
+    const l = SinglyLinkedListF64.fromKeys(build);
     const before = linkedModel(l.keysInOrder());
     const events: LinkedListEvent[] = [];
     op(l, (e) => events.push(e));
     renderEveryFrame(before, events, foldLinkedList, (model, active) =>
-      renderToStaticMarkup(createElement(LinkedListView, { model, active, doubly })),
+      renderToStaticMarkup(createElement(LinkedListView, { model, active })),
     );
   });
 
   it('renders the empty list', () => {
+    const html = renderToStaticMarkup(createElement(LinkedListView, { model: linkedModel([]), active: undefined }));
+    expect(html).toContain('(empty)');
+  });
+});
+
+describe('DoublyListView renders every frame without throwing', () => {
+  const cases: [string, number[], (l: DoublyLinkedListF64, t: Tracer<DoublyListEvent>) => void][] = [
+    ['search found', [10, 20, 30, 40], (l, t) => l.search(20, t)],
+    ['search absent', [10, 20, 30, 40], (l, t) => l.search(99, t)],
+    ['insert head', [10, 20, 30], (l, t) => l.insert(5, t)],
+    ['insert into empty', [], (l, t) => l.insert(5, t)],
+    ['delete middle', [10, 20, 30, 40], (l, t) => l.delete(30, t)],
+    ['delete head', [10, 20, 30], (l, t) => l.delete(30, t)],
+    ['delete tail', [10, 20, 30], (l, t) => l.delete(10, t)],
+    ['delete only node', [10], (l, t) => l.delete(10, t)],
+    ['delete absent', [10, 20, 30], (l, t) => l.delete(99, t)],
+  ];
+  it.each(cases)('%s', (_c, build, op) => {
+    const l = DoublyLinkedListF64.fromKeys(build);
+    const before = doublyModel(l.snapshot());
+    const events: DoublyListEvent[] = [];
+    op(l, (e) => events.push(e));
+    renderEveryFrame(before, events, foldDoublyList, (model, active) =>
+      renderToStaticMarkup(createElement(DoublyListView, { model, active })),
+    );
+  });
+
+  it('mid-delete draws a bypass arc and the removed node dashed; a written link is highlighted', () => {
+    const l = DoublyLinkedListF64.fromKeys([10, 20, 30, 40]); // 40 → 30 → 20 → 10
+    const before = doublyModel(l.snapshot());
+    const events: DoublyListEvent[] = [];
+    l.delete(30, (e) => events.push(e));
+    const firstWrite = events.findIndex((e) => e.kind === 'dll.relink');
     const html = renderToStaticMarkup(
-      createElement(LinkedListView, { model: linkedModel([]), active: undefined, doubly }),
+      createElement(DoublyListView, { model: foldDoublyList(before, events.slice(0, firstWrite + 1)), active: events[firstWrite] }),
+    );
+    expect(html).toContain(' Q'); // the next-bypass arcs over the removed node
+    expect(html).toContain('#1f6fd1'); // the just-written link
+    expect(html).toContain('stroke-dasharray'); // the bypassed node is not in the list
+  });
+
+  it('renders the empty list with both handles at ∅', () => {
+    const html = renderToStaticMarkup(
+      createElement(DoublyListView, { model: doublyModel(new DoublyLinkedListF64().snapshot()), active: undefined }),
     );
     expect(html).toContain('(empty)');
+    expect(html).toContain('head ∅');
+    expect(html).toContain('∅ tail');
   });
 });
 
@@ -355,18 +397,20 @@ describe('GraphView renders every frame without throwing', () => {
 
 describe('new panels mount without throwing', () => {
   // The views above are pure SVG; the panels add the hook wiring (ref-held
-  // structure, usePlayer, the singly↔doubly key-remount). A single SSR pass runs
+  // structure, usePlayer). A single SSR pass runs
   // those hooks (useEffect is skipped, so no interval leaks) — this catches a
   // mount-time render crash the browser gate would miss (it only drives the sweep
-  // tab). The key-remount *behavior* still needs a real click to verify.
+  // tab).
   it('SortedPanel renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(SortedPanel))).toContain('<svg');
   });
   it('LinkedPanel (singly) renders its seeded SVG', () => {
-    expect(renderToStaticMarkup(createElement(LinkedPanel, { doubly: false }))).toContain('<svg');
+    expect(renderToStaticMarkup(createElement(LinkedPanel))).toContain('<svg');
   });
-  it('LinkedPanel (doubly) renders its seeded SVG', () => {
-    expect(renderToStaticMarkup(createElement(LinkedPanel, { doubly: true }))).toContain('<svg');
+  it('DoublyPanel renders its seeded SVG and the equal-visits intro', () => {
+    const html = renderToStaticMarkup(createElement(DoublyPanel));
+    expect(html).toContain('<svg');
+    expect(html).toContain(DOUBLY_INTRO.slice(0, 40));
   });
   it('BstPanel renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(BstPanel))).toContain('<svg');

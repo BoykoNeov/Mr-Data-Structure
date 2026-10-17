@@ -10,12 +10,13 @@ import { TrieStr, type TrieShape } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import { countCostEvents } from './events';
 import { GRAPH_SEED } from './VizPanel';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList,
+  doublyModel, foldDoublyList, doublyShapeOf, doublyReachable,
   bstModel, foldBst, type BstDisplayNode,
   avlModel, foldAvl, type AvlDisplayNode,
   heapModel, foldHeap,
@@ -184,8 +185,8 @@ describe('sorted-array fold mirrors the structure', () => {
   });
 });
 
-describe('linked-list fold mirrors the structure (singly + doubly)', () => {
-  for (const List of [SinglyLinkedListF64, DoublyLinkedListF64]) {
+describe('linked-list fold mirrors the structure (singly)', () => {
+  for (const List of [SinglyLinkedListF64]) {
     describe(List.name, () => {
       it('head insert reverses input order and folds to the structure', () => {
         const l = List.fromKeys([10, 20, 30]); // head-insert ⇒ 30→20→10
@@ -231,6 +232,85 @@ describe('linked-list fold mirrors the structure (singly + doubly)', () => {
       });
     });
   }
+});
+
+/**
+ * The doubly list's fold holds real links, so it is checked against the twin's own
+ * links (`snapshot()`, positional), not just its key order: a fold that wrote a link to
+ * the wrong node — or a relink event naming the wrong position — would still fold to the
+ * right key order once `ll.unlink` dropped the node, and only the link comparison sees
+ * it. Every intermediate frame is checked to be a coherent drawing too.
+ */
+describe('doubly-list fold reproduces the twin’s links (not just its order)', () => {
+  const run = (keys: number[], op: (l: DoublyLinkedListF64, push: (e: DoublyListEvent) => void) => void) => {
+    const l = DoublyLinkedListF64.fromKeys(keys);
+    const before = doublyModel(l.snapshot());
+    const events: DoublyListEvent[] = [];
+    op(l, (e) => events.push(e));
+    return { l, before, events };
+  };
+  const frames = (before: ReturnType<typeof doublyModel>, events: readonly DoublyListEvent[]) =>
+    Array.from({ length: events.length + 1 }, (_, f) => foldDoublyList(before, events.slice(0, f)));
+
+  it('the starting model is the snapshot, round-trip', () => {
+    const l = DoublyLinkedListF64.fromKeys([10, 20, 30, 40]);
+    expect(doublyShapeOf(doublyModel(l.snapshot()))).toEqual(l.snapshot());
+  });
+
+  it.each([
+    ['insert into a list', [10, 20, 30], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.insert(5, p)],
+    ['insert into an empty list', [], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.insert(5, p)],
+    ['delete the head', [10, 20, 30, 40], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.delete(40, p)],
+    ['delete a middle node', [10, 20, 30, 40], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.delete(20, p)],
+    ['delete the tail', [10, 20, 30, 40], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.delete(10, p)],
+    ['delete the only node', [7], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.delete(7, p)],
+    ['delete a duplicate (first copy only)', [5, 9, 5], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.delete(5, p)],
+    ['delete an absent key', [1, 2, 3], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.delete(99, p)],
+    ['search', [1, 2, 3], (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => l.search(2, p)],
+  ])('%s: the folded links equal the twin’s, and every frame is coherent', (_label, keys, op) => {
+    const { l, before, events } = run(keys, op);
+    expect(doublyShapeOf(foldDoublyList(before, events))).toEqual(l.snapshot());
+    for (const m of frames(before, events)) {
+      const ids = m.nodes.map((n) => n.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      // no link ever names a node that is not drawn (the removed node is dropped only
+      // after both neighbours stopped pointing at it)
+      const drawn = new Set(ids);
+      for (const id of [m.head, m.tail, ...m.nodes.flatMap((n) => [n.next, n.prev])]) {
+        if (id !== null) expect(drawn.has(id)).toBe(true);
+      }
+    }
+  });
+
+  it('mid-delete the removed node is still drawn but no longer reachable from head', () => {
+    const { before, events } = run([10, 20, 30, 40], (l, p) => l.delete(30, p)); // 40 → 30 → 20 → 10
+    const unlinkAt = events.findIndex((e) => e.kind === 'll.unlink');
+    const bypassed = foldDoublyList(before, events.slice(0, unlinkAt));
+    expect(bypassed.nodes.map((n) => n.value)).toEqual([40, 30, 20, 10]);
+    const reach = doublyReachable(bypassed);
+    expect(bypassed.nodes.filter((n) => !reach.has(n.id)).map((n) => n.value)).toEqual([30]);
+  });
+
+  it('mid-insert the new node is drawn before anything points at it', () => {
+    const { before, events } = run([10, 20], (l, p) => l.insert(5, p));
+    const created = foldDoublyList(before, events.slice(0, 1));
+    expect(created.nodes[0]).toMatchObject({ value: 5, next: null, prev: null });
+    expect(doublyReachable(created).has(created.nodes[0].id)).toBe(false);
+  });
+
+  it('a long random stream folds op by op to the twin’s links', () => {
+    const l = new DoublyLinkedListF64();
+    let x = 12345;
+    for (let step = 0; step < 400; step++) {
+      x = (Math.imul(x, 1103515245) + 12345) >>> 0;
+      const key = (x >>> 16) % 9;
+      const before = doublyModel(l.snapshot());
+      const events: DoublyListEvent[] = [];
+      if ((x >>> 8) % 3 === 0) l.delete(key, (e) => events.push(e));
+      else l.insert(key, (e) => events.push(e));
+      expect(doublyShapeOf(foldDoublyList(before, events))).toEqual(l.snapshot());
+    }
+  });
 });
 
 describe('bst fold mirrors the structure', () => {

@@ -16,7 +16,7 @@ export { DynArrayStr } from './dynArrayStr';
 export { HashSetStr } from './hashSetStr';
 export { TrieStr } from './trie';
 export { SortedArrayF64 } from './sortedArray';
-export { LinkedListF64, SinglyLinkedListF64, DoublyLinkedListF64 } from './linkedList';
+export { LinkedListF64, SinglyLinkedListF64, DoublyLinkedListF64, type LinkedListTwin, type DoublyShape } from './linkedList';
 export { BstF64, type BstShape } from './bst';
 export { AvlF64, type AvlShape } from './avl';
 export { MinHeapF64 } from './heap';

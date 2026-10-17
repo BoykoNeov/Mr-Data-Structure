@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
-import { countCostEvents, type SortedArrayEvent, type LinkedListEvent } from './events';
+import { countCostEvents, type SortedArrayEvent, type DoublyListEvent } from './events';
 
 /**
  * The step-event ↔ op-count invariant (docs/PLAN.md §2.1, the Phase 3 honesty
@@ -42,7 +42,7 @@ describe.each([
 
   it.each(probes)('search(%i)', (p) => {
     const l = List.fromKeys(seed);
-    const events: LinkedListEvent[] = [];
+    const events: DoublyListEvent[] = [];
     const r = l.search(p, (e) => events.push(e));
     expect(countCostEvents(events)).toBe(r.ops);
     expect(events[events.length - 1]).toEqual({ kind: 'll.result', found: r.found });
@@ -50,7 +50,7 @@ describe.each([
 
   it.each(probes)('delete(%i)', (p) => {
     const l = List.fromKeys(seed);
-    const events: LinkedListEvent[] = [];
+    const events: DoublyListEvent[] = [];
     const r = l.delete(p, (e) => events.push(e));
     // delete cost is pure node-visits (the unlink carries no cost event).
     expect(countCostEvents(events)).toBe(r.ops);
@@ -59,8 +59,41 @@ describe.each([
 
   it('insert performs zero node-visits (O(1) head)', () => {
     const l = List.fromKeys(seed);
-    const events: LinkedListEvent[] = [];
+    const events: DoublyListEvent[] = [];
     l.insert(7, (e) => events.push(e));
     expect(countCostEvents(events)).toBe(0);
+  });
+});
+
+/**
+ * The doubly list's pointer writes are steps on screen but never cost: the node-visit
+ * count is the singly list's on the same sequence, so the cost-event count must be too.
+ * Its writes are pinned at what the Rust twin does — 3 per insert, 2 per hit delete,
+ * none on a search or a miss.
+ */
+describe('DoublyLinkedListF64: pointer writes are steps, not cost', () => {
+  const seed = [5, 12, 19, 27, 33, 41, 41, 58];
+  const writes = (events: readonly DoublyListEvent[]) => events.filter((e) => e.kind === 'dll.relink').length;
+
+  it.each([5, 27, 41, 58, 1000])('delete(%i): same cost events as the singly list; 2 writes on a hit', (p) => {
+    const d: DoublyListEvent[] = [];
+    const s: DoublyListEvent[] = [];
+    const r = DoublyLinkedListF64.fromKeys(seed).delete(p, (e) => d.push(e));
+    SinglyLinkedListF64.fromKeys(seed).delete(p, (e) => s.push(e));
+    expect(countCostEvents(d)).toBe(countCostEvents(s));
+    expect(writes(d)).toBe(r.removed ? 2 : 0);
+  });
+
+  it('insert: zero cost events and three writes', () => {
+    const d: DoublyListEvent[] = [];
+    DoublyLinkedListF64.fromKeys(seed).insert(7, (e) => d.push(e));
+    expect(countCostEvents(d)).toBe(0);
+    expect(writes(d)).toBe(3);
+  });
+
+  it('search: no writes', () => {
+    const d: DoublyListEvent[] = [];
+    DoublyLinkedListF64.fromKeys(seed).search(27, (e) => d.push(e));
+    expect(writes(d)).toBe(0);
   });
 });

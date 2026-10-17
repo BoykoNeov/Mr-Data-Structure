@@ -740,9 +740,23 @@ only misbehaves on a later splice. The corpus (`conformance/corpus-dll.txt`) the
 the **tail→head order** before and after the delete sequence and after a mixed
 insert/delete stream (where free-list reuse would expose a stale `prev`), and the proptest
 checks it after every op — the doubly list's counterpart to the skip list's per-level
-dimension (§2.6). The TS teaching twin is the existing array-backed `DoublyLinkedListF64`
-plus `keysReversed()`, so on the TS side those lines pin *agreement*, not link integrity;
-link integrity is tested for real in Rust only.
+dimension (§2.6). The TS teaching twin `DoublyLinkedListF64` holds **real links** too —
+an index arena mirroring the Rust one (head/tail handles, freed slots reused) — so its
+`keysReversed()` follows `prev`, and those corpus lines bite on both sides: a stale back
+link injected into the TS twin fails the corpus's backward lines, the twin's own seeded
+random-stream test (backward = reversed forward after every op, with deletes at the head,
+the tail, the middle and the only node) and the animation's fold check. *(Until the doubly
+animation slice the TS twin was array-backed and those lines pinned agreement only.)*
+
+**The doubly animation draws the links, and its extra steps are free.** The twin traces
+every pointer write as a `dll.relink` step — three per insert (new `next`, old head's
+`prev` or the tail handle, the head handle), two per hit delete (the neighbours' links or
+the handles, written past the found node) — and **none of them is a cost event**, so the
+animation's visit count is the singly list's on the same sequence, as the bench op-counts
+are. Its display model stores real links rather than deriving arrows from order, because
+the subject is the in-between frames: a removed node still drawn but already bypassed, a
+new node drawn before anything points at it. The fold is compared to the twin's own
+positional links after every op, not only to its key order.
 
 ## 3. Reading a curve — the fitter (`src/bench/fit.ts`)
 
@@ -1052,7 +1066,8 @@ Ordered by how much they can mislead a reader today.
 | …and per op, `(result, node-visits)`, over random streams with the singly list as reference; the tail→head walk mirrors head→tail after every op | `bench-engine/tests/proptest_doubly_linked_list.rs` | none |
 | no churn key recovers the O(n) delete on a head-inserting list: above-max, below-min and stored keys all cost exactly 1 visit | `structures::doubly_linked_list::tests::no_churn_key_recovers_the_linear_delete` | none |
 | what `prev` buys (unlink-given-a-handle, 0 visits anywhere) vs delete-by-value (its position, same on both lists), and what it costs (24 B vs 16 B a node) | `doubly_linked_list::tests::unlink_given_a_handle_is_free_but_delete_by_value_still_walks`, `…::node_is_half_again_the_singly_node` | none |
-| a corrupt back-link cannot pass conformance: the corpus pins tail→head order after deletes and after a mixed stream (bites in Rust; agreement-only on the array-backed TS twin) | `conformance/corpus-dll.txt` + `src/structures/conformance-dll.test.ts` (+ `corpus_dll_matches_committed`) | none |
+| a corrupt back-link cannot pass conformance: the corpus pins tail→head order after deletes and after a mixed stream — biting on **both** twins, since the TS teaching twin holds real `prev` links (a stale back link injected into it fails 14 tests across the corpus, the twin's own stream test and the fold check) | `conformance/corpus-dll.txt` + `src/structures/conformance-dll.test.ts` (+ `corpus_dll_matches_committed`), `src/structures/linkedList.test.ts` (backward = reversed forward after every op of a seeded stream that deletes at the head, tail, middle and only node) | none |
+| the doubly list's **animation** shows the singly list's visits and draws the real links: pointer writes (`dll.relink`, 3 per insert, 2 per hit delete, none on a search or miss) are steps but not cost events, so its cost events equal the singly list's per op; its fold, which stores links rather than deriving them from order, equals the twin's positional `snapshot()` after every op and draws no link to an undrawn node at any frame; its captions call every write free and every visit the singly walk | `src/viz/trace.linear.test.ts`, `src/viz/model.test.ts`, `src/viz/VizPanel.test.ts` | none |
 | **the doubly list on the real clock:** search slope 1.01 ± 0.006 (band 0.7..1.4, ratio > 20, label O(n) or O(n log n)); churn flat (\|slope\| < 0.6); delete-by-value O(n) (slope > 0.6, ratio > 3); the two in different classes, > 20× apart. Deliberately **no** doubly-vs-singly wall-clock ratio | `scripts/verify-browser.mjs`, first pass | real |
 | the red-black tree never rotates more than **2 times per insert or 3 per delete**, on every op of shuffled / ascending / descending builds, alternating teardowns and random-order deletes — while one AVL delete on the same shuffled teardown rotates 10 times | `structures::methodology::rbt_bounds_rotations_per_operation_where_the_avl_does_not` + `bench-engine/tests/proptest_rbt.rs` (after every op) | none (op-counts) |
 | in **totals** the red-black tree rotates ~18 % less on shuffled inserts at equal comparisons, about the same on sorted inserts and on deletes, and recolours far more than it rotates | `structures::methodology::rbt_rotates_less_on_random_inserts_and_about_as_much_everywhere_else` | none |

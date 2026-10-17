@@ -196,6 +196,12 @@ tool call does not survive into the next (each call is a fresh process).
   churn takes every `ll` honesty rule (caveat box `DoublyListNotes.tsx`, delete row, PNG
   caption `dllSheetNote`, gate pins). No canonical op reads `prev`, so only the tail→head
   corpus lines catch a corrupt back-link — keep them. Never assert a dll-vs-ll clock ratio.
+  The **TS twin holds real links** (an arena like Rust's), so those lines bite on both sides;
+  don't fold it back into the array-backed singly class. Its animation's pointer writes
+  (`dll.relink`, 3 per insert, 2 per hit delete) are **steps, never cost events** — adding one
+  to `COST_EVENT_KINDS` would break the visit equality. `DoublyListView` draws the links its
+  model *stores* (the bypassed node mid-delete is the whole picture), so don't switch it to
+  order-derived arrows like the singly view; events name nodes by display position.
 - **The red-black tree's metric is the AVL's on purpose: comparisons + rotations.**
   Recolours are counted on their own counter (a write that *changes* a colour) and never
   folded into `ops` — the AVL has no colour to pay for. "Fewer rotations" is a

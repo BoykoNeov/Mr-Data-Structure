@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
-import { describeSkip, describeGraph, summarizeGraph, GRAPH_SEED } from './VizPanel';
-import { graphModel, reduceGraph, type GraphModel } from './model';
-import type { SkipListEvent, GraphEvent } from './events';
+import { DoublyLinkedListF64 } from '../structures/linkedList';
+import { describeSkip, describeGraph, summarizeGraph, describeDoubly, DOUBLY_INTRO, GRAPH_SEED } from './VizPanel';
+import { graphModel, reduceGraph, doublyModel, foldDoublyList, type GraphModel } from './model';
+import type { SkipListEvent, GraphEvent, DoublyListEvent } from './events';
 
 /**
  * The skip list's step caption reads the comparison direction from value-vs-target,
@@ -116,5 +117,55 @@ describe('graph captions and summary', () => {
     const s = summarizeGraph(tri, graphModel(3, [0, 1, 1, 2, 2, 0]), 0, 'bfs');
     expect(s).toContain('9 ops each (3 vertex-visits + 6 edge-visits = V + 2E = 3 + 2·3)');
     expect(s).toContain('whole graph');
+  });
+});
+
+/**
+ * The doubly list's honesty is in its wording (docs/METHODOLOGY.md §2.11): a back
+ * pointer must never read as making delete cheaper. Every pointer write says it is free
+ * and not a node-visit, every visit says it is the singly list's walk, and the intro says
+ * the counts are equal. A render smoke can't catch a wrong string.
+ */
+describe('doubly-list captions: the back link is free and buys no visits', () => {
+  const captions = (keys: number[], op: (l: DoublyLinkedListF64, p: (e: DoublyListEvent) => void) => void) => {
+    const l = DoublyLinkedListF64.fromKeys(keys);
+    const before = doublyModel(l.snapshot());
+    const events: DoublyListEvent[] = [];
+    op(l, (e) => events.push(e));
+    return events.map((e, i) => ({ e, text: describeDoubly(e, foldDoublyList(before, events.slice(0, i + 1))) }));
+  };
+
+  it('every pointer write is narrated as free, not a node-visit', () => {
+    const all = [
+      ...captions([10, 20, 30, 40], (l, p) => l.delete(30, p)),
+      ...captions([10, 20], (l, p) => l.insert(5, p)),
+      ...captions([], (l, p) => l.insert(5, p)),
+      ...captions([7], (l, p) => l.delete(7, p)),
+    ];
+    const writes = all.filter(({ e }) => e.kind === 'dll.relink');
+    expect(writes.length).toBe(2 + 3 + 3 + 2);
+    for (const { text } of writes) expect(text).toContain('free, not a node-visit');
+  });
+
+  it("a delete's bypass names the node it steps past, and its handles by name", () => {
+    const [n, p] = captions([10, 20, 30, 40], (l, push) => l.delete(30, push)).filter(({ e }) => e.kind === 'dll.relink');
+    expect(n.text).toContain('node [0] (40).next → node [2] (20), stepping past node [1] (30)');
+    expect(p.text).toContain('node [2] (20).prev → node [0] (40), stepping past node [1] (30)');
+    const [h, t] = captions([7], (l, push) => l.delete(7, push)).filter(({ e }) => e.kind === 'dll.relink');
+    expect(h.text).toMatch(/^head → ∅, stepping past node \[0\] \(7\)/);
+    expect(t.text).toMatch(/^tail → ∅, stepping past node \[0\] \(7\)/);
+  });
+
+  it('visits are the singly walk, and the unlink credits prev with no saved visit', () => {
+    const cs = captions([10, 20, 30, 40], (l, p) => l.delete(30, p));
+    for (const { e, text } of cs) if (e.kind === 'll.visit') expect(text).toContain('the same walk a singly list makes');
+    const unlink = cs.find(({ e }) => e.kind === 'll.unlink')!;
+    expect(unlink.text).toContain('exactly the visits a singly list takes');
+    expect(unlink.text).not.toMatch(/cheaper|faster|fewer/);
+  });
+
+  it('the intro says the counts are equal and the back link costs writes', () => {
+    expect(DOUBLY_INTRO).toContain('exactly the singly list’s node-visits');
+    expect(DOUBLY_INTRO).toContain('extra pointer write on every insert and delete');
   });
 });

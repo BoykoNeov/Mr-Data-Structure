@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { DynArrayF64 } from '../structures/dynArray';
 import { HashSetF64 } from '../structures/hashSet';
 import { SortedArrayF64 } from '../structures/sortedArray';
-import { LinkedListF64, SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
+import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
 import { BstF64 } from '../structures/bst';
 import { AvlF64 } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
@@ -10,10 +10,11 @@ import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import { browserSession } from '../persist/session';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
+import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   foldSortedArray, linkedModel, foldLinkedList, type LinkedListModel,
+  doublyModel, foldDoublyList, type DoublyListModel,
   bstModel, foldBst, type BstModel,
   avlModel, foldAvl, type AvlModel,
   heapModel, foldHeap, type HeapModel,
@@ -27,6 +28,7 @@ import { ArrayView } from './ArrayView';
 import { HashSetView } from './HashSetView';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
+import { DoublyListView } from './DoublyListView';
 import { BstView } from './BstView';
 import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
@@ -170,6 +172,38 @@ function describeLinkedList(e: LinkedListEvent | undefined): string {
     case 'll.insertHead': return `insert ${e.value} at the head (O(1), no walk)`;
     case 'll.unlink': return `unlink node [${e.index}] — reconnect its neighbours`;
     case 'll.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+/**
+ * The doubly list's step caption (docs/METHODOLOGY.md §2.11). It reads the folded model
+ * at the active frame to name the nodes a pointer write connects, and names the node a
+ * write steps past when there is exactly one (a delete's bypass). Every pointer write is
+ * narrated as free and every visit as the singly list's own walk, because the honest
+ * claim is that the back link changes *which* pointers get written, not how many nodes a
+ * delete has to visit. Exported for `VizPanel.test.ts` — a render smoke can't catch a
+ * wrong caption.
+ */
+export function describeDoubly(e: DoublyListEvent | undefined, m: DoublyListModel): string {
+  if (!e) return '';
+  const node = (i: number) => `node [${i}] (${m.nodes[i]?.value ?? '?'})`;
+  switch (e.kind) {
+    case 'll.visit':
+      return `visit node [${e.index}] (${e.value}) vs ${e.target} → ${e.matched ? 'match ✓' : 'follow next →'} — one node-visit, the same walk a singly list makes`;
+    case 'll.insertHead':
+      return `create a node for ${e.value} — nothing points at it yet`;
+    case 'dll.relink': {
+      const owner = e.from === null ? (e.link === 'next' ? 'head' : 'tail') : `${node(e.from)}.${e.link}`;
+      const target = e.to === null ? '∅' : node(e.to);
+      // positions strictly between the write's two ends, in display order
+      const [lo, hi] = e.link === 'next' ? [e.from ?? -1, e.to ?? m.nodes.length] : [e.to ?? -1, e.from ?? m.nodes.length];
+      const past = hi - lo === 2 ? `, stepping past ${node(lo + 1)}` : '';
+      return `${owner} → ${target}${past} — a pointer write: free, not a node-visit`;
+    }
+    case 'll.unlink':
+      return `nothing points at node [${e.index}] any more — drop it. prev spared the walk from carrying the node behind it; finding the node took exactly the visits a singly list takes`;
+    case 'll.result':
+      return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
 
@@ -507,11 +541,10 @@ export function SortedPanel() {
   );
 }
 
-export function LinkedPanel({ doubly }: { readonly doubly: boolean }) {
-  const List = doubly ? DoublyLinkedListF64 : SinglyLinkedListF64;
-  const ref = useRef<LinkedListF64 | null>(null);
-  if (ref.current === null) ref.current = List.fromKeys(LIST_SEED);
-  const [base, setBase] = useState<LinkedListModel>(() => linkedModel(List.fromKeys(LIST_SEED).keysInOrder()));
+export function LinkedPanel() {
+  const ref = useRef<SinglyLinkedListF64 | null>(null);
+  if (ref.current === null) ref.current = SinglyLinkedListF64.fromKeys(LIST_SEED);
+  const [base, setBase] = useState<LinkedListModel>(() => linkedModel(SinglyLinkedListF64.fromKeys(LIST_SEED).keysInOrder()));
   const [summary, setSummary] = useState('');
   const player = usePlayer<LinkedListEvent>();
 
@@ -536,13 +569,59 @@ export function LinkedPanel({ doubly }: { readonly doubly: boolean }) {
 
   const model = useMemo(() => foldLinkedList(base, P.applied(player.state)), [base, player.state]);
   const active = P.current(player.state);
-  const kind = doubly ? 'Doubly' : 'Singly';
 
   return (
     <>
-      <p style={{ color: '#666', margin: '4px 0' }}>{summary || `${kind} linked list — O(1) head insert; search/delete walk the chain (node-visits).`}</p>
-      <LinkedListView model={model} active={active} doubly={doubly} />
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || 'Singly linked list — O(1) head insert; search/delete walk the chain (node-visits).'}</p>
+      <LinkedListView model={model} active={active} />
       <Controls player={player} onOp={onOp} caption={describeLinkedList(active)} />
+    </>
+  );
+}
+
+/** The doubly list's intro (docs/METHODOLOGY.md §2.11) — exported so its claim is pinned. */
+export const DOUBLY_INTRO =
+  'Doubly linked list — every node links both ways (next above, prev below). The back link lets a delete unlink the node it found without carrying the node behind it, but finding that node is the same walk from the head, so search and delete cost exactly the singly list’s node-visits. What the back link does cost is an extra pointer write on every insert and delete — the blue steps here, free in the count.';
+
+export function DoublyPanel() {
+  const ref = useRef<DoublyLinkedListF64 | null>(null);
+  if (ref.current === null) ref.current = DoublyLinkedListF64.fromKeys(LIST_SEED);
+  const [base, setBase] = useState<DoublyListModel>(() => doublyModel(DoublyLinkedListF64.fromKeys(LIST_SEED).snapshot()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<DoublyListEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const l = ref.current!;
+    const snapshot = doublyModel(l.snapshot()); // before-state: the links as they are
+    const events: DoublyListEvent[] = [];
+    const push = (e: DoublyListEvent) => events.push(e);
+    const writes = () => events.filter((e) => e.kind === 'dll.relink').length;
+    if (op === 'search') {
+      const r = l.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} node-visits — the singly list’s walk, visit for visit`);
+    } else if (op === 'insert') {
+      l.insert(value, push);
+      setSummary(`insert(${value}) → spliced at the head · 0 node-visits, ${writes()} pointer writes (a singly list makes 2)`);
+    } else {
+      const r = l.delete(value, push);
+      setSummary(
+        r.removed
+          ? `delete(${value}) → removed · ${r.ops} node-visits, exactly a singly list’s — then ${writes()} pointer writes, free`
+          : `delete(${value}) → absent · ${r.ops} node-visits`,
+      );
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldDoublyList(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || DOUBLY_INTRO}</p>
+      <DoublyListView model={model} active={active} />
+      <Controls player={player} onOp={onOp} caption={describeDoubly(active, model)} />
     </>
   );
 }
@@ -837,9 +916,8 @@ function panelFor(kind: Kind) {
   switch (kind) {
     case 'array': return <ArrayPanel />;
     case 'sorted': return <SortedPanel />;
-    // distinct keys force a remount between the two lists so the ref re-seeds.
-    case 'singly': return <LinkedPanel key="singly" doubly={false} />;
-    case 'doubly': return <LinkedPanel key="doubly" doubly />;
+    case 'singly': return <LinkedPanel />;
+    case 'doubly': return <DoublyPanel />;
     case 'hashset': return <HashPanel />;
     case 'bst': return <BstPanel />;
     case 'avl': return <AvlPanel />;

@@ -88,13 +88,17 @@ Knuth's formulas) while staying flat, behind a tombstone policy that keeps its a
 from drifting with the timer's repetition count. And a **doubly linked list** draws the
 same curves as the singly one — the same steps, counted exactly — because a back pointer
 only helps remove a node you already hold, while each node takes half again the memory.
+Its Explore tab now shows that with **real links**: the teaching twin keeps genuine forward
+and backward pointers, and a delete is drawn as the walk a singly list would make followed
+by two pointer writes that step around the node — free in the count, which is the point.
 
 The search workload's **hits-vs-misses mix is now a choice** (the default is the
 calibrated 50/50, reproduced exactly), and a structure that keeps one copy of each repeated
 key says how many it actually held beside the input size — on the chart, in the exports
 and in the PNG. And your **session is remembered in this browser**: your last run's
 dataset — pasted data included — and chart settings come back on reload, while results are
-always re-measured, never restored. Still open: animations for those four structures, the
+always re-measured, never restored. Still open: animations for the open-addressing set, the
+red-black tree and the B-tree, the
 graph in the exports, and performance polish. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles

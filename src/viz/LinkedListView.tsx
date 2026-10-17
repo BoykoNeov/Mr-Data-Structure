@@ -2,12 +2,13 @@ import type { LinkedListEvent } from './events';
 import type { LinkedListModel } from './model';
 
 /**
- * Linked-list renderer (docs/PLAN.md §5, "lists as node+pointer chains"). Nodes
- * are drawn head→tail; each keeps a stable id so a head insert slides the rest
+ * Singly-linked-list renderer (docs/PLAN.md §5, "lists as node+pointer chains").
+ * Nodes are drawn head→tail; each keeps a stable id so a head insert slides the rest
  * right and an unlink slides the survivors together (CSS transform transition).
  * `next` arrows point forward to the successor (and to a `∅` terminator at the
- * tail); when `doubly` is set, `prev` arrows point back — the only visual
- * difference between the singly and doubly lists, which share one algorithm.
+ * tail), derived from display order — faithful because the singly twin is an
+ * ordered sequence. The doubly list has its own view (`DoublyListView`), which draws
+ * the links its model actually holds.
  *
  * The active event drives the highlight: the visited node (amber, green on a
  * match) or the freshly inserted head (green). An unlink needs no highlight — the
@@ -44,15 +45,13 @@ function nodeTone(active: LinkedListEvent | undefined, i: number): Tone {
 interface LinkedListViewProps {
   readonly model: LinkedListModel;
   readonly active: LinkedListEvent | undefined;
-  /** Draw backward (`prev`) pointers — the doubly-linked list. */
-  readonly doubly: boolean;
 }
 
-export function LinkedListView({ model, active, doubly }: LinkedListViewProps) {
+export function LinkedListView({ model, active }: LinkedListViewProps) {
   const { nodes } = model;
   const nodeX = (i: number) => PAD + HEAD_W + i * STRIDE;
   const width = PAD * 2 + HEAD_W + Math.max(1, nodes.length) * STRIDE + 24; // tail ∅
-  const height = PAD * 2 + NODE_H + (doubly ? 14 : 0);
+  const height = PAD * 2 + NODE_H;
   const midY = PAD + NODE_H / 2;
 
   return (
@@ -60,7 +59,7 @@ export function LinkedListView({ model, active, doubly }: LinkedListViewProps) {
       width={width}
       height={height}
       role="img"
-      aria-label={doubly ? 'doubly linked list nodes' : 'singly linked list nodes'}
+      aria-label="singly linked list nodes"
       style={{ background: '#fafafa', border: '1px solid #eee', borderRadius: 6 }}
     >
       <defs>
@@ -79,28 +78,15 @@ export function LinkedListView({ model, active, doubly }: LinkedListViewProps) {
         const toNext = i + 1 < nodes.length ? nodeX(i + 1) : nodeX(i) + NODE_W + 24;
         return (
           <g key={`edge-${node.id}`} style={{ transition: 'all 200ms ease' }}>
-            {/* next pointer (forward) */}
             <line
               x1={fromRight}
-              y1={doubly ? midY - 6 : midY}
+              y1={midY}
               x2={toNext - 4}
-              y2={doubly ? midY - 6 : midY}
+              y2={midY}
               stroke="#888"
               strokeWidth={1.5}
               markerEnd="url(#ll-arrow)"
             />
-            {/* prev pointer (backward) — doubly only, skipped for the head */}
-            {doubly && i > 0 && (
-              <line
-                x1={nodeX(i)}
-                y1={midY + 6}
-                x2={nodeX(i - 1) + NODE_W + 4}
-                y2={midY + 6}
-                stroke="#bbb"
-                strokeWidth={1.5}
-                markerEnd="url(#ll-arrow)"
-              />
-            )}
           </g>
         );
       })}
