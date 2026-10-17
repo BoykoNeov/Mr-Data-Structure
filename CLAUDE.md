@@ -55,7 +55,10 @@ tool call does not survive into the next (each call is a fresh process).
   mostly noise) will flake under CPU contention: one run against a concurrent Vitest
   suite reported 1.2× against a > 1.3× band, and 2.1× on its own moments later. A
   single failing ratio check with everything else green is a scheduling artefact, not
-  a regression — re-run it alone before chasing it.
+  a regression — re-run it alone before chasing it. **Class-label checks are the other
+  flaky kind**: after the Phase 6 merge, two runs each failed one label (string
+  array O(n²) at slope 1.04, string hash set O(log n) at 0.07) with its slope band green;
+  the third passed 118/118. A new check should assert a band, not a label.
 - **Contention is not the only way the gate flakes — check for a stale preview server
   first.** `scripts/verify-browser.mjs` hard-codes `http://localhost:4173`, so the gate
   measures whatever answers on that port, not necessarily the server it just started.
@@ -75,10 +78,13 @@ tool call does not survive into the next (each call is a fresh process).
   drives the picker to **reverse-sorted** for a second pass and asserts the
   opposite there (BST churn O(n), AVL still sub-linear) — the regression guard for
   the two-key churn probe, METHODOLOGY §4.1. A **third pass** then drives it to
-  `string-corpus`. That one runs **last** on purpose and reads only
+  `string-corpus`. That one runs **after both numeric passes** on purpose and reads only
   `__stringSweepProof` / `__stringMutationProof`: a string run never sets the numeric
-  globals, so an assert placed after it would silently re-read the reverse-sorted pass.
-  Keep all three passes, in that order.
+  globals, so a numeric assert placed after it would silently re-read the reverse-sorted
+  pass. A **fourth pass**, the graph, clicks `measure the graph` (the graph section never
+  runs on page load; the button's name must not match `/run the sweeps/`) and reads only
+  `__graphProof`. Keep all four passes, in that order. Every pass also relies on the gate's
+  **fresh, empty browser context** — see the session-persistence gotcha below.
 - **The min-heap is deliberately kept off the shared Compare charts** (PLAN §8,
   risk R6): its op set is insert / peek / extract-min, not insert / search /
   delete, so `registry.ts` exposes `CANONICAL_STRUCTURES` / `isCanonical` and the
@@ -182,26 +188,116 @@ tool call does not survive into the next (each call is a fresh process).
   delete-by-value, so the pair is insert + extract-min, and only a key below every
   stored key is the one the extract takes back; `max + 1` silently *drains* the
   heap. Pinned by `heap::tests::a_high_churn_key_would_drain_the_heap`.
+- **The doubly linked list's teardown deletes the tail *by value*, never through the
+  tail handle**, and its op-counts are **equal** to the singly list's — that equality is
+  the finding (METHODOLOGY §2.11). Unlinking via `tail` would read O(1), erase regime 7's
+  class disagreement and chart unlink-given-a-handle as "delete"; making search or delete
+  use `prev` would break the equality the methodology test and proptest assert. Its flat
+  churn takes every `ll` honesty rule (caveat box `DoublyListNotes.tsx`, delete row, PNG
+  caption `dllSheetNote`, gate pins). No canonical op reads `prev`, so only the tail→head
+  corpus lines catch a corrupt back-link — keep them. Never assert a dll-vs-ll clock ratio.
+- **The red-black tree's metric is the AVL's on purpose: comparisons + rotations.**
+  Recolours are counted on their own counter (a write that *changes* a colour) and never
+  folded into `ops` — the AVL has no colour to pay for. "Fewer rotations" is a
+  **per-operation bound** (≤ 2 / ≤ 3), not a lower total, and on sorted input its churn
+  sits *above* the AVL's — the finding, so add no "red-black below AVL" gate check. The
+  AVL is a `Box` tree and the red-black tree an arena, so their wall-clock gap mixes scheme
+  with storage; keep every comparative sentence qualified by signal. The NIL sentinel (slot
+  0) is never written — don't restore CLRS's `nil.p` trick.
+- **The B-tree's delete is not CLRS's, on purpose.** Insert keeps the CLRS proactive split;
+  delete repairs only *underflow* on the way back up. CLRS's single-pass pre-fill delete
+  re-merges what the split just made, on every churn pair (every level on sorted input), so
+  the churn curve would time the allocator (`btree::tests::churn_settles_into_zero_restructures_and_zero_allocation`).
+  Its search never stops early on an internal hit — one deferred equality test at the leaf
+  is what makes comparisons ≈ log₂ n and node-visits = height. Its comparison count
+  *should* match the AVL's; its advantage is hops, which the op-count cannot see — the gate
+  only *logs* the clock comparison (`btree hypothesis (info only)`); don't turn it into an
+  assertion.
+- **The open-addressing set's tombstone policy is a measurement decision** (METHODOLOGY
+  §2.8), all four rules mirrored in the TS twin and `corpus-hoa.txt`: insert reuses the
+  first tombstone on its path; tombstones count toward the load; `set_churn_key` primes to
+  a fixed point; churn cycles a `clamp(⌊len/32⌋, 1, 16)`-key block from `max + 1`. Drop
+  reuse and churn drifts with the batcher's rep count (and reads as growth in n); stop
+  counting tombstones and a miss can loop forever. It must also keep the **chaining set's
+  hash, start size, 0.75 threshold and doubling** (`grows_at_exactly_the_chaining_sets_points`)
+  — tuning it to 0.5 ends the comparison — and count on the chaining convention (the empty
+  slot ending a walk is free), not Knuth's. A finite difference across a table doubling reads
+  a *negative* marginal delete; difference between equal load factors.
+- **The graph's x-axis is the reached component's `V′ + 2E′`, computed by the page and
+  *checked* against the engine** (`countsMatchComponent`). Using the op-count as x makes the
+  check a tautology; using nominal `V + E` plots a 3-vertex walk of a disconnected file at
+  the whole file's size. The degree-sweep's graphs are **nested** (one seed draws the tree,
+  then the extras, in order) — reseeding per degree keeps every test passing while making
+  each point a different graph. `REGISTRY[id]` for an arbitrary id is a union with
+  `GraphStructureInfo`: narrow the graph away before reading `average` / `worst`. Every
+  graph handed to `runGraphSweep` must own its buffer (one buffer twice in a transfer list is
+  a `DataCloneError`).
+- **The graph animation's `graph.mark` is its own frame, and that is the point.** DFS is
+  mark-on-push: a vertex is marked (on the stack) long before it is visited, and a later
+  edge to it is skipped — the real rule, not recursive DFS. Don't fold the mark into the
+  examine or caption a marked-only skip "already visited" (`VizPanel.test.ts` pins the
+  wording). Entries are addressed `(from, slot)` through `GraphModel.incident`, never by
+  vertex pair (parallel edges collide). The seed is computed: changing an edge changes four
+  pinned facts in `trace.graph.test.ts`.
+- **The probe mix's default is a calibrated workload, not a starting value.** At 50 % the
+  builders must return *exactly* the 64 + 64 keys the gate's bands were tuned on —
+  `probeMix.test.ts` pins it against **frozen copies** of the old builders; don't "simplify"
+  those to import the new code. `mix` is a **required** argument of every search runner
+  factory so a new structure without it fails to compile. The control is radio buttons
+  *after* the dataset panel because the gate drives the generator with
+  `page.locator('select').first()`.
+- **`n` on every chart is input keys; `storedN` is what the structure holds**, read back from
+  its own `len()` — so every bench twin must keep exporting `len()`. The hash set holding
+  ~63 % of its input on the *default* page is a finding (draws with replacement), not a bug.
+- **A saved session changes what the mount-time auto-run measures; the gate stays valid only
+  because its context starts empty.** `verify-browser.mjs` navigates once in a fresh
+  Playwright context. A `page.reload()`, a second `goto` or a persistent profile would
+  auto-run whatever pass 2–3 saved and silently measure the wrong thing — clear storage
+  first. On a dev box an odd first run after reload is probably your saved session (press
+  *forget saved session*). Persistence never saves results, and stores the paste **raw**
+  (re-parsing the exact text is what keeps keys exact).
+- **Parallel slices that bump a shared count merge *silently* to the wrong number** when
+  both make the identical edit: 6 → 7 on two branches merges cleanly as 7, not 8. The gate's
+  series counts (`proof.length`, `mutation.length`), `runSweeps.test.ts`'s status count and
+  key-order lists, and prose like "six flat structures" or "twelve regimes" are all such
+  sums. After merging slices, grep for the counts and recount them from the code. (In the
+  Phase 6 batch the red-black and B-tree slices both made the identical `statuses` 6 → 7
+  edit, so both parents of merge `166543b` read 7 and the 8 had to be put in by hand; and
+  three slices each named their regime "the tenth".)
+- **An agent worktree's `node_modules` is a junction into the main checkout's.** Remove it
+  with `rmdir` (not a recursive delete) before removing the worktree, or the delete follows
+  the junction and empties the main checkout's `node_modules`.
 - `dist/` and `bench-engine/pkg/` are gitignored build artifacts (CI rebuilds
   them) — leave them untracked.
 
 ## Architecture map
 
 - `bench-engine/` — Rust crate → WASM, the "production" benchmark impls; its
-  `structures/mod.rs` `mod methodology` pins the eight churn-vs-finite-difference
-  regimes clock-free.
+  `structures/mod.rs` `mod methodology` pins the churn-vs-finite-difference regimes
+  clock-free (twelve; the B-tree's in `structures/methodology_btree.rs`).
 - `src/bench/` — `BenchEngine` interface, Comlink Web Worker, WASM-backed engine;
   `measure.ts` (batching, adaptive reps, spread), `fit.ts` (classes, slope ± SE,
-  local slopes, trend), `sweep.ts`.
+  local slopes, trend), `sweep.ts`; `probeMix.ts` (the hits/misses workload builders),
+  `stringWorkload.ts`, `graphBench.ts` (the worker-side graph measure loop).
 - `src/compare/` — Compare orchestration (`runSweeps.ts`): one dataset → every
-  sweep → fits → the `window.__*Proof` mirrors the browser gate reads. Tested
-  against a fake engine.
+  sweep → fits → the `window.__*Proof` mirrors the browser gate reads; `runGraphSweeps.ts`
+  for the graph's V- and degree-sweeps (`window.__graphProof`). Tested against a fake
+  engine.
 - `src/registry.ts` — the structure registry: labels, colours, cost metric,
-  theoretical (average/worst) classes; the only source of "theory" in the UI.
+  theoretical (average/worst) classes; the only source of "theory" in the UI. The
+  graph has its own `GraphStructureInfo` shape.
 - `src/data/` — Phase 1 data layer: import (CSV/JSON), conservative type
-  detection, KV key-field picker, seeded generators, typed-array marshalling.
-- `src/ui/` — `CompareSection`, `DatasetPicker`, `SweepChart` (error bars +
-  theory overlay), `SlopeChart`, `export.ts`, `Explain` (honesty copy).
+  detection, KV key-field picker, seeded generators, typed-array marshalling;
+  `graphs.ts` (seeded graph generators) and `edgeList.ts` (edge-list import).
+- `src/persist/` — local session persistence: storage adapters (`localStorage` /
+  IndexedDB, never throwing), the versioned session record, Compare's hook, and
+  `SessionNote` (the forget button).
+- `src/structures/` — the TypeScript teaching twins; `src/viz/` — step-event model,
+  Player, SVG views (one per Explore tab), `VizPanel`.
+- `src/ui/` — `CompareSection`, `DatasetPicker`, `ProbeMixControl`, `SweepChart` (error
+  bars + theory overlay, stored-size note), `SlopeChart`, `export.ts`, `png.ts`, `Explain`
+  (honesty copy), per-structure notes (`DoublyListNotes`, `BTreeNotes`), and the graph's
+  own `GraphCompareSection` / `GraphChart` / `graphPicker`.
 - `src/App.tsx` — layout only.
 - `docs/METHODOLOGY.md` — the measurement science, its open hurdles, and the
   proof map. Update it whenever a measurement claim or a gate changes.

@@ -15,7 +15,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
-| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The **graph** now has its twin and cost identity **clock-free** (Rust + TS + `conformance/corpus-graph.txt` + the `V + 2E` methodology self-test, METHODOLOGY §2.7) — an own-op-set adjacency-list multigraph whose BFS and DFS cost the same `V + 2E` in different orders; its measured half (generators + edge-list import + the two-sweep Compare section + browser gate) and its animation are still open, as are session persistence and performance polish |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The **graph** is complete end to end: an own-op-set adjacency-list multigraph whose BFS and DFS cost the same `V + 2E` in different orders, pinned clock-free (METHODOLOGY §2.7), **measured** in its own Compare section on a V-sweep and a degree-sweep (synthetic graphs or the user's own edge list, plotted against the reached component's `V′ + 2E′`), and **animated** in Explore (BFS and DFS beside their adjacency lists, DFS shown mark-on-push). Four more numeric structures are measured end to end (no animation yet): an **open-addressing hash set** held to the chaining set's table sizes, a **red-black tree** on the AVL's metric, a **B-tree** and a **doubly linked list** (METHODOLOGY §2.8–§2.11). The search workload's **hits-vs-misses mix** is a user choice, de-duplicating structures report **stored size** beside input size, and a **session is remembered** in this browser (never its results). Open: those four animations, graph exports, and performance polish |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
@@ -29,7 +29,7 @@ complexity classes (METHODOLOGY §2.3 regime 7, and the UI says so beside the
 chart rather than letting the flat line pass for speed); BST and AVL churn
 sub-linear on shuffled input; and — clock-free,
 on exact op-counts — the AVL stays O(log n) on the sorted input that turns the
-BST into an O(n) chain, plus nine churn-vs-finite-difference regimes across the
+BST into an O(n) chain, plus twelve churn-vs-finite-difference regimes across the
 structures (METHODOLOGY §2.3). Tree mutation is probed at **both ends** of the
 key range, so a reverse-sorted chain can no longer report a flat O(1) curve
 (METHODOLOGY §4.1). The **min-heap** completes the bench twins with its own op
@@ -55,7 +55,21 @@ few express lanes costs the same O(log n) the lookup did. And it is the third
 answer to the input that kills a naive BST — the AVL survives reverse-sorted keys
 by **rotating**, the skip list by never having had a shape to lose, since its node
 heights come from each key's hash rather than from a coin or from the order the
-keys arrived in (METHODOLOGY §2.6).
+keys arrived in (METHODOLOGY §2.6). The rest of Phase 6's structures each answer a
+"which variant?" question on exact op-counts. A **red-black tree** on the AVL's
+metric never rotates more than twice per insert or three times per delete where one
+AVL delete took ten — but in totals saves only ~18 % of rotations on random inserts,
+nothing elsewhere, and pays 68 % more comparisons on a sorted build (METHODOLOGY §2.9). A
+**B-tree** makes the AVL's comparison count in a quarter of its node hops, and is the
+first tree whose churn agrees tightly with its finite-difference split; whether the
+fewer hops show on the clock is logged, not claimed (METHODOLOGY §2.10). An **open-addressing hash
+set**, on the chaining set's exact table sizes, pays Knuth's primary-clustering price
+(a miss 7.7 probes vs chaining's 1.7 at α ≈ 0.73) while staying flat, behind a
+tombstone policy without which its churn would chart as growing with n (METHODOLOGY §2.8). And a
+**doubly linked list** draws the singly list's curves exactly — equal op-counts,
+pinned — because a back pointer only helps remove a node you already hold (METHODOLOGY §2.11).
+The **graph**, measured on two sweeps, shows BFS and DFS at the same `V′ + 2E′` and
+the `+E` term only where `V` is held fixed (METHODOLOGY §2.7).
 
 ---
 
@@ -240,7 +254,9 @@ single `Float64Array`/`Int32Array`; strings → length-prefixed UTF-8 buffer).
   rehash animation; trees with rotation animations; heap as array *and* tree view;
   trie as a **byte** tree — one node per UTF-8 byte, not per character, because
   that is what both twins walk; a terminal ring marks where a stored key ends,
-  which is what makes "reaching a node ≠ finding a key" visible (**built**, Phase 6).
+  which is what makes "reaching a node ≠ finding a key" visible (**built**, Phase 6);
+  graph as vertices + edges beside its adjacency lists, the frontier drawn as a
+  queue / stack, and DFS shown mark-on-push (**built**, Phase 6).
 
 ---
 
@@ -274,7 +290,8 @@ This section is the technical crux. The value proposition lives or dies here.
 > therefore *operation-specific*:
 
 - **`search` (size-preserving) — clean:** pre-build the structure to size n, then
-  time a batch of `k` lookups. Mix of present/absent keys is configurable.
+  time a batch of `k` lookups. Mix of present/absent keys is configurable
+  (0 / 25 / 50 / 75 / 100 % present, default 50 — Phase 6, METHODOLOGY §2.2).
 - **`insert` / `delete` (size-mutating) — measure amortized cost *around* n:**
   - **Primary method — churn at fixed size:** pre-build to n, then time `k`
     *insert+delete pairs* that hold size ≈ n (insert a key, delete a key). This
@@ -290,10 +307,12 @@ This section is the technical crux. The value proposition lives or dies here.
   - **The identity is structure-specific, not universal.** It holds *tightly* for the
     array because its costs are **position-uniform** (insert is a free append; any delete
     is O(n)). A **tree** breaks that symmetry: churn's spare keys ride the tree's
-    **spines**, while the build inserts dataset keys at their **average depth**. So for
-    both trees `insert_fd + delete_fd` sits at or above churn, and the two methods agree
-    in **complexity class**, not constant. Every regime is pinned clock-free in the §12
-    self-test (`structures::methodology`).
+    **spines**, while the build inserts dataset keys at their **average depth**. So the
+    two methods agree in **complexity class**, not constant: the sum sits above churn
+    where the spines are cheap (BST, skip list), below it where they are full-height
+    (AVL, red-black), and agrees tightly only for the B-tree, whose leaves all sit at one
+    depth (METHODOLOGY §2.3). Every regime is pinned clock-free in the §12 self-test
+    (`structures::methodology`, and `structures::methodology_btree`).
   - **Tree churn uses two keys, and the teardown alternates** (METHODOLOGY §4.1). A single
     key at `max + 1` walks only the *right* spine — which on **reverse-sorted** input (a
     *left* chain) is one node, so the BST's mutation measured **O(1)** while its search
@@ -330,7 +349,7 @@ The per-point rep spread (min → max) is drawn as error bars; reps are adaptive
 (continue until the coefficient of variation meets a target, bounded); every
 fitted slope carries a standard error and a 95 % CI; the local (per-interval)
 slope is plotted so regime changes are visible; and the churn-vs-finite-
-difference relationship is *structure-specific* (nine pinned regimes). All of
+difference relationship is *structure-specific* (twelve pinned regimes). All of
 it, with the open hurdles (churn-key position bias, small-n overhead, cache
 regimes, sequential ordering), is in [`METHODOLOGY.md`](METHODOLOGY.md).
 
@@ -378,18 +397,21 @@ algorithm per structure, implemented identically in TS and Rust.
 | Dynamic array (unsorted) | O(1) amort. (append) | O(n) | O(n) | comparisons + shifts | delete = ordered shift-compact (scan, then shift the tail left) — *not* swap-remove, so iteration order is preserved for the teaching twin + conformance |
 | Sorted array | O(n) | O(log n) | O(n) | comparisons + shifts | binary search |
 | Singly linked list | O(1) head | O(n) | O(n) | node-visits | |
-| Doubly linked list | O(1) head | O(n) | O(n) | node-visits | |
+| Doubly linked list | O(1) head | O(n) | O(n) | node-visits | **Measured (Phase 6)** as its own bench twin with real `prev` links. Every op-count equals the singly list's on the same sequence — `prev` only speeds unlinking a node you already hold, which delete-by-key never does. Costs 24 B/node vs 16. Churn is the singly list's regime-7 O(1) (METHODOLOGY §2.11) |
 
 ### Hashing
 | Structure | insert | search | delete | cost metric | notes |
 |-----------|--------|--------|--------|-------------|-------|
 | Hash map / set | O(1) avg, O(n) worst | O(1) avg, O(n) worst | O(1) avg | probes / chain-steps + hashes | **separate chaining** (canonical v1); load-factor-driven rehash animated; delete removes from the chain in place (order-preserving), table never shrinks |
+| Hash set (open addressing) | O(1) avg, O(n) worst | O(1) avg, O(n) worst | O(1) avg | hashes + slot probes | **Built (Phase 6).** Linear probing, set semantics, with the chaining set's hash / start size / 0.75 threshold / doubling, so both tables share a load factor at every n. Delete leaves a **tombstone**; insert reuses the first one on its path; tombstones count toward the load (purge in place or double). Counted on the chaining convention — occupied slots examined, the empty slot that ends a walk free (METHODOLOGY §2.8) |
 
 ### Trees / heaps
 | Structure | insert | search | delete | cost metric | notes |
 |-----------|--------|--------|--------|-------------|-------|
 | BST (unbalanced) | O(log n) avg, O(n) worst | same | same | comparisons | shows degeneration on sorted data |
 | AVL (balanced) | O(log n) | O(log n) | O(log n) | comparisons + rotations | **AVL chosen** (cleanest rotations to animate) |
+| Red-black tree | O(log n) | O(log n) | O(log n) | comparisons + rotations | **Built (Phase 6).** Classic CLRS (not left-leaning), the AVL's multiset / equal-keys-right / value-copy-delete semantics and its metric, so the two compare unit for unit; recolours counted separately, not in the metric. Height ≤ 2·log₂(n+1) (looser than the AVL's ≈ 1.44·log₂ n) in exchange for ≤ 2 rotations per insert, ≤ 3 per delete (METHODOLOGY §2.9) |
+| B-tree (t = 16) | O(log n) | O(log n) | O(log n) | comparisons + splits/merges/borrows | **Built (Phase 6).** Up to 31 keys a node; balanced by construction (every leaf at one depth), so no input order changes its class — sorted input only leaves nodes half full. Multiset. Search is a lower-bound descent to a leaf with **one deferred equality test**: ≈ log₂ n comparisons, the AVL's count, in ≈ log_t n node-visits. Insert: CLRS proactive split; delete: **repair on underflow**, *not* CLRS's single-pass pre-fill, which thrashes split/merge on churn (METHODOLOGY §2.10) |
 | Binary heap (min) | O(log n) worst, O(1) avg | — (peek O(1)) | O(log n) extract | comparisons + swaps | **different op set**: insert / peek / extract-min; "search" = O(n) scan, shown as a contrast. Compared only within its own group (risk R6) — the Compare UI gives it a separate section |
 
 ### Specialized (later phase)
@@ -397,7 +419,7 @@ algorithm per structure, implemented identically in TS and Rust.
 |-----------|--------|--------|--------|-------------|-------|
 | Trie (prefix tree) | O(L) | O(L) | O(L) | char-steps | strings only; L = key length, independent of n. **Built (Phase 6).** The `O(L)` here is in the *key*; `src/registry.ts` declares the class **in n**, which is `O(1)` for all four slots, and carries the L in `costMetric`. Both are the same statement in the two notations the project uses — the registry's `ComplexityClass` has no term for key length |
 | Skip list | O(log n) avg | O(log n) avg | O(log n) avg | node-visits | **Built (Phase 6).** O(n) worst (every key in one lane). Cost metric is **node-visits** — one key comparison per node inspected; dropping a level is a pointer move and costs nothing, the same rule that makes the BST's successor walk free. "Probabilistic" with **no random numbers**: a node's height is `1 + min(23, trailing_zeros(splitmix64(to_bits(key) ^ salt)))`, geometric with p = ½ but a pure function of the key, so the list is a function of its key *set* — no RNG state to keep the op-count signal reproducible under, and no order that can unbalance it. The guarantee moves from a coin to the key distribution (METHODOLOGY §2.6) |
-| Graph (adjacency list) | edge O(1) | traversal (BFS/DFS) | — | edge-visits | **own op set**; out of the insert/search/delete comparison; v1-late |
+| Graph (adjacency list) | edge O(1) | traversal (BFS/DFS) O(V + E) | — | vertex-visits + edge-visits | **own op set**; out of the insert/search/delete comparison. **Built, measured and animated (Phase 6).** Undirected multigraph; a traversal costs exactly `V′ + 2E′` of the source's component. Measured in its own Compare section on two sweeps (V at fixed degree; degree at fixed V), x-axis = the reached component's `V′ + 2E′`; registry entry is its own `GraphStructureInfo`, `!isCanonical` (METHODOLOGY §2.7) |
 
 Comparisons are grouped: heap, trie, and graph compare only within compatible op
 sets / data types; the core cross-structure comparison is the
@@ -971,7 +993,10 @@ insert/search/delete group on a shared key type.
 
 - **Phase 6 — Specialized + polish.** Trie, skip list, graph; presets/demos
   (e.g. "sorted data kills a naive BST"); persistence of sessions; docs;
-  performance polish (Canvas if needed).
+  performance polish (Canvas if needed). Added in-phase, from §13's variant
+  questions: open addressing, red-black, B-tree, doubly linked list, and the probe
+  mix. Those five, the graph's measured and animated halves, and persistence were
+  built as eight parallel slices and merged in one batch (gate 118/118 after it).
   - **Done (the trie — a second flat line, for a different reason):**
     `TrieStr` in Rust (`bench-engine/src/structures/trie.rs`) and its TypeScript teaching
     twin (`src/structures/trie.ts`), held together by the string conformance corpus, which
@@ -1153,23 +1178,189 @@ insert/search/delete group on a shared key type.
     structure with two size axes). **This slice is Rust + TS + corpus + methodology only** — no
     `#[wasm_bindgen]`-timed sweep is wired into the UI yet, exactly as the string and
     sorted-array twins first landed impl-ready with no `BenchEngine` method. **No new deps.**
-  - **Open:** the graph's **measured half** — the synthetic graph generators (connected random,
-    path, grid) *and* user edge-list import, the engine/worker sweep call, its own Compare
-    section with the V-sweep and degree-sweep, and the browser-gate pass; then the graph's
-    step-animation; then session persistence, presets/demos beyond the six that shipped in
-    Phase 5, and performance polish. **Four traps that half must handle, flagged now so they
-    aren't rediscovered:** (1) `registry.ts` — `isCanonical` is `id !== 'heap'` and
-    `CANONICAL_STRUCTURES` filters the same, so adding a `'graph'` `StructureId` *without also
-    excluding it* silently lands the graph on the shared insert/search/delete charts; exclude
-    it in both places and pin it in `registry.test.ts`, and give the graph its own info shape
-    rather than filling `OpComplexity`'s search/delete/churn slots with false theory. (2)
-    Edge-list import must **map vertex labels to dense ids in first-seen order**, so the
-    traversal's hardcoded source (vertex 0) is always a real vertex — raw ids can leave 0
-    isolated and chart a one-vertex O(1) line. (3) Labels are **strings, never `Number()`**
-    (the `02134` gotcha), and the TS twin must be handed **integer** ids (`adjLists[1.5]` is
-    `undefined`). (4) A user graph (or a swept prefix of one) can be **disconnected**, so plot
-    against the **reached component's** `V' + 2E'` (the measured op-count), and surface
-    reached/V, rather than the file's nominal V+E.
+  - **Done (the graph becomes watchable — BFS and DFS step-animation):** a `GraphEvent` family
+    whose two cost events are exactly the graph's two counting rules — `graph.visit` (a vertex
+    taken off the frontier) and `graph.examine` (an adjacency entry examined, whether or not it
+    discovers anything) — so `countCostEvents === ops` holds for **both traversals**. Unlike the
+    trie and skip-list animations there is no self-consistent-only half: a traversal is the
+    graph's whole op set, and every corpus case is run traced and held to the corpus's own
+    `ops`, `reached` and visit order (`src/viz/trace.graph.test.ts`). **Marking is its own free
+    frame (`graph.mark`)** because DFS is mark-on-push: a vertex is marked when pushed and can
+    wait on the stack long after, so a later edge to it is skipped though it is unvisited — the
+    real rule, and the step the frame exists to show (one extra frame per discovered vertex; a
+    reviewer may prefer folding it into the examine). `GraphView` draws three linked panels: the
+    graph (every parallel copy its own arc, a self-loop its own loop), the **adjacency lists**
+    one cell per entry (an edge-visit is one cell; a finished traversal ticks the `2E′`), and
+    the frontier, visit order and running tally. Entries are tied to drawn edge copies by
+    replaying `addEdge`'s pushes, pinned equal to `GraphAdj.adjacency()` in `model.test.ts`. The
+    seed (8 vertices, 10 edges, hand-placed in columns by BFS distance — arguably flattering
+    BFS) is computed so BFS, mark-on-push DFS and recursive DFS all differ, with a parallel
+    edge, a self-loop and an isolated vertex (cost 27 = 7 + 2·10, not 28). A typed number picks
+    the start vertex (range-checked); the box's placeholder says so and Enter runs BFS
+    (`bdc4935`). No add-edge control yet — `Controls` takes one key, an edge needs two.
+    **No new deps.**
+  - **Done (the search workload becomes a choice, and stored size is said beside input size):**
+    the §6.3 promise "mix of present/absent keys is configurable" is now true. A *Search
+    workload — hits vs misses* control (`src/ui/ProbeMixControl.tsx`, radio buttons after the
+    dataset panel, so the gate's `select().first()` still finds the generator) offers
+    0 / 25 / **50 (default)** / 75 / 100 % present probes, as **five named workloads, not a
+    slider**, on a fixed budget of 128 probes. The builders moved out of the worker into
+    `src/bench/probeMix.ts` and `buildStringProbes(keys, mix)`, and **the default reproduces the
+    calibrated 64 + 64 workload byte for byte** — pinned in `probeMix.test.ts` against frozen
+    copies of the old builders over the default and string ladders and edge sizes, with a
+    negative control that every other mix differs. The shared-probes rule holds by
+    construction: the mix is one value per run, threaded to a **required** `mix` parameter of
+    every search runner factory, so a structure added without it fails to compile. String
+    misses are now seeded from `min(absent, n)` spread stored keys (identical at the default;
+    the old rule invented keys on a misses-only run). The mix applies to search only, is not
+    part of `PickerState` (presets do not reset it), and results report the mix they *ran*.
+    **Stored size:** each built structure's own `len()` is read back untimed into
+    `SweepPoint.storedN` — measured, not a registry flag — and wherever a structure held fewer
+    keys than it was given, the chart says so under the plot and in its hover read-out, the CSV
+    gains `stored_n`, the JSON `storedN`, and the PNG caption the sentence. The x-axis stays
+    **input n**. It shows on the **default** run: the uniform generator draws with replacement,
+    so at n = 100 000 the hash set holds ~63 % of its input (METHODOLOGY §4 hurdles 8–9). The
+    gate asserts the default run measured 64 + 64 and the hash set's stored share is 50–75 %.
+    **No new deps.**
+  - **Done (the doubly linked list — a second pointer that buys nothing, measured):**
+    `DoublyLinkedListF64` in Rust (`doubly_linked_list.rs`, StructureId `'dll'`, the light pair
+    of the singly list's orange) with **real `prev` links** in the singly list's `Option<u32>`
+    arena, pinned by `conformance/corpus-dll.txt` and a proptest that uses the singly list as
+    its op-count reference. It joins the existing numeric search and flat mutation sweeps with
+    no new engine call. **The finding is sameness, pinned as equality:** on insert / search /
+    delete-by-key `prev` is only ever *written*, so every op-count the sweeps read equals the
+    singly list's at every size, sorted and shuffled
+    (`methodology::doubly_linked_list_buys_nothing_on_the_canonical_op_set`); the price is 24
+    bytes a node against 16, and what `prev` buys (unlink-given-a-handle, 0 visits) is on the
+    test surface only. **Regime 7 again**, with the same honesty rules — caveat box
+    (`src/ui/DoublyListNotes.tsx`), the O(n) delete row, the PNG legend row and caption line,
+    gate pins — and a teardown that deletes the tail **by value**, never through the `tail`
+    handle (which would read O(1) and erase the class disagreement). The corpus pins the
+    **tail→head order** after deletes and after a mixed stream, because no canonical op reads
+    `prev` and a corrupt back-link would pass everything else. Judgement calls: a separate bench
+    struct at all (the old module doc called it "pure duplication" — equality is now a pinned
+    measurement and a chart line instead of a comment); the TS teaching twin is the existing
+    array-backed list plus `keysReversed()`, so its backward lines pin agreement, not link
+    integrity. On the clock: search slope 1.01 ± 0.006, labelled O(n log n) on its first run,
+    so its label check now accepts O(n) or O(n log n) like the string array's. **No new deps.**
+  - **Done (the graph, measured — generators, edge-list import, the two-sweep Compare section):**
+    the bench twin's existing `bfs_n` / `dfs_n` timed surface wired into the graph's **own**
+    Compare section (`src/compare/runGraphSweeps.ts`, `src/ui/GraphCompareSection.tsx`,
+    `src/ui/GraphChart.tsx`). Its own data — seeded generators (`src/data/graphs.ts`: a random
+    **connected** graph at a chosen average degree, a path, a grid) or the user's **own edge
+    list** (`src/data/edgeList.ts`) — never the key dataset, since a list of keys carries no
+    edges. Measured **on request** (its own button, not on page load), so the key runs' auto-run
+    and the gate's first three passes are untouched; it shares the bench worker, so a graph run
+    queues behind a key run. **Two sweeps**: a V-sweep (1k → 50k at fixed degree, or prefixes
+    of an imported list) and a degree-sweep at `V = 5,000`, degree 2 → 64, whose generator is
+    **nested** — each point is the previous graph plus edges. Both are plotted against the
+    reached component's `V′ + 2E′`, **computed by the page and checked** against the engine's
+    op-count at every point (`countsMatchComponent`, `bfsEqualsDfs`, `allReached`) — a reviewer
+    may note PLAN's own wording suggested plotting the op-count itself, which would make the
+    check a tautology. The four traps flagged before this slice are each pinned:
+    `isCanonical('graph') === false` with its own `GraphStructureInfo` and a
+    `theoreticalClass('graph', …)` that throws (`registry.test.ts`); dense ids in first-seen
+    order; string labels, integer ids; disconnected prefixes at the reached component's size.
+    No allocation in the timed region (`graph::tests::the_timed_traversals_never_grow_their_scratch`).
+    The gate's **fourth pass** drives the button: V-sweep slope 1.33–1.34 (band 0.7..1.6, thin
+    headroom — the walk outgrows the caches, ns per visit rises), degree-sweep 1.01 / 1.08.
+    `REGISTRY` is now a mapped type, so `REGISTRY[id]` for an arbitrary id is a union that must
+    narrow the graph away before reading theory. **No new deps.**
+  - **Done (a red-black tree — the balancing-scheme comparison of §13):** `RbtF64` in Rust
+    (`rbt.rs`) and its TS teaching twin (`src/structures/rbt.ts`), pinned by
+    `conformance/corpus-rbt.txt` (shape **with colours**, rotation and recolour totals); a
+    proptest against a multiset reference checking every invariant and the rotation budget
+    after every op; the numeric search and mutation sweeps; the browser gate. Classic **CLRS**,
+    on the AVL's exact semantics and metric (**comparisons + rotations**), so the two balanced
+    trees compare unit for unit; **recolours are counted outside the metric** (the AVL has no
+    colour to pay for) and reported beside it. Arena-backed with a never-written NIL sentinel,
+    parent links and free-list reuse. **The finding is narrower than the slogan:** the bound —
+    ≤ 2 rotations per insert, ≤ 3 per delete — holds on every op, while one AVL delete rotated
+    **ten** times; in *totals* it rotates ~18 % less only on random inserts and recolours four
+    times as often as it rotates; and its looser height bound costs 68 % more comparisons on a
+    sorted build (height 21 vs 12) while the finished tree searches only ~4 % dearer. Regime
+    10: churn above the FD sum, the AVL's direction, wider. Judgement calls: the AVL's
+    rotations were split by subtracting a pre-op search count rather than adding a counter to
+    `avl.rs` (valid for distinct keys only); the gate asserts class only; and because the AVL is
+    a `Box` tree and this an arena, the wall-clock gap between them mixes scheme with storage —
+    every "red-black above/below AVL" sentence on the page is qualified by signal. The AVL is not
+    on the search chart, so the two trees' search comparison is clock-free only. On the clock:
+    search 0.25, churn 0.14 (0.16 reverse-sorted). **No new deps.**
+  - **Done (a B-tree — the AVL's comparisons in a quarter of its node hops):** `BTreeF64`
+    (`btree.rs`, minimum degree **t = 16**, ≤ 31 keys a node) and its TS twin (degree a
+    parameter), pinned by `conformance/corpus-btree.txt` at t = 2, 3 and 16 (per-insert ops and
+    the level-by-level shape), proptests with duplicates everywhere, clock-free methodology in
+    its own `structures::methodology_btree`, and both numeric sweeps. Metric **comparisons +
+    splits/merges/borrows**. **Equal comparisons, fewer hops:** within ~8 % of the AVL's and the
+    sorted array's comparisons while visiting only its height (3–4 nodes against the AVL's
+    12–20) — which the op-count chart cannot see, so node-visits are reported clock-free, and
+    the clock comparison is printed by the gate as a **hypothesis, not asserted**. **Regime 11:
+    tight, for a tree** — every leaf at one depth, so churn has no cheap spine (25.0 vs 24.5).
+    **The design correction a reviewer should look at:** the brief asked for CLRS, but CLRS's
+    single-pass pre-fill delete, combined with the proactive split, splits and re-merges a node
+    on *every* churn pair (at every level on sorted input) — the churn curve would time the
+    allocator. Delete instead repairs only true underflow on the way back up; after warm-up a
+    churn pair restructures and allocates nothing
+    (`btree::tests::churn_settles_into_zero_restructures_and_zero_allocation`). Search defers
+    its equality test to the leaf (it will look odd animated: "found it, keeps going"). Its
+    results sit in their own `CompareResult.btree` bucket, the skip list's precedent. The page's
+    locality caveat (`src/ui/BTreeNotes.tsx`) does not yet travel in the PNG. On the clock:
+    search 0.20 ± 0.02, churn 0.04 (0.18 reverse-sorted). **No new deps.**
+  - **Done (a second hash set — open addressing, measured against chaining on equal terms):**
+    `HashSetOaF64` (`hash_set_oa.rs`) and its TS twin (`src/structures/hashSetOa.ts`), pinned
+    slot for slot by `conformance/corpus-hoa.txt`, on the numeric search and flat mutation
+    charts with no new engine call. **Linear probing, set semantics, tombstone delete**, held to
+    the chaining set's hash, start size, 0.75 threshold and doubling, so the two tables have the
+    **same load factor at every n** and the pair of lines isolates the collision strategy.
+    Metric **hashes + slot probes** on the chaining convention (the empty slot that ends a walk
+    is free). **The tombstone policy is the measurement decision** — four rules, each pinned:
+    insert reuses the first tombstone on its path; tombstones count toward the load (or a miss
+    can loop forever); `set_churn_key` primes its keys to a fixed point (the first pair is
+    cheaper than the rest); churn cycles a block of `clamp(⌊len/32⌋, 1, 16)` keys (one key
+    samples one cluster and jumped several-fold between sweep points). Without reuse, churn's
+    mean cost climbs with the batcher's rep count and **charts as growth in n**. The charts now
+    say: same hash, same table, more probes — a miss costs Knuth's ½(1 + 1/(1−α)²) (7.70 vs
+    chaining's 1.72 at α ≈ 0.73), sawing with α and trending with nothing. **Regime 12:** churn
+    overshoots the FD sum by ~27 %, and an unprimed pair shows the overshoot is the churn keys'
+    own tombstones. Judgement calls: tombstones rather than backward-shift deletion (the
+    textbook choice, and the finding); 0.75 load to match chaining rather than linear probing's
+    usual 0.5 (fairer comparison, dearer OA); the churn block is a recipe difference from the
+    chaining set's single key. Which set is faster on the clock is not asserted. On the clock:
+    search 0.02, churn |slope| 0.11. **No new deps.**
+  - **Done (sessions are remembered — on this browser only, and never as results):** the §13
+    question is settled *local only* (the user's decision). A reload brings back the dataset
+    panel as it was when the user last pressed run or a preset — **pasted CSV / JSON included**
+    — with that run's probe mix, the chart view (signal, overlay, spread) and the selected
+    Explore tab (`src/persist/`). Small settings sit under one versioned `localStorage` key; the
+    paste text sits in IndexedDB, because a real paste can outgrow `localStorage`. The text is
+    stored **raw** and re-parsed by the same importer, so keys come back exactly — pinned over
+    leading-zero codes, duplicates, ids past 2^53, astral and combining characters and CRLF —
+    and checked on the way back by length + hash. **Results are never saved:** the mount-time
+    auto-run re-measures the restored configuration, and a saved timing would be the one number
+    on the page not measured now, on this machine; the page says "measured fresh on this load".
+    With **empty storage the auto-run is byte-for-byte the default run** and IndexedDB is never
+    opened (pinned with counting fakes, and by the gate's first pass). Missing, blocked, full,
+    slow (2 s cap) or corrupt storage degrades silently, section by section. A **forget saved
+    session** button clears both stores and is never disabled mid-run. Judgement calls: save on
+    *run*, not on every edit (the reload never measures a configuration the user never ran — so
+    later unsaved edits are lost); the auto-run fires on a restored paste too (a huge saved
+    paste re-runs every load — hence the always-enabled forget button); the preset highlight is
+    not restored. The real browser stores are exercised only by the gate's fresh-context check;
+    a save → reload → restore round-trip (and IndexedDB's open/upgrade/put path) has not been
+    run in a browser — Vitest has no browser storage. **No new deps.**
+  - **Open:** step-animations for the four new numeric structures (open addressing: slot strip
+    with tombstones, probe walk, purge/double; red-black: colours, insert and delete fix-up
+    cases as distinct events, recolours as non-cost events; B-tree: per-probe compares,
+    split/borrow/merge events, the deferred equality test explained; doubly list: real back
+    arrows, which needs the TS twin to hold real `prev` links first). The graph's charts are
+    **not yet in the PNG / CSV / JSON exports**, and the PNG would need the V-sweep's memory
+    caveat as a caption line; the B-tree's locality caveat is likewise page-only. The graph
+    section's controls are not persisted. The AVL and BST are not on the search chart, so the
+    red-black and B-tree search comparisons against the AVL are clock-free only. A gate pass
+    for persistence (paste, run, reload, assert the restored text) is sketched in the slice's
+    handoff note (commit `208c39c`) but deliberately not wired — it re-navigates, so it must
+    run after every other pass and clear storage first. Presets/demos beyond the six from
+    Phase 5, and performance polish.
 
 ---
 
@@ -1207,11 +1398,28 @@ insert/search/delete group on a shared key type.
 
 ## 13. Open questions (revisit during build, not blocking)
 
-- Hash table: stay with separate chaining, or add open-addressing as a *second*
-  selectable variant once the framework is proven? (Great comparison once cheap.)
-- Balanced tree: AVL chosen; offer red-black as an alternative later for a
-  balancing-scheme comparison?
-- Session persistence: local-only (IndexedDB) vs shareable URLs/exported files?
+- ~~Hash table: stay with separate chaining, or add open-addressing as a *second*
+  selectable variant?~~ **Done** (Phase 6) — both are measured on the same charts,
+  held to the same hash and table sizes (METHODOLOGY §2.8). Remaining: (a) a
+  **backward-shift-delete** variant (no tombstones; a churn pair would restore the
+  table by construction, with no priming and no overshoot) as a third line — the
+  cleanest test of how much of regime 12 is the tombstone; (b) a **load-factor
+  control** (0.5 is the usual linear-probing ceiling; 0.75 was kept to match
+  chaining, which makes OA's miss cost ~4.5× chaining's near the top of each
+  sawtooth); (c) a churn *block* for the chaining set too, for symmetry (its
+  single key has the same one-bucket sampling problem, milder).
+- ~~Balanced tree: AVL chosen; offer red-black as an alternative later for a
+  balancing-scheme comparison?~~ **Done** (Phase 6, METHODOLOGY §2.9) — measured,
+  not yet animated. Remaining: the per-operation rotation bound is the scheme's real
+  difference, and no per-op *average* on a chart can show a worst case — should
+  Compare grow a "max cost of one operation" view so it is visible on the clock and
+  not only in Rust (METHODOLOGY §4 hurdle 13)?
+- ~~Session persistence: local-only (IndexedDB) vs shareable URLs/exported files?~~
+  **Decided: local only** (Phase 6, `src/persist/`). Settings in `localStorage`,
+  the user's pasted data in IndexedDB, nothing uploaded, nothing in the URL.
+  Measured results are deliberately not persisted — a reload re-measures.
+  Shareable URLs remain out of scope; the CSV / JSON / PNG exports are the way to
+  hand a result to someone else.
 - How far to push absolute-time comparability across machines (probably: don't —
   keep it explicitly relative).
 - ~~Churn-key position bias: add a second churn key (`min − 1`) and alternate, so a
@@ -1222,8 +1430,15 @@ insert/search/delete group on a shared key type.
   absent)?
 - Interleave structures per sweep point to cancel frequency/thermal drift
   between sequential sweeps (METHODOLOGY §4.5)?
-- Configurable present/absent probe mix (§6.3), and reporting *stored* size next
-  to *input* size for de-duplicating structures (METHODOLOGY §4.8–4.9).
+- ~~Configurable present/absent probe mix (§6.3), and reporting *stored* size next
+  to *input* size for de-duplicating structures (METHODOLOGY §4.8–4.9).~~ **Done**
+  (Phase 6). Two narrower questions remain: (a) should the numeric absent block
+  offer a **mid-range** form (keys between stored keys) as well as `max + 1 …`? It
+  is the skip list's dearer miss and would close the hurdle-9 gap, but it is a
+  different workload whose slope bands would need their own calibration; (b) should
+  the charts offer an explicit **stored-n x-axis** for the de-duplicating
+  structures? Today the axis is input n everywhere, with the stored count reported
+  beside it.
 
 ---
 
@@ -1236,7 +1451,8 @@ insert/search/delete group on a shared key type.
    interleaving experiment from §13 remains open, deliberately as its own slice —
    it moves the conditions the gate's slope bands were calibrated under.
 3. Promote `verify:browser` to a blocking CI gate once its slope bands prove
-   stable on shared runners.
+   stable on shared runners — and since its class-*label* checks are the flaky kind
+   (METHODOLOGY §5), likely as bands-only checks first.
 4. ~~Phase 6: the trie's step-animation.~~ **Done** — the trie is measured *and*
    watchable, drawn one node per UTF-8 byte with a terminal ring for "a key ends
    here".
@@ -1245,7 +1461,21 @@ insert/search/delete group on a shared key type.
 6. ~~Phase 6: the skip list's step-animation.~~ **Done** — the express lanes are drawn
    as real skips, and each step highlights the walk's stand-point and its compared node
    separately, so a hit's level-0 double comparison (`< key?` then `= key?`) is visible.
-7. Phase 6 remainder: the graph — its clock-free twin, corpus and `V + 2E` cost identity
-   are **done** (METHODOLOGY §2.7); the measured half (synthetic generators + user edge-list
-   import, the two-sweep Compare section, the browser gate) and its animation are next — then
-   session persistence, then performance polish.
+7. ~~Phase 6: the graph — measured and animated.~~ **Done** — a V-sweep and a
+   degree-sweep against the reached component's `V′ + 2E′`, BFS and DFS stepped beside
+   their adjacency lists (METHODOLOGY §2.7).
+8. ~~Phase 6: open addressing, red-black, B-tree, doubly linked list; probe mix and
+   stored size; session persistence.~~ **Done** — measured end to end, gate 118/118
+   (METHODOLOGY §2.8–§2.11, §4 hurdles 8–9).
+9. Phase 6 remainder, in rough order:
+   - step-animations for the doubly list, open addressing, red-black and B-tree — the
+     doubly list's first needs its TS teaching twin to hold **real back links** (today it
+     is array-backed, so its backward corpus lines pin agreement only);
+   - the graph section in the **PNG / CSV / JSON exports**, with the V-sweep's memory
+     caveat as a PNG caption line; the **B-tree's** locality caveat in the PNG too;
+   - persist the graph section's controls (a small `run`-style section in
+     `src/persist/session.ts`);
+   - an AVL (and BST) search series, so the balanced trees share the search chart;
+   - the persistence reload pass in the gate;
+   - performance polish.
+10. The interleaving experiment (§13), as its own slice.

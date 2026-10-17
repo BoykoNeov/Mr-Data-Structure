@@ -17,9 +17,10 @@ measurements, held to identical behaviour by a cross-language conformance
 corpus. See [`docs/PLAN.md`](docs/PLAN.md) for the full design, the measurement
 methodology, and the phased roadmap.
 
-**Status:** Phases 0–5 complete, Phase 6 begun — every Rust bench twin (the Linear
-family, the BST/AVL trees, the **min-heap**, the **skip list**, and the **string-key**
-array, hash set and **trie**) is
+**Status:** Phases 0–5 complete, Phase 6 well along — every Rust bench twin (the Linear
+family including the **doubly linked list**, both hash sets, the BST/AVL and
+**red-black** trees and the **B-tree**, the **min-heap**, the **skip list**, and the
+**string-key** array, hash set and **trie**) is
 wired into the browser sweep for **both** search and add/remove, and the
 comparison layer is done: the sweeps run on a **user-chosen dataset** (generators
 or pasted CSV/JSON, or one of six **one-click presets**), with a theoretical
@@ -63,13 +64,38 @@ animation** too, so the O(log n) search can be watched happening: the express la
 drawn as the real skips they are (the top lane jumps straight over most of the list),
 and each step shows two things at once — the node the walk *stands* on and the node it
 *compares* — so a hit visibly pays for the descent **and** one more equality test on the
-same node. The **graph** has now begun: its bench twin, teaching twin and cost identity
-are in and pinned clock-free — an own-op-set adjacency-list multigraph whose breadth-first
-and depth-first traversals cost the *same* `V + 2E` while visiting in different orders (the
-graph counterpart to "the array and the linked list are both O(n) by different mechanisms").
-Its measured half — synthetic graph generators and your own edge-list import, a Compare
-section that sweeps vertices *and* edge density to show the `+E` term, and the browser gate —
-plus its animation are the next slice, and session persistence follows. The
+same node.
+
+The **graph** is now complete: an adjacency-list multigraph whose breadth-first and
+depth-first traversals cost the *same* `V + 2E` while visiting in different orders (the
+graph counterpart to "the array and the linked list are both O(n) by different
+mechanisms"). Its own Compare section, fed by seeded synthetic graphs or your own edge
+list, runs a sweep over vertices and a sweep over edge density, and plots both traversals
+against the reached component's size — BFS and DFS visibly the same cost, and the `+E`
+term visible only on the sweep that holds `V` fixed. It also has **its own animation**:
+BFS and DFS drawn beside their adjacency lists (one cell per edge-visit), the frontier as
+a real queue or stack, and DFS shown marking a vertex when it is pushed, not when it is
+visited.
+
+Phase 6 also answers several "which variant?" questions on exact counts, each on the
+shared charts. A **red-black tree**, measured in the AVL's own unit, never rotates more
+than twice per insert or three times per delete — but saves rotations in total only on
+random inserts, and pays for its looser balance on sorted input. A **B-tree** makes the
+AVL's number of comparisons in a quarter of its node hops; whether that shows on the clock
+is printed for you to read, not claimed. An **open-addressing hash set**, held to the
+chaining set's exact table sizes, pays more probes per lookup (primary clustering, matching
+Knuth's formulas) while staying flat, behind a tombstone policy that keeps its add/remove
+from drifting with the timer's repetition count. And a **doubly linked list** draws the
+same curves as the singly one — the same steps, counted exactly — because a back pointer
+only helps remove a node you already hold, while each node takes half again the memory.
+
+The search workload's **hits-vs-misses mix is now a choice** (the default is the
+calibrated 50/50, reproduced exactly), and a structure that keeps one copy of each repeated
+key says how many it actually held beside the input size — on the chart, in the exports
+and in the PNG. And your **session is remembered in this browser**: your last run's
+dataset — pasted data included — and chart settings come back on reload, while results are
+always re-measured, never restored. Still open: animations for those four structures, the
+graph in the exports, and performance polish. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
@@ -101,9 +127,10 @@ The page has two parts, matching the two modes above:
 - **Explore** — pick a structure tab, click `insert` / `search` / `delete`, and
   use the play / pause / step / step-back / speed controls to walk through the
   animation one cost event at a time (the same comparisons, probes, shifts, and
-  rotations the benchmark counts). Eight tabs take a **number**; the **trie** tab
+  rotations the benchmark counts). Nine tabs take a **number**; the **trie** tab
   takes **text**, and counts char-steps instead — one for the root, one per byte of
-  the key it is given.
+  the key it is given; the **graph** tab runs BFS or DFS on a fixed seed graph, from
+  vertex 0 or from a start vertex you type (Enter runs BFS).
 - **Compare** — below the explorer, pick a **dataset** (a generator such as
   `uniform`, `sorted`, `reverse-sorted`, `near-sorted`, `gaussian`, `zipfian`,
   or paste your own CSV/JSON and name the key field) and run the sweeps. Every
@@ -119,7 +146,22 @@ The page has two parts, matching the two modes above:
   - a **local-slope panel** showing the empirical exponent on each interval
     (a falling trend is the logarithm's signature; a rising one means a fixed
     overhead is masking growth);
-  - **export** of the results as CSV or JSON with provenance columns.
+  - **export** of the results as CSV or JSON with provenance columns, and the
+    charts as a PNG sheet with their caveats as caption lines;
+  - a **search workload** control — the share of probes that hit a stored key
+    (0 / 25 / 50 / 75 / 100 %, default 50) — and a note under any chart whose
+    structure held fewer keys than it was given (a set keeps one copy of a
+    repeated key).
+
+  The page **remembers your last run** in this browser (dataset, pasted data, probe
+  mix, chart settings, Explore tab) and re-measures it on reload; it never stores
+  results. The note above the dataset panel says what was restored and has a
+  **forget saved session** button.
+- **The graph gets its own section** at the end of Compare, measured only when you
+  press *measure the graph*: synthetic graphs (connected random, path, grid) or your
+  own pasted edge list, swept over vertex count at fixed density and over density at
+  fixed vertex count, with both traversals plotted against the reached component's
+  `V′ + 2E′`.
 - **The min-heap gets its own section**, because it answers a different question.
   The structures above all do add / find / remove a key; a heap does add, *peek at
   the smallest*, and *remove the smallest*. Lining it up against the others would
@@ -158,7 +200,10 @@ src/
   bench/             BenchEngine interface, Comlink worker, WASM-backed engine,
                      measurement loop (measure.ts), fitter (fit.ts), sweep sizes
   compare/           Compare orchestration: dataset -> every sweep -> fits -> proofs
-  data/              data layer: import, type detection, generators, marshalling
+                     (and the graph's two sweeps)
+  data/              data layer: import, type detection, generators, marshalling,
+                     graph generators, edge-list import
+  persist/           local session persistence (localStorage + IndexedDB)
   registry.ts        structure registry: labels, colours, cost metric, theoretical classes
   structures/        TypeScript teaching twins (drive the animations)
   ui/                Compare section, dataset picker, charts (sweep + local slope),

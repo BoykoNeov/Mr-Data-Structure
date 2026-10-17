@@ -58,10 +58,18 @@ risk R2 can be observed.
 
 ### 2.2 Size-preserving ops: `search`
 
-Build to n (untimed), then time `k` lookups over a stored probe workload: 64
-present keys spread evenly through the prefix + 64 keys guaranteed absent (past
-the maximum). The 50/50 mix keeps the array's expected scan at ~n/2 + n and the
-hash set's at O(1). (Configurable mixes are a PLAN §6.3 item not yet exposed.)
+Build to n (untimed), then time `k` lookups over a stored probe workload of **128 probes**:
+a block of present keys spread evenly through the prefix (`keys[⌊i·n/p⌋]`), then a block
+guaranteed absent. The split is the run's **probe mix** (`src/bench/probeMix.ts`), chosen in
+the UI as 0 / 25 / 50 / 75 / 100 % present. The **default is 64 present + 64 absent** — the
+workload every gate band was calibrated on — and is reproduced byte for byte. The present
+block is capped at n (at n = 10 the default is 10 + 64, as it always was); the absent block
+is not. Numeric absent keys are `max + 1 … max + a`. String absent keys are derived by
+`absentLike` (§2.5) from `min(a, n)` stored seeds spread through the prefix — identical to the
+old "cycle the present block" rule at the default, and the only rule that stays
+derived-from-the-data on a misses-only run. Every structure in a run gets the same probe
+set. A 50/50 mix keeps the array's expected scan at ~n/2 + n and the hash set's at O(1);
+what the other mixes do is hurdle 9.
 
 ### 2.3 Size-mutating ops: churn and the finite-difference cross-check
 
@@ -89,38 +97,52 @@ The agreement claim `churn(n) ≈ insert_fd(n) + delete_fd(n)` turned out to be
 **structure-specific**, because the churn key is placed at a chosen *position*
 (a tree's spines, an array's front) while the build inserts at the *average*
 position. Every regime is pinned clock-free on exact op-counts in
-`bench-engine/src/structures/mod.rs` (`mod methodology`):
+`bench-engine/src/structures/mod.rs` (`mod methodology`; the B-tree's in its own
+`structures/methodology_btree.rs`):
 
-| structure | regime | why | class agreement |
-|---|---|---|---|
-| unsorted array | **tight** (< 2 %) | costs are position-uniform: insert is a free append, any delete is O(n) | yes, O(n) |
-| hash set | **loose** (< 50 %) | both sides are tiny O(1) counts; the churn key's chain vs the swept average | yes, O(1) |
-| BST, sorted input (chain) | **FD sum overshoots churn** on the insert side (1500 vs 1002) | the *delete* halves match exactly (both alternate the two ends), but churn's insert averages a full-chain descent with a root-adjacent one (≈ n/2) while the build drops every key at the chain's bottom (≈ n) | class only, O(n) |
-| BST, shuffled (balanced) | **FD sum overshoots churn** (~32 %: 23.7 vs 18) | churn rides the two cheap spines (≈ ln n each) while `insert_fd` reflects the average depth (≈ 2 ln n) and `delete_fd` is added on top | class only, O(log n) |
-| AVL | **close** (~10 %), churn ≥ sum | height and average depth differ by only ~1.44×, so the spine probes and the average insert nearly coincide | yes, O(log n) |
-| sorted array (front churn) | **churn overshoots sum** (≈ 2n vs ≈ 3n/2) | front churn shifts the whole array twice; the shuffled build inserts at average position n/2 | yes, O(n) — and *tail* churn would have read O(log n): the key position sets the class |
-| linked list | **class disagreement** (churn O(1), FD delete O(n)) | head insert puts the churn key where deletion is O(1); the canonical delete-by-value (teardown of the oldest) walks the list | **no** — reported, not hidden |
-| min-heap | **churn overshoots sum** (~1.5×: 53 vs 34.9), but the *insert halves* are in different classes | churn's insert is a new global minimum climbing the full height (Θ(log n), forced — see §4.2); a shuffled build's marginal insert is O(1), since most of a heap is leaves | totals yes, Θ(log n); **insert halves no** |
-| skip list | **FD sum overshoots churn** (~56 %: 35.2 vs 22.5) | the two churn keys sit just off either end, where a descent is cheap — running off the *right*-hand end costs no comparison at all — while `insert_fd` reflects the average key's full search path and `delete_fd` is added on top. Nothing to do with balance: this structure never rebalances (§2.6) | class only, O(log n) |
+| # | structure | regime | why | class agreement |
+|---|---|---|---|---|
+| 1 | unsorted array | **tight** (< 2 %) | costs are position-uniform: insert is a free append, any delete is O(n) | yes, O(n) |
+| 2 | hash set | **loose** (< 50 %) | both sides are tiny O(1) counts; the churn key's chain vs the swept average | yes, O(1) |
+| 3 | BST, sorted input (chain) | **FD sum overshoots churn** on the insert side (1500 vs 1002) | the *delete* halves match exactly (both alternate the two ends), but churn's insert averages a full-chain descent with a root-adjacent one (≈ n/2) while the build drops every key at the chain's bottom (≈ n) | class only, O(n) |
+| 4 | BST, shuffled (balanced) | **FD sum overshoots churn** (~32 %: 23.7 vs 18) | churn rides the two cheap spines (≈ ln n each) while `insert_fd` reflects the average depth (≈ 2 ln n) and `delete_fd` is added on top | class only, O(log n) |
+| 5 | AVL | **close** (~10 %), churn ≥ sum | height and average depth differ by only ~1.44×, so the spine probes and the average insert nearly coincide | yes, O(log n) |
+| 6 | sorted array (front churn) | **churn overshoots sum** (≈ 2n vs ≈ 3n/2) | front churn shifts the whole array twice; the shuffled build inserts at average position n/2 | yes, O(n) — and *tail* churn would have read O(log n): the key position sets the class |
+| 7 | linked list — singly **and doubly**, op for op (§2.11) | **class disagreement** (churn O(1), FD delete O(n)) | head insert puts the churn key where deletion is O(1); the canonical delete-by-value (teardown of the oldest) walks the list. The doubly list's teardown deletes the tail **by value**, never through its tail handle | **no** — reported, not hidden |
+| 8 | min-heap | **churn overshoots sum** (~1.5×: 53 vs 34.9), but the *insert halves* are in different classes | churn's insert is a new global minimum climbing the full height (Θ(log n), forced — see §4.2); a shuffled build's marginal insert is O(1), since most of a heap is leaves | totals yes, Θ(log n); **insert halves no** |
+| 9 | skip list | **FD sum overshoots churn** (~56 %: 35.2 vs 22.5) | the two churn keys sit just off either end, where a descent is cheap — running off the *right*-hand end costs no comparison at all — while `insert_fd` reflects the average key's full search path and `delete_fd` is added on top. Nothing to do with balance: this structure never rebalances (§2.6) | class only, O(log n) |
+| 10 | red-black tree | **close-ish** (~18 %: churn 27 vs sum 22.2), churn ≥ sum | the AVL's direction: churn's keys ride the spines while the build inserts at average depth — wider than the AVL's ~10 % because the looser height bound lets a red-black tree's spines run further past its average path (§2.9) | yes, O(log n) |
+| 11 | B-tree (t = 16) | **tight** (~2 % shuffled: churn 25.0 vs sum 24.5; 24.5 vs 24.7 ascending, 26.0 vs 27.5 descending) | every leaf is at one depth, so the two churn keys walk the same height as any stored key — no cheap spine — and a settled churn pair is exactly one insert descent plus one delete descent (§2.10) | yes, O(log n) |
+| 12 | open-addressing hash set | **churn overshoots sum** (~27 %: 7.69 vs 6.06) | churn's own tombstones bridge runs; an unprimed pair (5.81) matches the FD sum (§2.8) | yes, O(1) |
 
 Both BST rows moved with the two-key change (they were "tight" and
 "overshoot"): alternating the ends is what fixes the *class* on reverse-sorted
-input, and the price is that the chain's constants no longer coincide. The
-direction of every tree row is now the same — the finite-difference sum sits at
-or above churn, because a build inserts at average depth and churn rides spines.
+input, and the price is that the chain's constants no longer coincide. The tree
+rows then fall into three groups by what churn's two end keys walk compared with
+the build's average key. Where the ends are **cheap spines** — the BST (≈ ln n
+against ≈ 2 ln n) and the skip list (running off an end is free) — the
+finite-difference sum overshoots churn. Where the ends are **full-height spines** —
+the AVL and the red-black tree — churn overshoots the sum, the red-black tree by
+more because its bound lets a spine run further past the average. And where there
+is **no special spine** — the B-tree, every leaf at one depth — the two agree
+tightly, on either side depending on input order.
 
 Consequence for the UI: churn is shown as *the* mutation curve, the FD split as
 the cross-check, and both are read for **shape** (PLAN §2.3). Where the churn
 key's position biases the constant (trees, sorted array) or even the class
 (linked list), the bias is stated next to the chart and in §4 below.
 
-Nine regimes, and the skip list's is the balanced BST's story told by a
-structure with no tree in it: both probe the cheap edges of a shape whose average
-is dearer. What differs is *why* the shape is safe — the tree rebalances, the
-skip list was never unbalanced (§2.6).
+Twelve regimes. The skip list's is the balanced BST's story told by a structure
+with no tree in it: both probe the cheap edges of a shape whose average is
+dearer. What differs is *why* the shape is safe — the tree rebalances, the skip
+list was never unbalanced (§2.6). The B-tree's is the first tree whose churn and
+FD sum agree tightly, because it is the first whose spines are not special. And
+the open-addressing set's is the one regime set by a **deletion policy** rather
+than a key position: the overshoot is the churn keys' own tombstones (§2.8).
 
-All four flat structures now run this pair of methods **on the browser clock**,
-not only on op-counts, and regimes 6 and 7 are where that matters most:
+All six flat structures (both arrays, both hash sets, both lists) run this pair
+of methods **on the browser clock**, not only on op-counts, and regimes 6 and 7
+are where that matters most:
 
 - The **sorted array**'s churn key is `min − 1` precisely so the measured curve
   is the structure's honest O(n). A tail key would append and pop with no shifts
@@ -135,7 +157,9 @@ not only on op-counts, and regimes 6 and 7 are where that matters most:
   *both* curves at once, and the UI prints a caveat box beside the chart saying
   so, pointing at the O(n) delete-by-value in the finite-difference split.
   `scripts/verify-browser.mjs` pins both halves so the pair cannot silently
-  drift back to a single reassuring line.
+  drift back to a single reassuring line. The **doubly linked list** draws the
+  same pair for the same reason (§2.11), and every one of those rules — caveat
+  box, delete row, PNG legend row and caption line, gate pins — binds it too.
 
 ### 2.5 String keys: a second cost axis, and a probe that must not be a sentinel
 
@@ -229,7 +253,10 @@ shared and unchanged anyway, because a chart on which each line got a workload
 tuned to suit it would not be a comparison. The consequence is stated rather than
 hidden: **the trie's height on this chart is a pessimistic constant**, and the UI
 says so beside it. What no probe choice can do is tilt the line, since nothing the
-trie does depends on how many keys are stored.
+trie does depends on how many keys are stored. The probe *mix* (§2.2) does not
+change this either: a hit and a last-character miss both cost `1 + L` char-steps,
+so the trie's search cost is the same at every mix (exactly equal at the two
+extremes, `probeMix.test.ts`) — the one structure the mix control cannot move.
 
 The **churn key** is the same derived key, and for a trie that is again a
 decision, not a default. Sharing all but its last byte with a stored key, one
@@ -325,32 +352,31 @@ identity is exact and clock-free (`structures::methodology::
 graph_traversal_costs_exactly_v_plus_2e_and_bfs_equals_dfs`), so it is pinned on
 op-counts, not left to the noisy wall clock.
 
-*(Status: the twin, the corpus and this cost identity are in; the **measured half** —
-the generators, edge-list import, the two Compare sweeps and the browser gate below —
-is the next slice, so the paragraphs that follow describe what that half **will** do.)*
-
-Three consequences shape how the graph will be measured:
+Three consequences shape how the graph is measured:
 
 1. **The op set is different, so it stays off the shared charts.** A graph has no
-   insert/search/delete of a *key* (PLAN §4.1), so — like the heap — it must be
-   `!isCanonical`, compared only within its own group and drawn in its own section.
-   (The registry entry that enforces that lands with the measured half; note that
-   `isCanonical` is `id != "heap"` today, so a `"graph"` id added without a matching
-   exclusion would wrongly read as canonical.) `BFS` and `DFS` cost the same and
-   visit in **different orders**; that equal-cost / different-order pair is the
-   graph's headline, the counterpart to "the array and the linked list are both O(n)
-   by different mechanisms" (§1).
+   insert/search/delete of a *key* (PLAN §4.1), so — like the heap — it is
+   `!isCanonical`, compared only within its own group and drawn in its own Compare
+   section. `isCanonical` excludes `'graph'` as well as `'heap'`, `CANONICAL_STRUCTURES`
+   filters through it, the graph's registry entry is its own `GraphStructureInfo` (no
+   key-structure theory slots), and `theoreticalClass('graph', …)` throws rather than
+   invent a class (`src/registry.test.ts`). `BFS` and `DFS` cost the same and visit in
+   **different orders**; that equal-cost / different-order pair is the graph's
+   headline, the counterpart to "the array and the linked list are both O(n) by
+   different mechanisms" (§1).
 
 2. **One sweep cannot separate `O(V)` from `O(V + E)`.** If you grow `V` at a
    *fixed average degree* `d`, then `E = dV/2` and the cost is `(1 + d)V` — a
    straight line in `V`, from which the `+E` term is unreadable, because both
-   terms scale together. So the Compare view will run **two** sweeps: a **V-sweep**
+   terms scale together. So the Compare section runs **two** sweeps: a **V-sweep**
    at fixed degree (which shows both traversals are linear and that BFS ≡ DFS in
    class) and a **degree-sweep** at fixed `V` (which grows `E` alone, so the cost
    moves by *exactly* two per added edge — the `+E` term made visible). Both halves
-   of that argument are already pinned clock-free
-   (`graph_plus_e_term_is_only_visible_when_degree_grows_at_fixed_v`). The axis is
-   labelled `V + 2E`, never `n`.
+   of that argument are pinned clock-free
+   (`graph_plus_e_term_is_only_visible_when_degree_grows_at_fixed_v`), and an `O(V)`
+   cost reading slope 1 on the V-sweep and flat on the degree-sweep is pinned with a
+   fake engine (`src/compare/runGraphSweeps.test.ts`). The axis is labelled
+   `V′ + 2E′`, never `n`.
 
 3. **The cost is `O(V + E)`, not `O(E)`, and that is a real term.** An isolated or
    barely-connected vertex still costs its visit, so an almost-edgeless graph pays
@@ -360,18 +386,15 @@ Three consequences shape how the graph will be measured:
    less than the whole — pinned by the corpus's `disconnected` case and the
    union-find proptest.
 
-**Where the edges will come from.** Every other structure is fed the user's own
-keys; a graph needs *edges*, which a list of keys does not carry. Synthetic
-generators (a connected random graph at a chosen average degree, a path, a grid)
-will drive the V- and degree-sweeps, and the section will be labelled synthetic so
-no invented graph is passed off as "your data". A user's **own edge list** (a
-CSV/paste of `u,v` pairs) is a real graph and will be accepted as such — with the
-labels mapped to dense ids in first-seen order (so the traversal's source vertex 0
-is always real), treated as strings never numbers (the `02134` gotcha), and the
-curve plotted against the **reached component's** `V' + 2E'`, since a user graph
-can be disconnected. What the tool deliberately will **not** do is fabricate edges
-out of the keys (linking key *i* to key *i+1*), which would present a made-up
-structure as measured reality.
+**Where the edges come from.** Every other structure is fed the user's own keys;
+a graph needs *edges*, which a list of keys does not carry, so the graph section
+never reads the shared key dataset. Seeded synthetic generators
+(`src/data/graphs.ts`: a connected random graph at a chosen average degree, a path,
+a square grid) drive the sweeps, labelled synthetic on screen so no invented graph
+is passed off as "your data". A user's **own edge list** (`src/data/edgeList.ts`, a
+paste of `u,v` pairs) is a real graph and is accepted as such. What the tool
+deliberately does **not** do is fabricate edges out of the keys (linking key *i* to
+key *i+1*), which would present a made-up structure as measured reality.
 
 **Two implementation decisions that are correctness, not tuning.** DFS is
 **iterative with an explicit stack**, never recursion: a traversal of a
@@ -381,7 +404,345 @@ visited array and a preallocated frontier, so nothing is allocated inside the
 timed region — otherwise the curve would measure the allocator warming up rather
 than the walk. The graph is a **multigraph** (parallel edges and self-loops kept,
 a self-loop counting twice toward degree), matching the project's "never dedupe"
-rule and keeping `add_edge` genuinely O(1).
+rule and keeping `add_edge` genuinely O(1). The no-allocation claim is pinned on a
+dense multigraph (every ordered pair, so parallel edges and a loop on every vertex):
+same scratch capacity and the same heap pointers after 400 timed traversals
+(`graph::tests::the_timed_traversals_never_grow_their_scratch`).
+
+**The measured half.** The graph's Compare section (`src/compare/runGraphSweeps.ts`,
+`src/ui/GraphCompareSection.tsx`) runs **on request** — its own button, never on page
+load, so the key runs' default auto-run is untouched — and shares the bench worker, so
+a graph run queues behind a key run rather than racing it for the clock. Two sweeps,
+both plotted against `V′ + 2E′`, the vertex-visits plus edge-visits of vertex 0's
+connected component:
+
+- **V-sweep** — random connected graphs at a fixed average degree (default 4),
+  `V` = 1k … 50k on the 1-2-5 ladder; or a path, or a square grid; or, for a user's
+  edge list, its first 10, 20, 50, … edges (capped at 500k, at least 20 needed).
+- **Degree-sweep** — always synthetic (no given file can hold `V` fixed while adding
+  only edges): one random connected graph on `V = 5,000` at average degree 2, 4, 8,
+  16, 32, 64. The generator is *nested*: one seed draws the same spanning tree and then
+  the same extra edges in the same order, so a lower degree's edge list is an exact
+  prefix of a higher one's. `V` is not merely equal across the sweep, it is the same
+  graph plus edges (`src/data/graphs.test.ts`, "nests across degrees").
+
+**The x-coordinate is computed, then checked.** The orchestrator derives `V′` (BFS
+reach on the TS twin) and `E′` (edges with an endpoint in the reach) from the edges
+themselves, plots each point there, and checks that both bench-twin op-counts equal it
+(`countsMatchComponent`), that BFS ops = DFS ops (`bfsEqualsDfs`), and that both
+traversals reached exactly `V′`. So "op-count = `V′ + 2E′`" is re-verified on every
+point of every run on the real WASM twin, not only on the corpus, and the op-count
+chart is a check rather than a tautology. Plotting against the engine's own op-count
+would make that check vacuous; plotting against the nominal `V + E` would put a walk
+that touched 3 vertices of a disconnected file at the x of the whole file.
+
+**Imported edge lists.** Labels are text, numbered in **first-seen order** — so
+vertex 0, the traversal's source, is always the first endpoint of the first edge, and
+every prefix of the file is itself a dense graph on ids `0..k−1`. `02134` and `2134`
+are two vertices; repeated lines are parallel edges and `a,a` a self-loop, all kept; a
+header row and `#` comments are explicit options, never guessed. A prefix may be
+disconnected — the per-point table shows "reached x of V" and the x-coordinate is the
+reached component's (`src/data/edgeList.test.ts`, `runGraphSweeps.test.ts`).
+
+**On the real clock** (the gate's fourth pass, on its passing run): the V-sweep reads
+slope **1.33–1.34** for both traversals, inside the 0.7..1.6 band with thin headroom,
+and the fitter can label it `O(n log n)`. That is memory, not the walk: in a random
+graph almost every step is a jump to an unpredictable place (the next vertex's
+`visited` mark and its separately allocated neighbour list), the sweep takes the graph
+from cache-resident to not, and the per-point "ns per visit" column rises with it (an
+off-browser Node run read ~2.3 → ~7.4 ns per unit of `V′ + 2E′`). The op-count is
+exactly linear. Same call as the string array's and the trie's: assert the band, show
+the ns-per-visit column, say why beside the chart. The degree-sweep, at a fixed 5k
+vertices, is much less exposed and read slopes **1.01 / 1.08** (band 0.4..1.4, rise
+> 3× required). The Node run had read it a little *below* 1 (0.88 / 0.85) and offered
+a mechanism for that; Chromium did not reproduce it, so no mechanism is claimed. If the
+V-sweep band ever flakes, read the ns-per-visit column first — a rising column argues
+for widening the band, not for re-tuning the graphs.
+
+### 2.8 Two hash sets, one hash (open addressing vs chaining)
+
+The open-addressing set (`hash_set_oa.rs`, linear probing, set semantics) is held to
+the chaining set's hash (`mix_f64`), 4-slot start, 0.75 threshold and doubling
+(`grows_at_exactly_the_chaining_sets_points`). Both tables therefore have the **same
+capacity and the same load factor α at every n**, and the only difference between the
+two curves is where a colliding key goes — the next free slot of one flat array, where
+neighbouring homes' collisions merge into one run (**primary clustering**).
+
+**Counting convention.** One tick for the hash, one per *occupied* slot examined (a
+live key compared, or a tombstone stepped over). The **empty slot that ends a walk is
+free**, exactly as reaching the end of a chain is free in the chaining set — in both, a
+header read says "stop". That makes the two op-counts comparable unit for unit; it also
+means Knuth's probe counts (which include the final empty slot) read one higher than
+this metric, and the hash tick puts the one back: here a miss costs ½(1 + 1/(1−α)²) and
+a hit 1 + ½(1 + 1/(1−α)), against chaining's 1 + α and 2 + α/2.
+
+**Clustering, clock-free.** Measured on 20 000 absent and n present keys
+(`open_addressing_probe_counts_follow_knuths_clustering_formulas`):
+
+| n | α | OA miss (Knuth) | chained miss | OA hit (Knuth) | chained hit |
+|---|---|---|---|---|---|
+| 3 000 | 0.73 | 7.70 (7.48) | 1.72 | 3.48 (3.37) | 2.38 |
+| 5 000 | 0.61 | 3.66 (3.79) | 1.61 | 2.82 (2.78) | 2.32 |
+| 12 000 | 0.73 | 7.14 (7.48) | 1.74 | 3.33 (3.37) | 2.37 |
+
+Misses pay the most, so the probe mix (§2.2) moves this structure's constant more than
+the chaining set's (misses-only is its dear end; class unchanged).
+
+**The sawtooth.** A doubling table's α swings between ~0.38 and 0.75 as n climbs, and
+linear probing's cost is steep in α, so its search op-count saws: 2.02 … 3.89 per probe
+on the 10 … 100 000 ladder at the default mix (1.92× swing) against chaining's
+1.62 … 2.05 (1.27×). Neither has a trend (log-log slopes 0.013 and 0.012,
+`open_addressing_search_saws_with_the_load_factor_but_has_no_trend_in_n`), so the gate
+asserts the slope band, not the label.
+
+**Tombstones — the landmine and the policy.** Linear probing cannot empty a deleted slot
+(a key whose walk passed through it would become unreachable), so delete leaves a
+tombstone. Churn — thousands of insert+delete pairs at fixed n — is exactly the workload
+that breaks a naive tombstone policy. Four rules, each pinned:
+
+1. *Without reuse*, each pair strands one more tombstone in the churn key's run, so the
+   walk grows a slot per pair until a rehash. The mean cost per pair then depends on how
+   many pairs the adaptive batcher chose to run, and since the headroom before a purge
+   scales with the table, the drift reads as **growth in n** — an O(1) structure charted
+   as rising (`without_tombstone_reuse_churn_drifts_with_repetition_count`). **Rule: insert
+   reuses the first tombstone on its path**, after walking on to an empty slot to confirm
+   absence.
+2. *If tombstones did not count toward the load*, a delete-heavy sequence could leave no
+   empty slot, and a miss — which stops only at one — would never return (a hung worker).
+   **Rule: rehash when live + tombstones > 0.75·cap**, purging in place when live ≤
+   0.375·cap, otherwise doubling
+   (`tombstones_count_toward_the_load_factor_so_a_miss_always_terminates`).
+3. *Even with reuse*, the first pair is cheaper than the rest: it lands on an empty slot,
+   while every later insert finds the key's own tombstone and must walk past it to an empty
+   slot before reusing it (`an_unprimed_first_pair_is_cheaper_than_the_steady_state`).
+   **Rule: `set_churn_key` primes** each churn key with untimed pairs, repeating whole
+   passes until one causes no rehash and no new tombstone (a mid-block rehash purges earlier
+   keys' tombstones — found by the proptest). From that fixed point every pair restores the
+   table exactly, so a counted pair is the same after 0, 1, 7, 100 or 100 000 timed ones
+   (`churn_cost_does_not_drift_with_repetition_count`,
+   `proptest_hash_oa::churn_restores_size_and_layout`).
+4. *One churn key samples one cluster.* A single key's churn cost is the length of
+   whichever run its home lands in — heavy-tailed — so a one-key curve jumped 6.5× and
+   2.75× between neighbouring sweep points on two key sets. **Rule: churn a block** of
+   `clamp(⌊len/32⌋, 1, 16)` consecutive keys `max + 1, max + 2, …` and report the mean per
+   pair; the block's swing was 1.47× and 1.55×, and its tombstones add at most ~3 % to the
+   load (`a_single_churn_key_samples_one_cluster`). This is the one place the two hash sets'
+   recipes deliberately differ.
+
+**Regime 12 — churn overshoots the FD sum, and the overshoot is the tombstone.** Churn's
+insert is a miss walk and its delete a hit — the same two walks the build and teardown
+average — so on a fresh table they agree (unprimed pair 5.81 vs FD sum 6.06). After
+priming, the churn keys' tombstones never revert to empty: each bridges its run to the
+next, and every later insert walks the merged run. At n = 4 000 over 64 tables: insert_fd
+3.54, delete_fd 2.52, sum 6.06, primed churn 7.69 — a ~27 % overshoot, class agreement
+O(1) (`open_addressing_churn_overshoots_finite_differences_by_its_own_tombstone`). Against
+the chaining set's churn on the same keys (3.94), the OA line sits higher for two causes of
+about equal size, pinned in the same test: clustering (+1.87) and the tombstones (+1.88);
+the churn chart's copy says exactly that. The same test pins one more trap: a finite
+difference across a doubling (1 500 → 1 600) reads a **negative** marginal delete for
+linear probing (−10.77; chaining +2.00), because every stored key's walk shortens at once.
+A finite difference of a doubling table is a marginal cost only between equal load
+factors; the browser's 1-2-5 ladder doubles n with the table, so its endpoints sit at
+equal α (for distinct keys — a de-duplicated prefix can shift it, hurdle 8).
+
+**On the real clock** (passing gate run): search slope 0.02, churn |slope| 0.11 — both
+flat, both flatter than the array's. Which hash set is faster on the clock is a machine
+fact (one flat array against chain pointers) and deliberately not asserted; the UI says
+only that the order can flip.
+
+### 2.9 Two balancing schemes, one metric (the red-black tree)
+
+The red-black tree answers one question (PLAN §13): what does a *balancing scheme* cost?
+The AVL keeps every node's subtrees within one level, so its height is ≤ ≈1.44·log₂ n —
+but a delete may rebalance at every level on the way up. A red-black tree promises only
+that no root-to-leaf path is more than twice another (height ≤ 2·log₂(n+1)), and in
+exchange **never rotates more than twice on an insert or three times on a delete**. Ours
+(`rbt.rs`, `src/structures/rbt.ts`) is classic CLRS, not left-leaning, on the AVL's exact
+semantics (multiset, equal keys right, value-copy delete — proven shape- and colour-equal
+to CLRS's transplant delete, `rbt::tests::value_copy_delete_matches_the_clrs_transplant_delete`)
+and the AVL's exact metric — **comparisons + rotations** — so the two differ only by the
+scheme.
+
+**What the metric leaves out, on purpose.** Where the AVL rotates, a red-black tree mostly
+*recolours*. The AVL has no colour, so charging recolours would put a cost on the chart
+only one line can pay; they are counted on a separate counter (a recolour = a write that
+*changes* a node's colour) and reported here, so "fewer rotations" is never read as "less
+work".
+
+**What the op-counts say** (n = 4000, the same key sequences for both trees; the AVL's
+comparisons and rotations are separated by subtracting a pre-op search count, valid for
+distinct keys):
+
+| | AVL | red-black |
+|---|---|---|
+| rotations, shuffled build | 2830 (0.71 / insert) | **2311 (0.58 / insert)** |
+| rotations, ascending build | 3988 | 3979 |
+| rotations, shuffled teardown / random-order delete | 2761 / 1466 | 2690 / 1501 |
+| **most rotations in one delete** | **10** (teardown), 6 (random order) | **3** (the bound) |
+| recolours, shuffled build | — | 9223 (4× its rotations) |
+| comparisons, shuffled build | 43 069 | 43 122 |
+| comparisons, ascending build | 43 905 | **73 809** |
+| height, shuffled / ascending | 15 / 12 | 15 / **21** (bound 23.9) |
+| average search (IPL), ascending | 43 917 | 45 586 (+3.8 %) |
+
+Three readings, each pinned:
+
+1. **The guarantee is per operation.** On every insert and delete of every sequence, and
+   after every op of the proptest, the red-black tree stays within 2 / 3 rotations; one AVL
+   delete on the same shuffled teardown took 10
+   (`rbt_bounds_rotations_per_operation_where_the_avl_does_not`). That is the scheme's real
+   advantage, and it is a statement about the *worst single operation*, which no per-op
+   average on a chart can show (hurdle 13). The AVL's 10 is an observation on one fixed
+   sequence, asserted as `> 3` — deterministic, but a property of that sequence.
+2. **In totals the saving is narrow.** ~18 % fewer rotations on random inserts; the same on
+   sorted inserts (about one per insert, both); a wash on deletes, the red-black tree's
+   slightly higher (`rbt_rotates_less_on_random_inserts_and_about_as_much_everywhere_else`).
+3. **The looser bound costs comparisons where sorted input inserts.** On shuffled keys both
+   trees end the same height. On sorted keys the AVL builds a near-perfect tree while the
+   red-black tree's edges grow toward its bound — and the edge is exactly where every
+   sorted insert lands, so the sorted build costs 68 % more comparisons although the
+   finished tree's average search is only ~4 % dearer
+   (`rbt_pays_its_looser_bound_in_comparisons_on_sorted_input`). A constant, not a class:
+   on reverse-sorted input it searches the far end in 19 against the AVL's 11 and the
+   BST's 2000 (`rbt_keeps_its_class_on_the_input_that_degenerates_a_bst`).
+
+Regime 10 (§2.3) follows the AVL's direction and is wider for reason 3.
+
+**Every number above is an op-count, and that is the only signal on which the gap is "the
+scheme and nothing else".** The two twins store nodes differently — the AVL is a recursive
+`Box` tree that allocates and frees a node per build key and per churn pair; the red-black
+tree is a pre-sized arena (NIL sentinel in slot 0, parent links, free-list reuse) — so on
+the wall clock the gap also carries allocator and layout effects, and the red-black churn
+line can sit *below* the AVL's while doing more comparisons. Read the two wall-clock lines
+for shape, the op-count lines for the scheme. On the passing gate run: search slope 0.25
+(it and the B-tree are the only trees on the search chart — the AVL and BST are not swept
+for search, so the red-black-vs-AVL search comparison is clock-free only), churn 0.14
+uniform and 0.16 reverse-sorted, all sub-linear. The gate asserts class only, never "below
+the AVL" or "above" — the op-counts say the order flips with input order.
+
+### 2.10 Equal work, fewer hops (the B-tree)
+
+The B-tree (`btree.rs`, `src/structures/btree.ts`, minimum degree **t = 16**, ≤ 31 keys a
+node) is the structure where the two signals of §1 are *expected* to tell different stories
+about the constant. Its cost metric is **comparisons + splits/merges/borrows** (one each,
+the counterpart of the AVL's rotations), and on that axis it is indistinguishable from the
+AVL and the sorted array — ≈ log₂ n comparisons whether the keys sit in one array, a binary
+tree, or a few 31-key nodes
+(`methodology_btree::btree_matches_the_avl_on_comparisons_but_takes_a_quarter_of_the_node_visits`):
+
+| n | B-tree comparisons | AVL comparisons | sorted array | B-tree node-visits | AVL node-visits |
+|---|---|---|---|---|---|
+| 4 000 | 12.1 | 11.7 | 11.1 | 3 | 11.7 |
+| 10 000 | 13.2 | 12.6 | 12.6 | 3 | 12.6 |
+| 100 000 | 16.5 | 15.3 | 15.8 | 4 | 15.3 |
+
+What it does not do is take one *dependent pointer hop* per comparison: a search visits
+exactly its height and binary-searches inside each node's contiguous key block. The
+op-count cannot see that; node-visits can, and are reported clock-free rather than charted,
+because a node-visit is a proxy for a cache miss, not a measurement of one. **The
+wall-clock advantage is a hypothesis, not a finding.** The gate prints the B-tree's
+top-of-sweep search time against the sorted array's, and its churn against the AVL's, as
+`btree hypothesis (info only)` lines, and asserts neither. Reasons to expect the gap to be
+small here: the search sweep tops out at 100 000 keys (≈ 800 KB, near L2/L3 sizes), the
+churn sweep at 4 000, and the AVL's churn allocates a `Box` per pair where a settled B-tree
+pair allocates nothing — so a churn gap would be confounded by the allocator. If the lines
+coincide on the clock, that is a result about this machine's memory at these sizes, not a
+failure of the structure. On the passing gate run: search slope **0.20 ± 0.02**, churn
+0.04 uniform and 0.18 reverse-sorted — all sub-linear, the class bands the sorted array and
+skip list get.
+
+**Why t = 16.** A node is 31 keys = 248 bytes, about four cache lines (its child array a
+separate block) — wide enough that 100 000 keys need four levels, small enough that the
+in-node search stays one short contiguous run. The claim is *fewer dependent hops*, not
+"one cache line per node".
+
+**Search defers the equality test.** Each node is binary-searched for the first key ≥ k
+using `<` only, the candidate is remembered, and the descent always continues to a leaf; one
+equality test at the end decides membership. That makes comparisons ≈ log₂ n with no
+per-node equality overhead and node-visits = height exactly, and it makes a missing key
+cost within one comparison of a present one — so the shared `max + 1 …` absent probes carry
+no bias for this structure at any mix (contrast the skip list, hurdle 9). The internal-key
+delete takes the predecessor from the leaf the descent already reached.
+
+**The delete is not CLRS's, and that is a measurement decision.** CLRS's single-pass delete
+pre-fills every node it enters that holds exactly t − 1 keys. With the proactive split
+(which leaves both halves at exactly t − 1), a churn pair can split a node on the way down
+and merge it straight back, every pair. Hand trace at t = 2: root `[20]`, left child
+`[5 10 15]` (full; leaves `[1] [7] [12] [17]`), right child `[30]` (leaves `[25] [35]`).
+Insert 0: the full child splits to `[5]`, `[15]` with 10 lifted (root `[10 20]`), leaf
+`[0 1]`. CLRS delete 0: `[5]` has t − 1 keys and so does its sibling, so they merge back to
+`[5 10 15]` and the root returns to `[20]` — the start state. On sorted input the whole left
+spine sits at t − 1 and it thrashes at every level, so the churn curve would time the
+allocator and O(t) key moves rather than the descent. The bench twin therefore keeps the
+CLRS proactive split for insert but repairs only **underflow** (< t − 1 keys) on the way
+back up — borrow left, else borrow right, else merge (left first) — which has hysteresis: a
+split yields t − 1 (not underflow), a merge at most 2t − 2 (not full). After a few warm-up
+pairs a churn pair restructures and allocates **nothing**, on ascending, descending and
+shuffled builds at t = 2 and 16
+(`btree::tests::churn_settles_into_zero_restructures_and_zero_allocation` and its TS mirror);
+`measure.ts` reads the op-count after the auto-grow and timed batches, i.e. settled. A
+delete of an absent key never touches the tree (`deleting_an_absent_key_changes_nothing`).
+
+**Input order moves a constant, not the class.** Sorted input leaves each split's left half
+at minimum fill, so an ascending build has ~40 % more nodes (66 vs 48 at n = 1 000) and is
+sometimes a level deeper (4 vs 3 at n = 10 000), while a search still costs ≈ log₂ n
+comparisons (`methodology_btree::sorted_input_builds_half_full_nodes_without_changing_the_class`).
+`shapeSensitive` stays false; the constant is stated beside the chart. Regime 11 (§2.3) is
+tight because every leaf is at one depth (`btree_churn_and_finite_differences_agree_tightly`).
+
+### 2.11 A second pointer that buys nothing (the doubly linked list)
+
+The doubly linked list (`doubly_linked_list.rs`, StructureId `'dll'`) is the singly list
+with one more link per node, pointing back, in the same `Option<u32>` index arena.
+Textbooks list "O(1) delete" among its virtues, and that is true of exactly one operation:
+unlinking a node *you already hold*. The canonical op set (PLAN §4.1) deletes **by key**,
+so a delete must first find its node, and finding is the singly list's head-first walk,
+node for node; the splice `prev` shortens was never counted on either list. So the claim is
+not "about the same": it is **equal**.
+
+- Every op-count signal the sweeps read — `search_counted`, `churn_counted`, cumulative
+  build (0) and teardown (Σ i = n(n+1)/2 on distinct keys) — equals the singly list's at
+  n ∈ {250, 1000, 2000, 4000} on sorted and shuffled builds
+  (`structures::methodology::doubly_linked_list_buys_nothing_on_the_canonical_op_set`), and
+  per op over random streams (`tests/proptest_doubly_linked_list.rs`, which uses the singly
+  list as the reference — two independently linked implementations, not a model of one).
+- What `prev` *does* buy is pinned on the test surface only: `unlink_handle_counted` costs 0
+  visits at every position, while deleting the same key by value costs its position on both
+  lists (`unlink_given_a_handle_is_free_but_delete_by_value_still_walks`). No chart measures
+  it, because nothing in this project hands a structure a node.
+- What `prev` costs: **24 bytes a node against 16** (`node_is_half_again_the_singly_node`).
+  Both twins use `Option<u32>` links (a 4-byte tag padded to 8), so the difference is
+  exactly the pointer; a `u32::MAX` sentinel encoding would make both nodes 16 bytes and the
+  extra pointer free. The figure is a statement about this shared encoding.
+- On the wall clock the doubly line should differ from the singly one by a **constant, not a
+  slope**. One off-browser Node probe read the doubly search ≈ 1.24× the singly at n = 1 000,
+  10 000 and 100 000 alike, with identical op-counts; nothing asserts that ratio. On the
+  passing gate run its search read slope **1.01 ± 0.006**, tail 1.03, and the first real run
+  labelled it **O(n log n)** — a tail drifting just above 1, the string array's pattern
+  (§2.5), most plausibly the bigger node's memory footprint, though the constant Node ratio
+  across L1→L3 sizes leaves the mechanism unestablished. The gate now holds it to the string
+  array's rule: band and rise asserted, either neighbouring label accepted.
+
+**Churn: regime 7, unchanged.** Head insert fixes the churn key's position at the head
+whatever its value, so above-max, below-min and stored keys all cost exactly one visit
+(`no_churn_key_recovers_the_linear_delete`); the engine passes the singly list's `max + 1`
+so the two churn curves are one experiment. The finite-difference teardown deletes the
+current tail **by value** from the head. A doubly list *could* unlink its tail through the
+`tail` handle in O(1) — and that is the trap: the teardown would read O(1) per delete, the
+class disagreement would vanish, and the chart would time unlink-given-a-handle under the
+name "delete". Every honesty rule bound to the singly list's flat curve (caveat box
+`src/ui/DoublyListNotes.tsx`, the O(n) delete row, the PNG legend row and caption line
+`dllSheetNote`, the gate pins) binds this one.
+
+**The back-link blind spot.** No canonical op reads `prev` on its walk, so a list with
+corrupt back-links answers every membership query, delete result and op-count correctly and
+only misbehaves on a later splice. The corpus (`conformance/corpus-dll.txt`) therefore pins
+the **tail→head order** before and after the delete sequence and after a mixed
+insert/delete stream (where free-list reuse would expose a stale `prev`), and the proptest
+checks it after every op — the doubly list's counterpart to the skip list's per-level
+dimension (§2.6). The TS teaching twin is the existing array-backed `DoublyLinkedListF64`
+plus `keysReversed()`, so on the TS side those lines pin *agreement*, not link integrity;
+link integrity is tested for real in Rust only.
 
 ## 3. Reading a curve — the fitter (`src/bench/fit.ts`)
 
@@ -539,29 +900,56 @@ Ordered by how much they can mislead a reader today.
    arrives with a standard error the same size as itself — which is why the
    runtime gate compares the heap's insert and extract-min on magnitude rather
    than on slope (hurdle 2).
-8. **Input size vs stored size.** `n` is the number of *input* keys in the
-   prefix. A set de-duplicates, so on duplicate-heavy (zipfian) data the hash
-   set holds fewer than n keys; the array and multiset structures hold all n.
-   The curves are still honest per structure, but "n" means input size.
-9. **Probe mix is fixed** at 64 present + 64 absent. A present-only or
-   absent-only workload changes the array's constant (n/2 vs n) and the
-   chain-walk length in the hash set, not the class. The absent block is
-   `max + 1 … max + 64`, and the **skip list** is the one structure for which
-   that is the *cheap* end rather than the dear one: an above-max probe walks
-   the rightmost staircase and pays **nothing** for running out of forward links
-   (the loop breaks on a null, not on a failed comparison), where a mid-range
-   absent key fails one comparison per level on the way down. The committed
-   corpus shows the size of it — in the `deep` case, probe `200` (above max)
-   costs 1 node-visit and probe `3` (mid-range absent) costs 12 — and the same
-   asymmetry is measured from the other side by
-   `skip_list::tests::neither_churn_end_changes_the_reported_class` (29 ops at
-   the low end vs 17 at the high). So half the skip list's measured search
-   workload is its best case, and its search *constant* reads low against the
-   sorted array it now shares a class with on the chart. The **slope is
-   unaffected** — the effect is a fixed per-level saving, not a function of n —
-   and the probes stay shared regardless, for the reason hurdle 11 gives for the
-   trie: a chart where each line gets a workload tuned to suit it stops being a
-   comparison.
+8. **Input size vs stored size.** `n` — every chart's x-axis — is the number of
+   *input* keys in the prefix. A set de-duplicates, so on data with repeats the
+   hash sets and the trie hold fewer than n keys; the arrays, lists, trees, heap
+   and skip list hold all n. This is not only a zipfian effect: the **default**
+   uniform generator draws integers with replacement from `[0, n]`, so at the top
+   of the default search sweep the hash set holds ~63 % (≈ 1 − 1/e) of its input.
+   The curves are still honest per structure — each is the cost of answering
+   after being handed n keys — and the axis stays input n. What changed is that
+   the stored count is **measured and reported**: the worker reads each built
+   structure's own `len()` (untimed) into `SweepPoint.storedN` for every search
+   and churn point, and wherever it is below n the chart says so beneath the plot
+   and in its hover read-out, the CSV carries `stored_n`, the JSON `storedN`, and
+   the PNG caption the sentence. The finite-difference halves have no built
+   instance, so they carry no stored count (and a hash set's FD "insert" of a
+   repeated key is a lookup that finds it — read that curve with this hurdle in
+   mind). Whether to offer a stored-n x-axis is open (PLAN §13).
+9. **The probe mix is a choice, and it moves constants, never classes.** The
+   default is 64 present + 64 absent; the UI also offers 0 / 25 / 75 / 100 %
+   present (§2.2). Per structure, on the same shared probe set:
+   - **unsorted array, linked lists, min-heap** — a scan stops at a hit, so the
+     per-probe cost runs from ≈ n/2 (hits only) to exactly n (misses only). Both
+     are O(n);
+   - **chaining hash set** — flat at every mix (a miss walks a whole chain, a hit
+     part of one); the **open-addressing set** is flat too, but its misses are its
+     dear query (Knuth's ½(1 + 1/(1−α)²), §2.8), so more misses raise its constant
+     more;
+   - **sorted array, red-black tree** — O(log n) either way; the **B-tree** costs
+     within one comparison either way (its deferred equality test, §2.10);
+   - **trie** — unchanged by the mix (§2.5): its derived misses cost what hits cost;
+   - **skip list** — the absent block is `max + 1 … max + a`, and that is the skip
+     list's *cheap* end rather than its dear one: an above-max probe walks the
+     rightmost staircase and pays **nothing** for running out of forward links (the
+     loop breaks on a null, not on a failed comparison), where a mid-range absent
+     key fails one comparison per level on the way down. The committed corpus shows
+     the size of it — in the `deep` case, probe `200` (above max) costs 1 node-visit
+     and probe `3` (mid-range absent) costs 12 — and the same asymmetry is measured
+     from the other side by
+     `skip_list::tests::neither_churn_end_changes_the_reported_class` (29 ops at the
+     low end vs 17 at the high). So the absent share of the skip list's workload
+     (half, by default) is its best case, and raising it lowers the skip list's
+     constant against the sorted array it shares a class with. The **slope is
+     unaffected** — a fixed per-level saving, not a function of n. A mid-range
+     absent mode would close the gap; it is a different workload with its own
+     calibration, and open (PLAN §13).
+
+   The probes stay shared regardless, for the reason hurdle 11 gives for the trie:
+   a chart where each line gets a workload tuned to suit it stops being a
+   comparison. The mix applies to search only — churn keys are a separate,
+   per-structure decision. The gate's slope bands were calibrated on the default
+   only, and the gate asserts the default run reported it (`__compareMeta.probeMix`).
 10. **No cross-machine comparability.** Wall-clock results are labelled as
    measured on *this* machine and browser; nothing is normalised across
    machines (PLAN §13, by choice).
@@ -576,6 +964,24 @@ Ordered by how much they can mislead a reader today.
    own randomness" guarantee. For any *fixed* key set the structure is fixed;
    there is no re-roll. A distribution engineered against the hash would
    degenerate it, exactly as sorted input degenerates a naive BST.
+13. **A per-operation guarantee measured by per-operation averages.** The
+   red-black tree's defining property is a bound on the *worst single*
+   insert/delete (≤ 2 / ≤ 3 rotations, against an AVL delete measured at 10).
+   Every Compare curve is a mean over a batch, so that bound is invisible on the
+   chart, on either signal; it lives in the Rust tests and the proptest. What the
+   chart *can* show — the two trees' mean costs — is close on shuffled data and
+   favours the AVL on sorted data, which read alone undersells the scheme. And
+   that holds for the **op-count** signal only: on wall-clock the AVL pays an
+   allocation per insert that the red-black tree's slot-reusing arena does not,
+   so the timed gap mixes the scheme with storage (§2.9). A "worst single
+   operation" view is open (PLAN §13).
+14. **Open addressing's curves are samples of clusters.** Its search op-count saws
+   with the load factor (§2.8), and its churn — even averaged over a 16-key block —
+   is a mean over a handful of runs, so both its lines are bumpier than the
+   chaining set's at the same α. Neither carries a trend in n. Read its *slope*,
+   not its fitted label and not the point-to-point jumps. Its wall-clock constant
+   against the chaining set is a machine fact, not a claim this project makes
+   either way.
 
 ## 5. Proof map — which test pins which claim
 
@@ -586,7 +992,7 @@ Ordered by how much they can mislead a reader today.
 | two-key churn recovers the O(n) class on a reverse-sorted BST (a one-keyed churn read O(1)) | `structures::methodology::bst_reverse_sorted_two_key_churn_recovers_the_linear_class` | none (op-counts) |
 | delete-min never takes the two-child path, so the alternating teardown is safe | `structures::bst::tests::delete_min_never_hits_the_two_child_path` | none (op-counts) |
 | the churn unit stays *one* pair — the two keys are averaged, not summed | `structures::bst::tests::churn_holds_size_and_averages_the_two_spine_round_trips` | none (op-counts) |
-| the nine churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` | none (exact op-counts) |
+| the twelve churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` (regime 11, the B-tree's, in `structures/methodology_btree.rs`) | none (exact op-counts) |
 | AVL stays O(log n) on the sorted input that makes the BST an O(n) chain | same | none |
 | sorted array: O(log n) search vs O(n) mutation on the same structure | same | none |
 | min-heap: O(n) search vs Θ(log n) extract-min on the same structure (the sorted array's split inverted) | `structures::methodology::heap_search_is_linear_while_extract_min_is_log_n` | none |
@@ -621,10 +1027,57 @@ Ordered by how much they can mislead a reader today.
 | the skip list's **animation shows exactly the node-visits the benchmark counts**, for search, insert *and* delete — its one cost event is `skip.inspect`, so a hit's level-0 **double comparison** (`< key?` then `= key?` on the same node) is counted, not deduped. Search and delete run the *Rust corpus's own* keys/probes/delete-sequences (chained to counts generated by the bench twin); insert is self-consistent only, as the corpus has no insert column, and the same runs prove the tracer perturbs no counter | `src/viz/trace.skip.test.ts` (search/delete from `conformance/corpus-skip.txt`) | none (op-counts) |
 | the skip list's animation **folds to the structure, express lanes and all** — the folded picture's lanes, *derived* from the node heights + order (`skipLevelKeys`, no stored links), are compared to `SkipListF64.levelKeys()`, not only to the value order, because level 0 alone is a sorted list and a mis-linked express lane answers every membership query correctly while being O(n) | `src/viz/model.test.ts` | none |
 | **the trie on the real clock:** search stays flat (slope ≈ 0.17, ratio ≈ 3.8× over a 20× ladder) and beats the string scan by ~500× at the top of the sweep; churn stays flat (\|slope\| ≈ 0.00) — a second O(1)-in-n line beside the hash set's, reached without hashing anything | `scripts/verify-browser.mjs`, third pass | real |
-| **deliberately not asserted:** the trie's *class label*, which comes out O(log n) as often as O(1). The char-steps are provably identical across the ladder, so the wall-clock bend is the memory hierarchy — ~6 dependent pointer hops per lookup against a tree that outgrows the caches (§2.5). The gate asserts the slope band and the rise limit instead | — | — |
-| **deliberately not asserted:** the string array's *class label*, which comes out O(n log n) as often as O(n) because its tail slope runs above 1 (pointer-chasing, §2.5). The slope band and the rise are asserted instead, as for the sorted array's search | — | — |
+| **asserted only loosely:** the trie's *class label*, which comes out O(log n) as often as O(1). The char-steps are provably identical across the ladder, so the wall-clock bend is the memory hierarchy — ~6 dependent pointer hops per lookup against a tree that outgrows the caches (§2.5). The gate accepts either label and carries the claim on the slope band and the rise limit | `scripts/verify-browser.mjs`, third pass | real |
+| **asserted only loosely:** the string array's *class label*, which comes out O(n log n) as often as O(n) because its tail slope runs above 1 (pointer-chasing, §2.5). The gate accepts either of those two labels and carries the claim on the slope band and the rise — and even the loose label check has failed once: a Phase 6 run labelled it **O(n²)** at slope 1.04, band held (see the label-check row below) | `scripts/verify-browser.mjs`, third pass | real |
 | **deliberately not asserted:** the *class labels* on the heap's two finite-difference halves. They are noise-dominated and have been seen to mislabel (§4 hurdles 2 and 7); the clock-free op-count proofs carry those claims instead | — | — |
 | the graph's traversal costs **exactly `V + 2E`, and BFS ≡ DFS**, at every swept size — the exact identity the wall clock can only see as a noisy linear slope (§2.7) | `structures::methodology::graph_traversal_costs_exactly_v_plus_2e_and_bfs_equals_dfs` | none (op-counts) |
 | **why the graph needs two sweeps:** a V-sweep at fixed degree cannot separate `O(V)` from `O(V+E)` (both scale together), while a degree-sweep at fixed `V` moves the cost by exactly 2 per edge — the `+E` term isolated (§2.7) | `structures::methodology::graph_plus_e_term_is_only_visible_when_degree_grows_at_fixed_v` | none (op-counts) |
 | the graph's traversal reaches **exactly the source's connected component** and costs `\|C\| + Σ deg`, for random graphs, against a union-find reference — and BFS and DFS agree | `bench-engine/tests/proptest_graph.rs` | none |
 | the graph's two traversal **orders** (BFS by distance, DFS mark-on-push) and the multigraph rules (both directions, parallel edges, self-loop counts twice, disconnected reachability) match the TS twin | `conformance/corpus-graph.txt` + `src/structures/conformance-graph.test.ts` | none |
+| the graph's **animation shows exactly the vertex-visits + edge-visits the benchmark counts**, for BFS *and* DFS — every corpus case run traced and held to the corpus's own `ops`, `reached` and visit order (no self-consistent-only half: a traversal is the graph's whole op set), traced and untraced runs agreeing, and each stream checked structurally (each visit followed by that vertex's whole list, in order; a mark after an examine iff it discovers) | `src/viz/trace.graph.test.ts` (from `conformance/corpus-graph.txt`) | none (op-counts) |
+| the graph's animation **folds to the traversal, frontier discipline and all** — every visit takes the folded frontier's real out-end (queue front / stack top), the per-frame tally equals the cost events folded so far, and each drawn adjacency entry maps to the edge copy `GraphAdj` stores there (`graphAdjacency ≡ adjacency()`, every edge id in exactly two entries) | `src/viz/model.test.ts` | none |
+| the graph is never canonical, has its own info shape, and has no key-structure theory (`theoreticalClass('graph', …)` throws) | `src/registry.test.ts` | none |
+| edge-list labels → dense ids in **first-seen order** (vertex 0 always real, every prefix dense); labels are strings (`02134 ≠ 2134`), ids handed to the twin are integers | `src/data/edgeList.test.ts`, `src/data/graphs.test.ts` | none |
+| the degree-sweep holds V fixed and only adds edges — the random generator is nested across degrees | `src/data/graphs.test.ts` | none |
+| disconnected graphs plot at the reached component's `V′ + 2E′`; an engine reporting the nominal size is caught (`countsMatchComponent`); an O(V) cost reads linear on the V-sweep and flat on the degree-sweep | `src/compare/runGraphSweeps.test.ts` (fake engine) | — |
+| no allocation inside the timed traversals (same capacity, same heap pointers after 400 timed runs on a dense multigraph) | `graph::tests::the_timed_traversals_never_grow_their_scratch` | none |
+| **the graph on the real clock:** op-count = `V′ + 2E′` and BFS = DFS at every point of both sweeps, all reached; V-sweep slope 1.33–1.34 (band 0.7..1.6 — thin headroom, cache, §2.7); degree-sweep slopes 1.01 / 1.08 (band 0.4..1.4, rise > 3×) | `scripts/verify-browser.mjs`, fourth pass (its own button; reads only `__graphProof`) | real |
+| the **default probe mix reproduces the calibrated 64 + 64 workload byte for byte** — numeric and string, on the default dataset's full ladder, the string preset's ladder, and edge sizes over seven input shapes; every other mix differs (negative control) | `src/bench/probeMix.test.ts` (frozen copies of the 7450254 builders) | none |
+| at every mix the present probes are stored keys, numeric misses are above the max and distinct, and every string miss is a stored seed with its last character changed (never invented — the case the old cycling rule got wrong on a misses-only run) | `src/bench/probeMix.test.ts` | none |
+| what the mix does: unsorted-array miss = exactly n, hit ≈ n/2; hash set flat at both extremes; skip-list above-max misses cheaper than hits; trie mean char-steps **identical** at misses-only and hits-only | `src/bench/probeMix.test.ts` (TS twins, op-counts) | none |
+| the mix reaches the engine as **one** value per run (a required parameter of every search runner factory) and is reported on the result and on `__compareMeta` | `src/compare/runSweeps.test.ts`; typecheck | — |
+| stored size is read back per point and carried into the proof (`lastStoredN`), the CSV (`stored_n`), the JSON (`storedN`) and the notes | `src/bench/measure.test.ts`, `src/compare/runSweeps.test.ts`, `src/ui/export.test.ts`, `src/ui/storedSize.test.ts` | none |
+| **on the real build:** the default run measured 64 + 64 (numeric and string passes); the array's `len()` equals input n and the hash set's is 50–75 % of it at the top of the default sweep | `scripts/verify-browser.mjs` | none (deterministic) |
+| the doubly linked list's op-counts **equal** the singly list's — search, churn, cumulative build and teardown — at every swept size, sorted and shuffled; regime 7 holds for it (churn 1, FD delete ≈ 3n/4) | `structures::methodology::doubly_linked_list_buys_nothing_on_the_canonical_op_set` | none (op-counts) |
+| …and per op, `(result, node-visits)`, over random streams with the singly list as reference; the tail→head walk mirrors head→tail after every op | `bench-engine/tests/proptest_doubly_linked_list.rs` | none |
+| no churn key recovers the O(n) delete on a head-inserting list: above-max, below-min and stored keys all cost exactly 1 visit | `structures::doubly_linked_list::tests::no_churn_key_recovers_the_linear_delete` | none |
+| what `prev` buys (unlink-given-a-handle, 0 visits anywhere) vs delete-by-value (its position, same on both lists), and what it costs (24 B vs 16 B a node) | `doubly_linked_list::tests::unlink_given_a_handle_is_free_but_delete_by_value_still_walks`, `…::node_is_half_again_the_singly_node` | none |
+| a corrupt back-link cannot pass conformance: the corpus pins tail→head order after deletes and after a mixed stream (bites in Rust; agreement-only on the array-backed TS twin) | `conformance/corpus-dll.txt` + `src/structures/conformance-dll.test.ts` (+ `corpus_dll_matches_committed`) | none |
+| **the doubly list on the real clock:** search slope 1.01 ± 0.006 (band 0.7..1.4, ratio > 20, label O(n) or O(n log n)); churn flat (\|slope\| < 0.6); delete-by-value O(n) (slope > 0.6, ratio > 3); the two in different classes, > 20× apart. Deliberately **no** doubly-vs-singly wall-clock ratio | `scripts/verify-browser.mjs`, first pass | real |
+| the red-black tree never rotates more than **2 times per insert or 3 per delete**, on every op of shuffled / ascending / descending builds, alternating teardowns and random-order deletes — while one AVL delete on the same shuffled teardown rotates 10 times | `structures::methodology::rbt_bounds_rotations_per_operation_where_the_avl_does_not` + `bench-engine/tests/proptest_rbt.rs` (after every op) | none (op-counts) |
+| in **totals** the red-black tree rotates ~18 % less on shuffled inserts at equal comparisons, about the same on sorted inserts and on deletes, and recolours far more than it rotates | `structures::methodology::rbt_rotates_less_on_random_inserts_and_about_as_much_everywhere_else` | none |
+| the looser bound shows on sorted input: red-black height ≥ 1.5× the AVL's and a > 1.5× dearer sorted build, yet the finished tree's average search within 6 % | `structures::methodology::rbt_pays_its_looser_bound_in_comparisons_on_sorted_input` | none |
+| regime 10: red-black churn ≥ FD sum, within 25 %, both O(log n); and O(log n) kept on the reverse-sorted input that makes the BST a chain (search-min 19 vs 2000) | `structures::methodology::rbt_churn_exceeds_finite_difference_sum_like_the_avl_but_wider`, `…::rbt_keeps_its_class_on_the_input_that_degenerates_a_bst` | none |
+| value-copy delete leaves the same values and colours in the same places as CLRS's RB-TRANSPLANT delete | `structures::rbt::tests::value_copy_delete_matches_the_clrs_transplant_delete` | none |
+| TS red-black twin ≡ Rust: per-insert ops, per-probe search, shape **with colours**, per-delete ops, rotation and recolour totals; the cases reach every fix-up branch | `conformance/corpus-rbt.txt` + `src/structures/conformance-rbt.test.ts` + `conformance_rbt::corpus_rbt_reaches_every_rotation_count` | none |
+| **the red-black tree on the real clock:** search sub-linear (slope 0.25); churn sub-linear on uniform (0.14) *and* reverse-sorted (0.16) input. Class only — never "below/above the AVL" | `scripts/verify-browser.mjs`, both passes | real |
+| the B-tree makes about **as many comparisons** per search as the AVL and the sorted array (within ~8 %) while visiting only its **height** — a third to a quarter of the AVL's node-visits | `structures::methodology_btree::btree_matches_the_avl_on_comparisons_but_takes_a_quarter_of_the_node_visits` | none (op-counts) |
+| regime 11: B-tree churn ≈ its FD sum (tight) on shuffled, ascending and descending input | `structures::methodology_btree::btree_churn_and_finite_differences_agree_tightly` | none |
+| after warm-up a B-tree churn pair performs **zero** splits/merges/borrows and allocates nothing — why CLRS's single-pass delete was replaced | `structures::btree::tests::churn_settles_into_zero_restructures_and_zero_allocation` + `src/structures/btree.test.ts` | none |
+| the B-tree keeps O(log n) on reverse-sorted input; sorted input builds half-full nodes (~40 % more, sometimes a level deeper) without changing the class | `structures::methodology_btree::btree_keeps_its_class_on_the_input_that_degenerates_a_bst`, `…::sorted_input_builds_half_full_nodes_without_changing_the_class` | none |
+| every B-tree invariant (occupancy, one leaf depth, inclusive separators, size, no leaked node) holds after every op of duplicate-heavy streams at t = 2, 3, 16 | `bench-engine/tests/proptest_btree.rs` | none |
+| TS B-tree twin ≡ Rust: per-insert ops, order, per-probe counts, level-by-level shape, delete sequence and shape after, at t = 2, 3, 16 | `conformance/corpus-btree.txt` + `src/structures/conformance-btree.test.ts` | none |
+| **the B-tree on the real clock:** search sub-linear and flatter than the array (slope 0.20 ± 0.02); churn sub-linear and near-flat (0.04 uniform, 0.18 reverse-sorted) | `scripts/verify-browser.mjs`, both passes | real |
+| **deliberately not asserted:** any clock advantage of the B-tree over the sorted array (search) or the AVL (churn) — printed as `btree hypothesis (info only)` lines for a reader, never a check (§2.10) | — | — |
+| at the same α (same hash, same table size) a linearly-probed miss costs Knuth's ½(1 + 1/(1−α)²) and a hit 1 + ½(1 + 1/(1−α)) on this metric — 7.70 vs chaining's 1.72 at α ≈ 0.73 | `structures::methodology::open_addressing_probe_counts_follow_knuths_clustering_formulas` | none (op-counts) |
+| open addressing's search saws with α louder than chaining's (1.92× vs 1.27×) and neither trends in n (slopes 0.013 / 0.012) | `structures::methodology::open_addressing_search_saws_with_the_load_factor_but_has_no_trend_in_n` | none |
+| regime 12: churn overshoots the FD sum by its own tombstones (primed 7.69, unprimed 5.81, sum 6.06), and an FD across a doubling reads a negative marginal delete for OA (−10.77) but not chaining (+2.00) | `structures::methodology::open_addressing_churn_overshoots_finite_differences_by_its_own_tombstone` | none |
+| the tombstone policy, rule by rule: without reuse churn drifts with the rep count and with n; with it a counted pair is identical after any number of timed pairs and the layout is restored; an unprimed first pair is cheaper (why priming exists); tombstones count toward the load so a miss always terminates; one churn key jumps several-fold between sweep points and the block does not | `structures::hash_set_oa::tests::{without_tombstone_reuse_churn_drifts_with_repetition_count, churn_cost_does_not_drift_with_repetition_count, an_unprimed_first_pair_is_cheaper_than_the_steady_state, tombstones_count_toward_the_load_factor_so_a_miss_always_terminates, a_single_churn_key_samples_one_cluster}` + `bench-engine/tests/proptest_hash_oa.rs` | none |
+| interleaved insert/delete/search agree with `std::collections::HashSet`; `live + tombs ≤ 0.75·cap` after every op | `bench-engine/tests/proptest_hash_oa.rs` | none |
+| TS open-addressing twin ≡ Rust: slot layout before/after deletes and re-inserts, purge, cluster, churn block and its primed layout | `conformance/corpus-hoa.txt` + `src/structures/conformance-hoa.test.ts` | none |
+| **open addressing on the real clock:** search flat (slope 0.02 < 0.4, ratio < 10, flatter than the array); churn flat (\|slope\| 0.11 < 0.6) and flatter than the array's | `scripts/verify-browser.mjs`, first pass | real |
+| empty storage ⇒ the default auto-run is unchanged (same dataset, same mix, no write, IndexedDB never opened) | `src/persist/session.test.ts` (counting fakes); gate first pass "session: a fresh context restored nothing" | none |
+| a restored paste measures exactly the keys the original text built (leading zeros, duplicates, ids past 2^53, astral and combining characters, CRLF), checked on the way back by length + hash | `src/persist/session.test.ts` | none |
+| nothing measured is persisted; a restored load says it re-measured | `src/persist/session.ts` (no results field, by construction); `src/persist/SessionNote.test.ts` | none |
+| **the browser gate after the Phase 6 parallel batch:** 118/118 checks across four passes, on its third run on a quiet machine | `scripts/verify-browser.mjs` | real |
+| **label checks are the flaky kind.** The two runs before that each failed one pre-existing class-*label* check whose slope band held — run 1 the string array (labelled O(n²) at slope 1.04), run 2 the string hash set (labelled O(log n) at slope 0.07) — and the doubly list's new label check failed too on its first real run (O(n log n) at slope 1.01, since loosened to accept either neighbour). The bands and rise limits are the claims; a single failing label with its band green is the fitter's soft band (§3), not a regression — re-run before chasing it | `scripts/verify-browser.mjs` | real |
