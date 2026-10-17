@@ -67,6 +67,15 @@ try {
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
 
+  // Session persistence (docs/PLAN.md §13, src/persist/): this gate runs in a fresh browser
+  // context with empty storage, so the first run must be the default auto-run, not a restored
+  // session — every band below was calibrated on that run. The note's wording is pinned in
+  // src/persist/SessionNote.test.ts. (Added UNRUN with the persistence slice.)
+  want(
+    'session: a fresh context restored nothing (the default auto-run ran)',
+    text.includes('in this browser only') && !text.includes('Restored from this browser'),
+  );
+
   // Phase 5: the default Compare run is one *uniform* dataset driving every structure
   // (docs/PLAN.md §10), and every fit carries its uncertainty (docs/METHODOLOGY.md §3).
   if (meta) {

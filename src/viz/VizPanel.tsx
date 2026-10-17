@@ -9,6 +9,7 @@ import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
+import { browserSession } from '../persist/session';
 import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
@@ -849,13 +850,19 @@ function panelFor(kind: Kind) {
   }
 }
 
+/** Whether a stored string names a real Explore tab — the saved tab is checked against {@link TABS} itself. */
+export function isExploreKind(k: string): k is Kind {
+  return TABS.some((t) => t.kind === k);
+}
+
 export function VizPanel() {
-  const [kind, setKind] = useState<Kind>('array');
+  // The selected tab is remembered on this browser (docs/PLAN.md §13); 'array' when nothing is saved.
+  const [kind, setKind] = useState<Kind>(() => browserSession().exploreTab(isExploreKind) ?? 'array');
   return (
     <section style={{ marginTop: 8 }}>
       <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         {TABS.map((t) => (
-          <button key={t.kind} style={tab(kind === t.kind)} onClick={() => setKind(t.kind)}>
+          <button key={t.kind} style={tab(kind === t.kind)} onClick={() => { setKind(t.kind); browserSession().saveExploreTab(t.kind); }}>
             {t.label}
           </button>
         ))}

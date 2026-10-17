@@ -13,7 +13,7 @@ import {
 import type { Dataset } from '../data';
 import { REGISTRY } from '../registry';
 import { Callout, ChartGuide, ComplexityLadder } from './Explain';
-import { DatasetPicker, DEFAULT_PICKER, buildDataset, describeDataset } from './DatasetPicker';
+import { DatasetPicker, describeDataset } from './DatasetPicker';
 import { SweepChart, seriesLabel, type SeriesView, type Signal } from './SweepChart';
 import { SlopeChart } from './SlopeChart';
 import { BTreeChurnNote, BTreeSearchNote } from './BTreeNotes';
@@ -21,9 +21,11 @@ import { download, downloadBlob, toCsv, toJson } from './export';
 import { plotCanvasOf, renderSheet, type ChartShot } from './png';
 import { DllChurnCaveat, DllSearchNote, dllSheetNote } from './DoublyListNotes';
 import { GraphCompareSection } from './GraphCompareSection';
-import { DEFAULT_PROBE_MIX, describeMix } from '../bench/probeMix';
+import { describeMix, type ProbeMix } from '../bench/probeMix';
 import { ProbeMixControl, mixNotes, shareWord } from './ProbeMixControl';
 import { storedSizeNotes } from './storedSize';
+import { useComparePersistence } from '../persist/useComparePersistence';
+import { SessionNote } from '../persist/SessionNote';
 
 /**
  * The Compare mode (docs/PLAN.md §7, §10 Phase 5): a dataset panel, the sweeps
@@ -32,7 +34,9 @@ import { storedSizeNotes } from './storedSize';
  * fit table (class, slope ± stderr, R², trend), and the local-slope panel that
  * shows where a curve changes regime. Runs once on mount with the default
  * dataset (the headless runtime gate reads that run's `window.__*Proof`
- * mirrors), and again whenever the user picks a new dataset.
+ * mirrors), and again whenever the user picks a new dataset. With a saved session
+ * (docs/PLAN.md §13, `src/persist/`) the mount-time run re-measures the restored last run
+ * instead; with nothing stored it is exactly the default run above.
  */
 
 const h3: React.CSSProperties = { fontSize: 16, marginTop: 28, marginBottom: 4 };
@@ -52,6 +56,8 @@ function FitRow({ v, what }: { readonly v: SeriesView; readonly what?: string })
 }
 
 export function CompareSection() {
+  // Local session persistence (docs/PLAN.md §13): initial values are read synchronously.
+  const persisted = useComparePersistence();
   const engineRef = useRef<BenchEngine | null>(null);
   // The PNG export reads the charts back out of this subtree (see `exportPng`).
   const sectionRef = useRef<HTMLElement>(null);
@@ -63,19 +69,19 @@ export function CompareSection() {
   // A run measures one key type or the other, never both (docs/METHODOLOGY.md §2.5), so
   // exactly one of these two is non-null at any time.
   const [stringResult, setStringResult] = useState<StringCompareResult | null>(null);
-  const [signal, setSignal] = useState<Signal>('nanos');
-  const [showTheory, setShowTheory] = useState(true);
-  const [showSpread, setShowSpread] = useState(true);
+  const [signal, setSignal] = useState<Signal>(persisted.initial.view.signal);
+  const [showTheory, setShowTheory] = useState(persisted.initial.view.showTheory);
+  const [showSpread, setShowSpread] = useState(persisted.initial.view.showSpread);
   // The search probe mix for the *next* run (docs/PLAN.md §6.3). What the charts on screen
   // were measured at is `result.probeMix`, which the captions and exports report instead.
-  const [presentFraction, setPresentFraction] = useState(DEFAULT_PROBE_MIX.presentFraction);
+  const [presentFraction, setPresentFraction] = useState(persisted.initial.presentFraction);
 
-  const run = async (d: Dataset) => {
+  const run = async (d: Dataset, mixOverride?: ProbeMix) => {
     const engine = engineRef.current;
     if (!engine) return;
     setBusy(true);
     setDataset(d);
-    const mix = { presentFraction };
+    const mix = mixOverride ?? { presentFraction };
     try {
       await engine.ready();
       if (d.keyType === 'string') {
@@ -96,11 +102,16 @@ export function CompareSection() {
   useEffect(() => {
     const engine = createBenchEngine();
     engineRef.current = engine;
+    // Started before the engine boots so a saved paste is read from IndexedDB in parallel.
+    // Never rejects: with nothing stored (or anything unusable) it is buildDataset(DEFAULT_PICKER).
+    const first = persisted.firstRun();
     (async () => {
       try {
         await engine.ready();
         setVersion(await engine.version());
-        await run(buildDataset(DEFAULT_PICKER));
+        const f = await first;
+        setPresentFraction(f.presentFraction);
+        await run(f.dataset, { presentFraction: f.presentFraction });
       } catch (err) {
         setStatus('error: ' + (err as Error).message);
         setBusy(false);
@@ -112,6 +123,9 @@ export function CompareSection() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Remember the chart view (writes only when it differs from what is stored).
+  useEffect(() => persisted.saveView({ signal, showTheory, showSpread }), [signal, showTheory, showSpread]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fit on the selected signal (§2.2): op-count is the clean curve, wall-clock the real one.
   // Risk R6: the shared charts show only the canonical insert/search/delete structures.
@@ -330,7 +344,16 @@ export function CompareSection() {
         {ranMixSummary && <li>{describeMix(ranMixSummary)}</li>}
       </ul>
 
-      <DatasetPicker busy={busy} onRun={(d) => void run(d)} />
+      <SessionNote {...persisted.note} />
+      <DatasetPicker
+        key={persisted.pickerKey}
+        initial={persisted.pickerInitial}
+        busy={busy}
+        onRun={(d, s) => {
+          persisted.saveRun(s, presentFraction);
+          void run(d);
+        }}
+      />
       {/* After the picker on purpose: see ProbeMixControl's note on the gate's select lookup. */}
       <ProbeMixControl value={presentFraction} onChange={setPresentFraction} disabled={busy} />
 
