@@ -807,7 +807,7 @@ export function GraphPanel() {
           `Graph — an undirected adjacency list that keeps parallel edges and self-loops; its op set is a whole-graph traversal, not insert/search/delete. The cost is one vertex-visit per vertex taken off the frontier (a queue for BFS, a stack for DFS) plus one edge-visit per adjacency entry examined. DFS here marks a vertex when it is pushed — not when it is popped, and not by recursion — so watch it skip edges to vertices still waiting on the stack. This graph has a parallel 1–2 edge and a self-loop on 4 (two entries each), and vertex 7 is not connected to 0. ${intro} Run BFS or DFS (blank box = start at 0, or type a start vertex).`}
       </p>
       <GraphView model={model} active={active} layout={GRAPH_SEED.layout} />
-      <Controls<GraphEvent, GraphAlgo> player={player} onOp={onOp} caption={describeGraph(active, model)} ops={GRAPH_OPS} />
+      <Controls<GraphEvent, GraphAlgo> player={player} onOp={onOp} caption={describeGraph(active, model)} ops={GRAPH_OPS} placeholder="start vertex" enterOp="bfs" />
     </>
   );
 }
