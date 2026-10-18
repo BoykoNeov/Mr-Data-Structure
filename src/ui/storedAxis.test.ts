@@ -148,6 +148,9 @@ describe('the stored-n x-axis: repeated and near-repeated stored sizes', () => {
       'Every point held the same 7 keys, so on the stored-size axis there is no spread to fit a slope against — ' +
         'switch the x-axis back to input keys to read this line.',
     );
+    // The placeholder class must not reach a legend (or the PNG's, which has no note) bare.
+    expect(v.x?.noSpread).toBe(true);
+    expect(seriesLabel(v)).toMatch(/^hash set search \[one stored size — no slope\] — /);
   });
 });
 

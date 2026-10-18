@@ -26,7 +26,7 @@ export function NAxisControl({
     <span
       role="radiogroup"
       aria-label="x-axis of the cost charts"
-      title="Plot and fit every line against the keys each structure held instead of the keys it was given. Only the de-duplicating structures (the hash sets, the trie) move; nothing is re-measured."
+      title="Plot and fit every line against the keys each structure held instead of the keys it was given. Only the de-duplicating structures (the hash sets, the trie) move; nothing is re-measured. The graph section keeps its own axis."
       data-n-axis
       style={{ marginLeft: 12 }}
     >

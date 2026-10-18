@@ -61,6 +61,8 @@ export interface XBasis {
   readonly repeats: number;
   /** Local-slope intervals folded away because the stored step was under {@link MIN_LOCAL_RATIO}. */
   readonly foldedIntervals: number;
+  /** Every point held one stored size, so the fit is {@link noSpreadFit}: no slope, no class. */
+  readonly noSpread: boolean;
 }
 
 /** Smallest stored-size ratio a local slope is read across (10 %): see the module doc. */
@@ -179,15 +181,20 @@ export function viewOnAxis(series: SweepSeries, signal: Signal, axis: NAxis): Se
   const pts = series.points;
   const ns = pts.map((p) => p.n);
   if (!hasStoredCounts(pts)) {
-    return { ...input, x: { axis: 'input', values: ns, inputFit: input.fit, repeats: 0, foldedIntervals: 0 } };
+    return { ...input, x: { axis: 'input', values: ns, inputFit: input.fit, repeats: 0, foldedIntervals: 0, noSpread: false } };
   }
   const stored = pts.map((p) => p.storedN as number);
   const repeats = stored.filter((s, i) => stored.indexOf(s) < i).length;
   if (stored.every((s, i) => s === ns[i])) {
-    return { ...input, x: { axis: 'stored', values: stored, inputFit: input.fit, repeats, foldedIntervals: 0 } };
+    return { ...input, x: { axis: 'stored', values: stored, inputFit: input.fit, repeats, foldedIntervals: 0, noSpread: false } };
   }
   const { fit, folded } = fitOnAxis(stored, pts.map(yOf(signal)));
-  return { ...input, fit, x: { axis: 'stored', values: stored, inputFit: input.fit, repeats, foldedIntervals: folded } };
+  const noSpread = new Set(stored).size < 2;
+  return {
+    ...input,
+    fit,
+    x: { axis: 'stored', values: stored, inputFit: input.fit, repeats, foldedIntervals: folded, noSpread },
+  };
 }
 
 /** The axis a set of views is drawn on: stored when any of them was built for it. */
@@ -196,12 +203,16 @@ export function axisOf(views: readonly SeriesView[]): NAxis {
 }
 
 /**
- * The tag a fallen-back series carries wherever it is named while the stored axis is on
- * (fit row, chart legend, PNG legend). Empty for every other view, including all of them on
- * the default axis.
+ * The tag a series carries wherever it is named while the stored axis is on (fit row, chart
+ * legend, PNG legend) when its reading is not an ordinary stored-n fit: it fell back to input
+ * n, or all its points held one size, so the `O(1)` / slope 0 beside it is a placeholder and
+ * not a finding — and a PNG legend row does not carry the fit's note. Empty for every other
+ * view, including all of them on the default axis.
  */
 export function axisTag(v: SeriesView): string {
-  return v.x?.axis === 'input' ? ' [on input n — no stored count]' : '';
+  if (v.x?.axis === 'input') return ' [on input n — no stored count]';
+  if (v.x?.noSpread) return ' [one stored size — no slope]';
+  return '';
 }
 
 const labelOf = (v: SeriesView) => REGISTRY[v.series.structure]?.label ?? v.series.structure;
