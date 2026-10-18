@@ -184,6 +184,17 @@ tool call does not survive into the next (each call is a fresh process).
   to the express-lane dimension the corpus guards. Pinned in `src/viz/trace.skip.test.ts`
   (cost-events, chained to Rust for search/delete) and `src/viz/model.test.ts` (fold ⇒
   lanes). The seed is chosen by *computing* the hash-derived heights, never hand-guessed.
+- **The BST's search line shares the probe set, and on a misses-only reverse-sorted run it
+  reads flat for an O(n) chain — labelled, not patched.** The shared absent probes are
+  `max + 1 …`, which walk only a BST's right spine; a reverse-sorted BST is a left chain whose
+  right spine is the root, so every miss is one comparison (`bst::tests::above_max_misses_cost_one_comparison_on_a_left_chain`,
+  METHODOLOGY §4 hurdle 15). Don't give the BST its own probes (it ends the comparison);
+  `BstSearchNote` / `bstSheetNote` (`src/ui/BstNotes.tsx`) carry the warning on screen and on
+  the PNG. The BST and AVL are measured **after** the ten older search series so those keep
+  their calibrated conditions — keep them last. The full 100 k ladder is the user's choice: a
+  sorted run builds a 100 k-key chain (Θ(n²), untimed) before the BST's first point; don't
+  shorten the BST's ladder without asking. The gate's reverse-sorted pass clears and re-reads
+  `__sweepProof` for the BST-O(n) / AVL-sub-linear check — keep the clear.
 - **The heap's churn key must stay `min − 1`** (`belowMin`). A heap has no
   delete-by-value, so the pair is insert + extract-min, and only a key below every
   stored key is the one the extract takes back; `max + 1` silently *drains* the
@@ -328,7 +339,7 @@ tool call does not survive into the next (each call is a fresh process).
   Player, SVG views (one per Explore tab), `VizPanel`.
 - `src/ui/` — `CompareSection`, `DatasetPicker`, `ProbeMixControl`, `SweepChart` (error
   bars + theory overlay, stored-size note), `SlopeChart`, `export.ts`, `png.ts`, `Explain`
-  (honesty copy), per-structure notes (`DoublyListNotes`, `BTreeNotes`), and the graph's
+  (honesty copy), per-structure notes (`DoublyListNotes`, `BTreeNotes`, `BstNotes`), and the graph's
   own `GraphCompareSection` / `GraphChart` / `graphPicker`.
 - `src/App.tsx` — layout only.
 - `docs/METHODOLOGY.md` — the measurement science, its open hurdles, and the

@@ -61,13 +61,17 @@ function fakeEngine(log: string[]): BenchEngine {
         series('skiplist', 'search', sizes, (n) => Math.log2(n)),
         // The doubly list walks the singly list's path visit for visit (METHODOLOGY §2.11).
         series('dll', 'search', sizes, (n) => 2 * n),
-        // The red-black tree: the one tree on the search chart, O(log n) like the AVL.
+        // The red-black tree: O(log n) like the AVL beside it.
         series('rbt', 'search', sizes, (n) => Math.log2(n)),
         // The B-tree makes the sorted array's ≈ log₂ n comparisons (METHODOLOGY §2.10).
         series('btree', 'search', sizes, (n) => Math.log2(n)),
         // The open-addressing hash set: flat like the chaining one, higher constant
         // (primary clustering) — the same class by a different collision strategy.
         series('hashoa', 'search', sizes, () => 5),
+        // The BST and the AVL, measured last so the ten series above keep the conditions the
+        // gate's bands were calibrated under. Shuffled data: both O(log n).
+        series('bst', 'search', sizes, (n) => 1.4 * Math.log2(n)),
+        series('avl', 'search', sizes, (n) => Math.log2(n)),
       ];
     },
     runMutationSweep: async (_k, sizes) => {
@@ -154,7 +158,7 @@ describe('runAllSweeps', () => {
     expect(statuses).toHaveLength(8);
 
     expect(r.search.map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa',
+      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'bst', 'avl',
     ]);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
@@ -211,7 +215,7 @@ describe('runAllSweeps', () => {
     // Risk R6 at the seam: the shared search chart sees only canonical structures, and
     // the heap's scan is available separately for its own section.
     expect(canonicalSearch(r).map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa',
+      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'bst', 'avl',
     ]);
     expect(heapSearch(r).map((v) => v.series.structure)).toEqual(['heap']);
 

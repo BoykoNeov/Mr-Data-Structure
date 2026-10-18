@@ -104,7 +104,13 @@ calibrated 50/50, reproduced exactly), and a structure that keeps one copy of ea
 key says how many it actually held beside the input size — on the chart, in the exports
 and in the PNG. And your **session is remembered in this browser**: your last run's
 dataset — pasted data included — and chart settings come back on reload, while results are
-always re-measured, never restored. The last three missing animations are done (only the string-key array and hash set, the
+always re-measured, never restored. The plain **BST and the AVL now share the search chart**
+with the other trees, so the sorted-data lesson shows on lookups as well as on add/remove:
+on reverse-sorted keys the BST's search climbs in a straight line (O(n)) while the AVL's
+stays low. One case is flagged rather than hidden: with *misses only* selected, every
+missing key sits above the largest stored one, which a reverse-sorted BST answers in one
+step — so its line would read flat, and the page says so beside the chart and on the PNG.
+The last three missing animations are done (only the string-key array and hash set, the
 number-key versions' algorithms run on text, have no tab of their own). Still open: the
 graph in the exports, and performance polish. The
 phase table is at the top of

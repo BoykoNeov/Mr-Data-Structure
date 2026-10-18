@@ -33,6 +33,7 @@ let rbt = null;
 let revRbt = null;
 let btree = null;
 let revBtree = null;
+let revSearch = null;
 let strSearch = null;
 let strMutation = null;
 let strMeta = null;
@@ -46,7 +47,7 @@ try {
   // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
   // is set last, after the search sweep and the flat (array, both hash sets, sorted array,
   // both lists), BST, AVL, skip-list, red-black and B-tree mutation sweeps — or until the app
-  // reports an error. Generous timeout: the sweeps do real timed work, and there are ten
+  // reports an error. Generous timeout: the sweeps do real timed work, and there are twelve
   // search series and a mutation sweep per structure family.
   await page.waitForFunction(
     () =>
@@ -126,9 +127,11 @@ try {
     const rbtSearch = proof.find((p) => p.structure === 'rbt');
     const btreeSearch = proof.find((p) => p.structure === 'btree');
     const hashoaSearch = proof.find((p) => p.structure === 'hashoa');
+    const bstSearch = proof.find((p) => p.structure === 'bst');
+    const avlSearch = proof.find((p) => p.structure === 'avl');
     want(
-      'ten search series measured',
-      proof.length === 10 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch && rbtSearch && btreeSearch && hashoaSearch,
+      'twelve search series measured',
+      proof.length === 12 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch && rbtSearch && btreeSearch && hashoaSearch && bstSearch && avlSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -210,8 +213,8 @@ try {
         skipSearch.slope < array.slope,
       );
     }
-    // Red-black tree (docs/PLAN.md §8 trees, §13): one of two trees on the search chart
-    // (the B-tree is the other). A
+    // Red-black tree (docs/PLAN.md §8 trees, §13): one of four trees on the search chart
+    // (with the B-tree, the BST and the AVL). A
     // search is one root-to-leaf descent, so the curve is the tree's depth — sub-linear on
     // any order. Same band as the other sub-linear searches, label not asserted (§7.2).
     if (rbtSearch && array) {
@@ -240,6 +243,19 @@ try {
         `B-tree search flatter than array (${btreeSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
         btreeSearch.slope < array.slope,
       );
+    }
+    // BST and AVL (docs/METHODOLOGY.md §4 hurdle 15): one root-to-leaf descent each, so on
+    // this shuffled default both read the tree's depth, sub-linear. Measured *after* the ten
+    // series above so those keep the conditions their bands were tuned under. Class bands
+    // only, the other trees' bands; the reverse-sorted pass below is where the two part.
+    for (const [name, s] of [['BST', bstSearch], ['AVL', avlSearch]]) {
+      if (s && array) {
+        want(`${name} search sub-linear on shuffled input (slope ${s.slope.toFixed(2)} < 0.4)`, s.slope < 0.4);
+        want(
+          `${name} search flatter than array (${s.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
+          s.slope < array.slope,
+        );
+      }
     }
     // Open-addressing hash set (docs/METHODOLOGY.md §2.8). Same hash and
     // table sizes as the chaining set, so it is flat for the same reason; but its probe count
@@ -592,6 +608,7 @@ try {
   // can confirm the *curve* the user sees; the op-count side is pinned in Rust
   // (`structures::methodology::bst_reverse_sorted_two_key_churn_recovers_the_linear_class`).
   await page.evaluate(() => {
+    window.__sweepProof = undefined;
     window.__bstMutationProof = undefined;
     window.__avlMutationProof = undefined;
     window.__skipMutationProof = undefined;
@@ -609,6 +626,7 @@ try {
       /status:\s*error/.test(document.body.innerText),
     { timeout: 150000 },
   );
+  revSearch = await page.evaluate(() => window.__sweepProof ?? null);
   revBst = await page.evaluate(() => window.__bstMutationProof ?? null);
   revAvl = await page.evaluate(() => window.__avlMutationProof ?? null);
   revHeap = await page.evaluate(() => window.__heapMutationProof ?? null);
@@ -641,6 +659,28 @@ try {
         c.slope < 0.6,
       );
     }
+  }
+  // The same split on the *search* chart (docs/METHODOLOGY.md §4 hurdle 15): the BST is a
+  // left chain here, so its search walks it — O(n) — while the AVL's stays sub-linear. This
+  // pass runs the default 50/50 mix, whose present half walks the chain; a misses-only run
+  // would read the BST flat (its above-max misses hit the one-node right spine), which is
+  // why that case is labelled beside the chart rather than asserted here.
+  if (revSearch) {
+    const b = revSearch.find((p) => p.structure === 'bst');
+    const a = revSearch.find((p) => p.structure === 'avl');
+    want('reverse-sorted search measured both trees', b && a);
+    if (b) {
+      want(`reverse-sorted BST search reads O(n) (slope ${b.slope.toFixed(2)} > 0.6)`, b.slope > 0.6);
+      want(
+        `reverse-sorted BST search rises with n (ratio ${(b.lastNanos / b.firstNanos).toFixed(1)} > 20)`,
+        b.lastNanos / b.firstNanos > 20,
+      );
+    }
+    if (a) {
+      want(`reverse-sorted AVL search stays sub-linear (slope ${a.slope.toFixed(2)} < 0.4)`, a.slope < 0.4);
+    }
+  } else {
+    want('reverse-sorted search proof published', false);
   }
 
   // The skip list on the same reverse-sorted input — the pass this structure was added
@@ -971,6 +1011,10 @@ if (heap) {
 if (revHeap) {
   console.log('--- heap mutation proof (reverse-sorted) ---');
   console.log(JSON.stringify(revHeap, null, 2));
+}
+if (revSearch) {
+  console.log('--- search proof (reverse-sorted) ---');
+  console.log(JSON.stringify(revSearch, null, 2));
 }
 if (revBst) {
   console.log('--- bst mutation proof (reverse-sorted) ---');

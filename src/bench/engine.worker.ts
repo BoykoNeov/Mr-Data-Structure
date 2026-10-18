@@ -479,6 +479,24 @@ const api = {
     // with no trend in n. Its misses are its dear query (Knuth: ½(1 + 1/(1−α)²)), so a
     // misses-heavy mix raises its constant more than the chaining set's.
     const hashoa = measureSweep(sizes, searchRunnerFactory(HashSetOaF64, keys, mix), now, opts);
+    // The **BST** and the **AVL** come last, after the ten series the runtime gate's search
+    // bands were calibrated on, so adding them moved none of those conditions. They are the
+    // pair the mutation chart already draws, now on the search chart too: one descent from the
+    // root, so each line reads its tree's depth. On shuffled input the two nearly coincide; on
+    // sorted input the BST is a chain and its search is O(n) while the AVL's stays O(log n) —
+    // "sorted data kills a naive BST" on the read side, not only the write side. That is also
+    // why the BST's sorted-input run is slow to *build* (Θ(n²) comparisons to reach 100 k, about
+    // 15 s): the cost of drawing the very curve this line is here for, and not a timed cost.
+    //
+    // One bias, the shared probe set's and not the tree's: the absent probes are `max + 1 …`,
+    // which for a BST is a walk down its *right* spine only. On reverse-sorted input that spine
+    // is one node, so a miss costs one comparison at every n — at the default mix the present
+    // half still carries the O(n) slope, but a **misses-only** run reads flat for an O(n)
+    // chain. Pinned in Rust (`bst::tests::above_max_misses_cost_one_comparison_on_a_left_chain`)
+    // and labelled beside the chart (`src/ui/BstNotes.tsx`); the probes stay shared
+    // (docs/METHODOLOGY.md §4 hurdle 15).
+    const bst = measureSweep(sizes, searchRunnerFactory(BstF64, keys, mix), now, opts);
+    const avl = measureSweep(sizes, searchRunnerFactory(AvlF64, keys, mix), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
@@ -510,11 +528,10 @@ const api = {
     // chart is the UI's job (`src/ui/CompareSection.tsx` filters on the registry's
     // canonical list and renders the heap in its own section).
     //
-    // The **red-black tree** is the one tree on this chart (the BST and the AVL are measured
-    // on the mutation charts only). Its search is a plain BST descent, so its line reads the
-    // tree's depth: O(log n), with a constant set by how loosely the scheme balances. Against
-    // the AVL the clock-free op-counts say that constant is the same on shuffled input and a
-    // few percent higher on sorted (`structures::methodology::
+    // The **red-black tree**'s search is a plain BST descent, so its line reads the tree's
+    // depth: O(log n), with a constant set by how loosely the scheme balances. Against the AVL
+    // — now beside it on this chart — the clock-free op-counts say that constant is the same on
+    // shuffled input and a few percent higher on sorted (`structures::methodology::
     // rbt_pays_its_looser_bound_in_comparisons_on_sorted_input`, docs/METHODOLOGY.md §2.9).
     return [
       { structure: 'array', op: 'search', points: array },
@@ -538,6 +555,8 @@ const api = {
       // unlike the skip list, this line carries no probe-set bias at any mix.
       { structure: 'btree', op: 'search', points: btree },
       { structure: 'hashoa', op: 'search', points: hashoa },
+      { structure: 'bst', op: 'search', points: bst },
+      { structure: 'avl', op: 'search', points: avl },
     ];
   },
   /**

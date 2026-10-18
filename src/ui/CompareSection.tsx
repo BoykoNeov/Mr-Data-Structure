@@ -17,6 +17,7 @@ import { DatasetPicker, describeDataset } from './DatasetPicker';
 import { SweepChart, seriesLabel, type SeriesView, type Signal } from './SweepChart';
 import { SlopeChart } from './SlopeChart';
 import { BTreeChurnNote, BTreeSearchNote } from './BTreeNotes';
+import { BstSearchNote, bstSheetNote } from './BstNotes';
 import { download, downloadBlob, toCsv, toJson } from './export';
 import { plotCanvasOf, renderSheet, type ChartShot } from './png';
 import { DllChurnCaveat, DllSearchNote, dllSheetNote } from './DoublyListNotes';
@@ -234,6 +235,8 @@ export function CompareSection() {
     }
     const dllNote = dllSheetNote(churn.map((v) => v.series.structure));
     if (dllNote) notes.push(dllNote);
+    const bstNote = bstSheetNote(search.map((v) => v.series.structure), result?.probeMix.presentFraction);
+    if (bstNote) notes.push(bstNote);
     // Only while the run asked absent keys at all — a hits-only run has no "shared absent probes".
     if (stringSearch.some((v) => v.series.structure === 'triestr') && (ranMixSummary?.absent ?? 64) > 0) {
       notes.push(
@@ -397,10 +400,11 @@ export function CompareSection() {
         <>
       <h3 style={h3}>Search — the cost of finding a key</h3>
       <p style={{ color: '#555', marginTop: 0 }}>
-        Nine structures look up a key eight different ways: the unsorted array scans from the front, the two
+        Eleven structures look up a key eight different ways: the unsorted array scans from the front, the two
         linked lists walk node by node (the doubly list’s back-pointer never helps a lookup, so they share a
         way), the sorted array binary-searches, the skip list drops down a tower of
-        ever-sparser express lanes, the red-black tree descends a tree it keeps balanced, the B-tree
+        ever-sparser express lanes, three binary trees — the plain BST, the AVL and the red-black tree —
+        descend from the root (only the last two keep themselves balanced), the B-tree
         binary-searches inside a few wide nodes, the hash set jumps straight to a bucket and walks its chain,
         and the open-addressing hash set jumps straight to a slot and steps along the table past any collisions.
         (The min-heap is measured too, but it answers a different question and gets its own section below.)
@@ -441,14 +445,23 @@ export function CompareSection() {
             comparison at all.{' '}
               </>
             )}
-            The red-black tree (light brown) is the one tree on this chart: a search is a
-            walk from the root to a leaf, so its line rises with the tree’s depth, <strong>O(log n)</strong>
-            on any input order. The dashed lines are each
+            The red-black tree (light brown) and the AVL (brown) are the two balancing schemes side by side:
+            a search is a walk from the root to a leaf, so each line rises with its tree’s depth,{' '}
+            <strong>O(log n)</strong> on any input order. Counted in comparisons the two nearly coincide on
+            shuffled data, and the red-black tree runs a few percent higher on sorted data, where its looser
+            balance lets the edges grow deeper. On the wall clock the gap also carries how each stores its
+            nodes, so compare their shapes there. The dashed lines are each
             structure’s textbook class scaled onto its points — where a solid line peels away from its dashed
             twin, the machine (cache, memory traffic) or the data is doing something the textbook doesn’t say.
           </Callout>
           {search.some((v) => v.series.structure === 'dll') && <DllSearchNote />}
           <BTreeSearchNote present={search.some((v) => v.series.structure === 'btree')} />
+          <BstSearchNote
+            present={search.some((v) => v.series.structure === 'bst')}
+            sorted={sortedNote}
+            reverse={reverse}
+            presentFraction={result.probeMix.presentFraction}
+          />
         </>
       )}
 

@@ -690,6 +690,28 @@ mod tests {
         assert_eq!(t.search_counted(), 4.0);
     }
 
+    /// The search chart's one known blind spot for this tree (docs/METHODOLOGY.md §4 hurdle
+    /// 15). The shared absent probes are `max + 1 …` — above every key — which walk only the
+    /// *right* spine. Reverse-sorted input builds a *left* chain whose right spine is the root
+    /// alone, so every such miss costs exactly one comparison at every n: a misses-only run
+    /// would chart an O(n) chain as flat. Present probes still walk the chain, so any mix with
+    /// hits in it keeps the O(n) slope. The fix is a caveat beside the chart, not BST-specific
+    /// probes — one probe set for every structure is what makes the chart a comparison.
+    #[test]
+    fn above_max_misses_cost_one_comparison_on_a_left_chain() {
+        for n in [10usize, 100, 1_000, 10_000] {
+            let keys: Vec<f64> = (0..n).rev().map(|i| i as f64).collect(); // reverse-sorted
+            let mut t = BstF64::new(&keys, n);
+            let misses: Vec<f64> = (0..64).map(|i| n as f64 + i as f64).collect(); // max + 1 …
+            t.set_probes(&misses);
+            assert_eq!(t.search_counted(), 64.0, "n = {n}: a miss is one comparison");
+            // The present half is what keeps a mixed run honest: hits walk the chain.
+            let hits: Vec<f64> = (0..64).map(|i| ((i * n) / 64) as f64).collect();
+            t.set_probes(&hits);
+            assert!(t.search_counted() / 64.0 > n as f64 / 4.0, "n = {n}: hits walk the chain");
+        }
+    }
+
     #[test]
     fn churn_holds_size_and_averages_the_two_spine_round_trips() {
         // Chain 10→20→30 (a *right* chain). hi = 99 (> max) descends the right spine:

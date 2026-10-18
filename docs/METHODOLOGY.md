@@ -622,9 +622,9 @@ tree is a pre-sized arena (NIL sentinel in slot 0, parent links, free-list reuse
 the wall clock the gap also carries allocator and layout effects, and the red-black churn
 line can sit *below* the AVL's while doing more comparisons. Read the two wall-clock lines
 for shape, the op-count lines for the scheme. On the passing gate run: search slope 0.25
-(it and the B-tree are the only trees on the search chart — the AVL and BST are not swept
-for search, so the red-black-vs-AVL search comparison is clock-free only), churn 0.14
-uniform and 0.16 reverse-sorted, all sub-linear. The gate asserts class only, never "below
+(the AVL's own search line now sits beside it — 0.19–0.22 on the same run — so the
+comparison is on the clock as well as in the op-counts, with the storage caveat above),
+churn 0.14 uniform and 0.16 reverse-sorted, all sub-linear. The gate asserts class only, never "below
 the AVL" or "above" — the op-counts say the order flips with input order.
 
 **Watching it (Explore).** The red-black tab animates the same convention: `rbt.compare` and
@@ -953,7 +953,8 @@ Ordered by how much they can mislead a reader today.
    instance, so they carry no stored count (and a hash set's FD "insert" of a
    repeated key is a lookup that finds it — read that curve with this hurdle in
    mind). Whether to offer a stored-n x-axis is open (PLAN §13).
-9. **The probe mix is a choice, and it moves constants, never classes.** The
+9. **The probe mix is a choice, and it moves constants — classes only for the BST
+   (hurdle 15).** The
    default is 64 present + 64 absent; the UI also offers 0 / 25 / 75 / 100 %
    present (§2.2). Per structure, on the same shared probe set:
    - **unsorted array, linked lists, min-heap** — a scan stops at a hit, so the
@@ -963,8 +964,12 @@ Ordered by how much they can mislead a reader today.
      part of one); the **open-addressing set** is flat too, but its misses are its
      dear query (Knuth's ½(1 + 1/(1−α)²), §2.8), so more misses raise its constant
      more;
-   - **sorted array, red-black tree** — O(log n) either way; the **B-tree** costs
+   - **sorted array, red-black tree, AVL** — O(log n) either way; the **B-tree** costs
      within one comparison either way (its deferred equality test, §2.10);
+   - **BST** — the one exception to "never classes", and the reason hurdle 15 exists:
+     an above-max miss walks only the right spine, so on a reverse-sorted (left-chain)
+     BST every miss costs one comparison and a **misses-only** run reads O(1) for an
+     O(n) chain. Any mix with hits in it keeps the O(n) slope;
    - **trie** — unchanged by the mix (§2.5): its derived misses cost what hits cost;
    - **skip list** — the absent block is `max + 1 … max + a`, and that is the skip
      list's *cheap* end rather than its dear one: an above-max probe walks the
@@ -1019,6 +1024,23 @@ Ordered by how much they can mislead a reader today.
    not its fitted label and not the point-to-point jumps. Its wall-clock constant
    against the chaining set is a machine fact, not a claim this project makes
    either way.
+15. **The BST's search line can report the wrong class on a misses-only run.** The
+   BST and the AVL share the search chart, on the shared probe set, whose misses are
+   `max + 1 …`. For a BST an above-max key walks the *right* spine and nothing else.
+   On reverse-sorted input the tree is a left chain whose right spine is the root
+   alone, so every miss costs exactly **one** comparison at every n
+   (`bst::tests::above_max_misses_cost_one_comparison_on_a_left_chain`): at 0 %
+   present the purple line reads flat for an O(n) chain — the failure §4.1 fixed for
+   churn, now on the read side. The default and every mix with hits keep the class,
+   because a found key walks the real path (reverse-sorted gate pass: BST search slope
+   1.07, the AVL's 0.27 on the same keys). Not fixed by BST-specific probes — one probe
+   set for every line is what makes the chart a comparison (hurdles 9, 11) — but
+   labelled: a caveat box under the search chart turns loud on any misses-only run with
+   the BST on it, and the same warning travels as a PNG caption line
+   (`src/ui/BstNotes.tsx`). A mid-range absent mode (PLAN §13) would close this as well
+   as the skip list's gap. The cost of the line itself: on sorted input the BST's
+   search sweep builds a chain up to 100 k keys, Θ(n²) comparisons, untimed but
+   seconds of wall time before the first point is measured.
 
 ## 5. Proof map — which test pins which claim
 
@@ -1036,6 +1058,9 @@ Ordered by how much they can mislead a reader today.
 | a heap's build is order-sensitive (Θ(n) ascending, Θ(n log n) descending) while its churn is not | `structures::methodology::heap_build_is_order_sensitive_but_churn_is_not` | none |
 | a `max + 1` churn key would drain a heap instead of holding its size — why the low key is forced | `structures::heap::tests::a_high_churn_key_would_drain_the_heap` | none |
 | the heap's six op-counting rules match the TS twin (layout, tie-breaks, the 0-op emptying extract) | `conformance/corpus-heap.txt` + `src/structures/conformance-heap.test.ts` | none |
+| an above-max miss costs a reverse-sorted (left-chain) BST exactly one comparison at every n, while its hits walk the chain — why a misses-only search run can chart it flat (§4 hurdle 15) | `structures::bst::tests::above_max_misses_cost_one_comparison_on_a_left_chain` | none (op-counts) |
+| the BST's misses-only caveat appears exactly when it can bite, loud on that run, and travels as a PNG caption | `src/ui/BstNotes.test.ts` | — |
+| **BST and AVL search on the real clock:** both sub-linear on the shuffled default (slopes 0.23 / 0.19–0.22); on the **reverse-sorted** pass the BST's search reads **O(n)** (slope 1.07, ratio ≈ 24 000×) while the AVL's stays sub-linear (0.27) — "sorted data kills a naive BST" on the read side | `scripts/verify-browser.mjs`, both passes (the second clears and re-reads `__sweepProof`) | real |
 | the skip list keeps O(log n) on the reverse-sorted input that makes the BST an O(n) chain — with no rotations, because its heights come from the keys | `structures::methodology::skip_list_keeps_its_class_on_the_input_that_degenerates_a_bst` | none |
 | the same key set builds the same skip list however the keys arrive (the claim §2.6 rests on) | `structures::skip_list::tests::the_list_is_a_function_of_the_key_set_not_the_insertion_order` | none |
 | *both* skip-list churn ends stay in the same class — the check the sorted array fails, and the reason its key position is a documented decision | `structures::skip_list::tests::neither_churn_end_changes_the_reported_class` | none |
