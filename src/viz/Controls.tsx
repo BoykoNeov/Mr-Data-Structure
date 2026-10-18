@@ -13,10 +13,11 @@ import type { PlayerControls } from './usePlayer';
  * / delete trio, while e.g. the heap declares insert / peek / extract-min / search.
  * An op with `needsValue: false` (extract-min, peek) runs without a typed-in key.
  *
- * The **key type** is a prop too, because the trie's keys are strings and every
- * other animated structure's are numbers (docs/PLAN.md §8). `keyKind: 'string'`
- * swaps the number box for a text box and hands `onOp` a string; omitting it keeps
- * the numeric default, so the seven numeric panels are untouched. The two paths are
+ * The **key type** is a prop too, because the text-key structures' keys are strings
+ * (the trie, and the text-key array and hash set) and every other animated
+ * structure's are numbers (docs/PLAN.md §8). `keyKind: 'string'` swaps the number
+ * box for a text box and hands `onOp` a string; omitting it keeps the numeric
+ * default, so the numeric panels are untouched. The two paths are
  * separate parse/dispatch helpers rather than one `string | number` — the numeric
  * one rejects text that would arrive as `NaN`, and the string one has no such
  * failure mode.
@@ -114,9 +115,9 @@ interface ControlsBase<E, O extends string> {
   readonly enterOp?: O;
 }
 
-/** Numeric keys (the default, seven structures) or string keys (the trie). The
- * discriminant is what types `onOp`'s value — there is no `string | number` to
- * unpack at the call site. */
+/** Numeric keys (the default) or string keys (the trie and the text-key array and
+ * hash set). The discriminant is what types `onOp`'s value — there is no
+ * `string | number` to unpack at the call site. */
 export type ControlsProps<E, O extends string = DefaultOp> =
   | (ControlsBase<E, O> & {
       readonly keyKind?: 'number';

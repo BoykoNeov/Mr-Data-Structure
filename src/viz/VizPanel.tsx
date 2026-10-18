@@ -133,8 +133,8 @@ const TRIE_SEED = ['car', 'cart', 'cat', 'café', 'dog'];
  *    one more distinct key doubles it to 16, as on the number tab;
  *  - two buckets are shared: **car + ant** (equal byte lengths, so the chain-step
  *    compares bytes) and **café + dog** (5 bytes vs 3, rejected on length alone);
- *  - `cafe` is one byte-sequence away from `café` and hashes to `cat`'s bucket — a
- *    miss that pays a chain-step — while `ca` hashes to an empty bucket and pays only
+ *  - `cafe` (4 bytes) is a different byte sequence from `café` (5 — é is `C3 A9`) and
+ *    hashes to `cat`'s bucket — a miss that pays a chain-step — while `ca` hashes to an empty bucket and pays only
  *    the hash; in the array the same `cafe` scans all six (café is 5 bytes, cafe 4);
  *  - `owl` hashes to car + ant's bucket, so its insert walks both, and as the 7th key
  *    it doubles the table: car and ant part, café and dog stay together (they agree
@@ -145,7 +145,7 @@ export const TEXT_SEED: readonly string[] = ['car', 'cart', 'cat', 'café', 'dog
 export const ARRAY_STR_INTRO =
   'Dynamic array of text keys — the number array’s algorithm on strings, with the trie tab’s keys plus ant: a scan from the front, one comparison per key examined (a whole-key test, not one per letter), and delete shifts the tail left. Rust’s == on two strings checks their byte lengths first, so a key of another length is rejected without reading a letter — cheaper on the clock, the same one comparison in the count. Try search("dog"): 5 comparisons. Then search("cafe"): it looks like café, but é is two bytes in UTF-8 (café is 5 bytes, cafe 4), so it misses after all 6. delete("cart") costs 2 comparisons + 4 shifts.';
 export const HASH_STR_INTRO =
-  'Hash set of text keys — the number hash set’s algorithm on strings, with the benchmark’s own string hash (FNV-1a over the UTF-8 bytes, then the same mixer) and the same 4-bucket start, 0.75 load limit and doubling. The six keys settle into 8 buckets, two of them shared: car with ant, café with dog. The hash is one op however long the key — it reads every byte, but is counted once. Try search("dog"): the hash + 2 chain-steps = 3. search("cafe") lands in a different bucket from café (change one byte and the hash changes): 2. search("ca") finds an empty bucket: 1, just the hash. insert("owl") walks car and ant (3 ops) and, as the 7th key, doubles the table to 16 — not counted — where car and ant part but café and dog stay together.';
+  'Hash set of text keys — the number hash set’s algorithm on strings, with the benchmark’s own string hash (FNV-1a over the UTF-8 bytes, then the same mixer) and the same 4-bucket start, 0.75 load limit and doubling. The six keys settle into 8 buckets, two of them shared: car with ant, café with dog. The hash is one op however long the key — it reads every byte, but is counted once. Try search("dog"): the hash + 2 chain-steps = 3. search("cafe") lands in a different bucket from café (é is two bytes, so cafe is a different byte sequence and gets an unrelated hash): 2. search("ca") finds an empty bucket: 1, just the hash. insert("owl") walks car and ant (3 ops) and, as the 7th key, doubles the table to 16 — not counted — where car and ant part but café and dog stay together.';
 // Each height here is a teaching decision, but an indirect one: a skip list's tower
 // heights are a pure function of the keys (docs/PLAN.md §8 — a hash, not a coin), so
 // this seed was chosen by computing them. It yields a four-lane staircase — `220` is a
