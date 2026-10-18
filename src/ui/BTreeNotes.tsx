@@ -1,3 +1,4 @@
+import type { StructureId } from '../bench/measure';
 import { Callout } from './Explain';
 
 /**
@@ -11,6 +12,22 @@ import { Callout } from './Explain';
  * the op-count axis counts. So any gap between it and its neighbours on the wall clock is
  * the machine, and no gap on the op-count signal is the expected result, not a failure.
  */
+/**
+ * The PNG caption line for the B-tree, or `null` when no exported chart carries its line. The
+ * locality caveat in {@link BTreeSearchNote} stays on the page; a PNG leaves without it, and a
+ * B-tree line sitting apart from its neighbours on wall-clock reads as a claim about work
+ * unless the image says otherwise. It claims nothing about which line is faster — the gate
+ * only logs that comparison (`btree hypothesis (info only)`).
+ */
+export function btreeSheetNote(structures: readonly StructureId[]): string | null {
+  if (!structures.includes('btree')) return null;
+  return (
+    'The B-tree makes about as many comparisons as the sorted array and the AVL; what it saves is node hops (up to ' +
+    '31 keys per node), which the op-count does not count. Any wall-clock gap between it and its neighbours is this ' +
+    'machine’s memory, not extra or less work, and no gap on op-count is the expected result (METHODOLOGY §2.10).'
+  );
+}
+
 export function BTreeSearchNote({
   present,
   midRangeMisses = false,

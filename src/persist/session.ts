@@ -2,6 +2,8 @@ import { DEFAULT_PROBE_MIX, PROBE_MIX_CHOICES } from '../bench/probeMix';
 import type { Dataset } from '../data';
 import { DEFAULT_PICKER, GENERATORS, buildDataset, type GeneratorKind, type PickerState } from '../ui/DatasetPicker';
 import type { Signal } from '../ui/SweepChart';
+import { DEFAULT_GRAPH_PICKER, GRAPH_FAMILIES, MAX_PICKER_DEGREE, type GraphPickerState } from '../ui/graphPicker';
+import type { NAxis } from '../ui/storedAxis';
 import { browserKv, indexedDbTextStore, type KvStore, type TextStore } from './storage';
 
 /**
@@ -11,7 +13,10 @@ import { browserKv, indexedDbTextStore, type KvStore, type TextStore } from './s
  * - **the last run** — the dataset panel exactly as it was when they pressed run (or a
  *   preset), including pasted CSV / JSON, and the probe mix that run used (§6.3). The
  *   page's mount-time auto-run then re-measures *that* configuration, fresh;
- * - **the chart view** — signal, theoretical overlay, rep spread;
+ * - **the chart view** — signal, theoretical overlay, rep spread, and the x-axis (input or
+ *   stored keys — a view setting: it refits what is on screen and re-measures nothing);
+ * - **the graph section's picker** as it was at the last *measure the graph*, a pasted edge
+ *   list included. It only refills the form: the graph never runs on load;
  * - **the Explore tab** (§5).
  *
  * What is deliberately **not** saved: measured results. The auto-run re-measures the
@@ -19,7 +24,10 @@ import { browserKv, indexedDbTextStore, type KvStore, type TextStore } from './s
  * seconds before being replaced — and would be the one place the page showed numbers it had
  * not measured now, on this machine, in this moment (§2.3, §6.2 "results are relative").
  * Also not saved: form edits that were never run. Restoring them would make the reload's
- * auto-run measure a configuration the user never ran.
+ * auto-run measure a configuration the user never ran. And not saved on purpose, though they
+ * are run settings: the open-addressing load factor and the miss form. Both are opt-in
+ * departures from the calibrated workload, and restoring either would make the mount-time
+ * auto-run — the run the browser gate's bands describe — a non-default one.
  *
  * Small settings live in `localStorage` under one versioned key; the paste text lives in
  * IndexedDB, checked on the way back by length + hash so a reload never runs on text other
@@ -34,6 +42,8 @@ export const SESSION_KEY = 'mrds:session:v1';
 export const SESSION_VERSION = 1;
 /** The IndexedDB key the pasted text is stored under. */
 export const PASTE_TEXT_KEY = 'paste-text';
+/** The graph section's pasted edge list — its own key, so neither paste overwrites the other. */
+export const GRAPH_TEXT_KEY = 'graph-edge-text';
 /** How long the first load waits for IndexedDB before giving up and running the defaults. */
 export const RESTORE_TIMEOUT_MS = 2000;
 
@@ -42,10 +52,12 @@ export interface SavedView {
   readonly signal: Signal;
   readonly showTheory: boolean;
   readonly showSpread: boolean;
+  /** Added within v1: a stored view without it restores as `'input'`, never as invalid. */
+  readonly nAxis: NAxis;
 }
 
 /** Today's chart defaults — what `CompareSection` shows with nothing stored. */
-export const DEFAULT_VIEW: SavedView = { signal: 'nanos', showTheory: true, showSpread: true };
+export const DEFAULT_VIEW: SavedView = { signal: 'nanos', showTheory: true, showSpread: true, nAxis: 'input' };
 
 /** The last run, minus the paste text (that is in IndexedDB, identified by length + hash). */
 export interface SavedRun {
@@ -57,10 +69,20 @@ export interface SavedRun {
   readonly savedAt: string;
 }
 
+/** The graph picker at its last *measure the graph*, minus the edge-list text (IndexedDB, length + hash). */
+export interface SavedGraph {
+  readonly picker: Omit<GraphPickerState, 'text'>;
+  readonly textLength: number;
+  readonly textHash: string;
+  readonly savedAt: string;
+}
+
 export interface SavedSettings {
   readonly v: typeof SESSION_VERSION;
   readonly run?: SavedRun;
   readonly view?: SavedView;
+  /** Added within v1, optional — a record from before it simply lacks it. */
+  readonly graph?: SavedGraph;
   /** Validated by the caller against the real tab list (`isExploreKind`). */
   readonly exploreTab?: string;
 }
@@ -92,6 +114,16 @@ export interface Session {
   saveRun(state: PickerState, presentFraction: number, now?: Date): void;
   /** Writes only when the view differs from what is stored (or from the defaults). */
   saveView(view: SavedView): void;
+  /** The saved graph picker with its text `''` — known synchronously, for the first render. */
+  graphInitial(): GraphPickerState;
+  /**
+   * The saved graph picker with its edge-list text read back. Never rejects. A saved edge-list
+   * run whose text is gone or differs resolves to the default picker (and the section is
+   * dropped); a slow database resolves to {@link Session.graphInitial}'s state, keeping the save.
+   */
+  graphPicker(): Promise<GraphPickerState>;
+  /** Called on *measure the graph*, once the picker has built a measurable source. */
+  saveGraph(state: GraphPickerState, now?: Date): void;
   exploreTab<T extends string>(isValid: (tab: string) => tab is T): T | undefined;
   saveExploreTab(tab: string): void;
   /** Forget everything saved; ordered after any in-flight save. */
@@ -109,6 +141,9 @@ const isObj = (x: unknown): x is Record<string, unknown> =>
 const isNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 const isKind = (x: unknown): x is GeneratorKind => GENERATORS.some((g) => g.kind === x);
 const isSignal = (x: unknown): x is Signal => x === 'nanos' || x === 'opcount';
+const isHash = (x: unknown): x is string => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x);
+const isLength = (x: unknown): x is number => isNum(x) && x >= 0 && Number.isInteger(x);
+const isDate = (x: unknown): x is string => typeof x === 'string' && !Number.isNaN(Date.parse(x));
 
 function parsePicker(x: unknown): Omit<PickerState, 'text'> | null {
   if (!isObj(x)) return null;
@@ -126,18 +161,36 @@ function parseRun(x: unknown): SavedRun | null {
   const picker = parsePicker(x.picker);
   const { textLength, textHash: hash, presentFraction, savedAt } = x;
   if (!picker) return null;
-  if (!isNum(textLength) || textLength < 0 || !Number.isInteger(textLength)) return null;
-  if (typeof hash !== 'string' || !/^[0-9a-f]{8}$/.test(hash)) return null;
+  if (!isLength(textLength) || !isHash(hash) || !isDate(savedAt)) return null;
   if (!isNum(presentFraction) || !PROBE_MIX_CHOICES.includes(presentFraction)) return null;
-  if (typeof savedAt !== 'string' || Number.isNaN(Date.parse(savedAt))) return null;
   return { picker, textLength, textHash: hash, presentFraction, savedAt };
 }
 
 function parseView(x: unknown): SavedView | null {
   if (!isObj(x)) return null;
-  const { signal, showTheory, showSpread } = x;
+  const { signal, showTheory, showSpread, nAxis } = x;
   if (!isSignal(signal) || typeof showTheory !== 'boolean' || typeof showSpread !== 'boolean') return null;
-  return { signal, showTheory, showSpread };
+  // Absent ⇒ the default (a view saved before the axis was remembered); present but unknown ⇒ invalid.
+  if (nAxis !== undefined && nAxis !== 'input' && nAxis !== 'stored') return null;
+  return { signal, showTheory, showSpread, nAxis: nAxis ?? 'input' };
+}
+
+function parseGraph(x: unknown): SavedGraph | null {
+  if (!isObj(x) || !isObj(x.picker)) return null;
+  const { family, degree, seed, delimiter, header, comments } = x.picker;
+  const known = GRAPH_FAMILIES.find((f) => f.family === family);
+  if (!known) return null;
+  if (!isNum(degree) || degree < 0 || degree > MAX_PICKER_DEGREE || !isNum(seed)) return null;
+  if (delimiter !== 'comma' && delimiter !== 'tab' && delimiter !== 'whitespace') return null;
+  if (typeof header !== 'boolean' || typeof comments !== 'boolean') return null;
+  const { textLength, textHash: hash, savedAt } = x;
+  if (!isLength(textLength) || !isHash(hash) || !isDate(savedAt)) return null;
+  return {
+    picker: { family: known.family, degree, seed, delimiter, header, comments },
+    textLength,
+    textHash: hash,
+    savedAt,
+  };
 }
 
 /**
@@ -155,11 +208,15 @@ export function parseSettings(raw: string | null): SavedSettings | null {
   if (!isObj(x) || x.v !== SESSION_VERSION) return null;
   const run = parseRun(x.run);
   const view = parseView(x.view);
+  const graph = parseGraph(x.graph);
   const tab = typeof x.exploreTab === 'string' ? x.exploreTab : undefined;
+  // Every section must be carried through here: each save rewrites the record from this
+  // parse, so a section left out would be erased by the next, unrelated save.
   return {
     v: SESSION_VERSION,
     ...(run ? { run } : {}),
     ...(view ? { view } : {}),
+    ...(graph ? { graph } : {}),
     ...(tab !== undefined ? { exploreTab: tab } : {}),
   };
 }
@@ -192,7 +249,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 }
 
 const sameView = (a: SavedView, b: SavedView) =>
-  a.signal === b.signal && a.showTheory === b.showTheory && a.showSpread === b.showSpread;
+  a.signal === b.signal && a.showTheory === b.showTheory && a.showSpread === b.showSpread && a.nAxis === b.nAxis;
 
 // ---------------------------------------------------------------------------------------
 // The session
@@ -238,6 +295,14 @@ export function createSession(
   // Whether IndexedDB may hold text. Starts from what the record says, so a session that never
   // pasted anything never opens the database — on load *or* on a run.
   let textMayExist = (read()?.run?.textLength ?? 0) > 0;
+  // The same, for the graph section's edge list.
+  let graphTextMayExist = (read()?.graph?.textLength ?? 0) > 0;
+  const dropGraph = () => {
+    const current = read();
+    if (!current?.graph) return;
+    const { graph: _graph, ...rest } = current;
+    write(rest);
+  };
 
   const defaultRun = (): FirstRun => ({
     dataset: buildDataset(DEFAULT_PICKER),
@@ -326,6 +391,53 @@ export function createSession(
       write({ ...(current ?? { v: SESSION_VERSION }), view });
     },
 
+    graphInitial() {
+      const g = read()?.graph;
+      return g ? { ...g.picker, text: '' } : DEFAULT_GRAPH_PICKER;
+    },
+
+    async graphPicker() {
+      try {
+        const g = read()?.graph;
+        if (!g) return DEFAULT_GRAPH_PICKER;
+        const initial: GraphPickerState = { ...g.picker, text: '' };
+        if (g.textLength === 0) return initial;
+        const timedOut = Symbol('timeout');
+        const text = await withTimeout<string | undefined | typeof timedOut>(
+          texts.get(GRAPH_TEXT_KEY),
+          timeoutMs,
+          timedOut,
+        );
+        if (text === timedOut) return initial;
+        if (text !== undefined && text.length === g.textLength && textHash(text) === g.textHash) {
+          return { ...initial, text };
+        }
+        if (g.picker.family === 'edge-list') {
+          // Never refill the form with an edge list other than the one that was measured.
+          dropGraph();
+          graphTextMayExist = false;
+          void enqueue(() => texts.delete(GRAPH_TEXT_KEY));
+          return DEFAULT_GRAPH_PICKER;
+        }
+        return initial; // a synthetic run whose leftover draft was lost: minus the draft
+      } catch {
+        return DEFAULT_GRAPH_PICKER;
+      }
+    },
+
+    saveGraph(state, now = new Date()) {
+      const { text, ...picker } = state;
+      const graph: SavedGraph = { picker, textLength: text.length, textHash: textHash(text), savedAt: now.toISOString() };
+      write({ ...base(), graph });
+      if (text.length > 0) {
+        graphTextMayExist = true;
+        void enqueue(() => texts.put(GRAPH_TEXT_KEY, text));
+      } else if (graphTextMayExist) {
+        graphTextMayExist = false;
+        void enqueue(() => texts.delete(GRAPH_TEXT_KEY));
+      }
+    },
+
     exploreTab(isValid) {
       const tab = read()?.exploreTab;
       return tab !== undefined && isValid(tab) ? tab : undefined;
@@ -344,7 +456,11 @@ export function createSession(
         /* blocked */
       }
       textMayExist = false;
-      return enqueue(() => texts.delete(PASTE_TEXT_KEY));
+      graphTextMayExist = false;
+      return enqueue(async () => {
+        await texts.delete(PASTE_TEXT_KEY);
+        await texts.delete(GRAPH_TEXT_KEY);
+      });
     },
 
     idle() {

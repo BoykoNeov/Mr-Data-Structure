@@ -8,12 +8,14 @@ import { GraphAdj } from '../structures/graph';
 import { runGraphSweeps } from '../compare/runGraphSweeps';
 import {
   DegreeSweepNote,
+  GRAPH_EXPORT_LABELS,
   GraphCompareSection,
   SweepBlock,
   VertexSweepNote,
   WallClockCaveat,
 } from './GraphCompareSection';
 import { graphClassLabel } from './GraphChart';
+import { DEFAULT_GRAPH_PICKER } from './graphPicker';
 
 /** A fake engine traversing with the TS twin, time ∝ ops. */
 const engine: Pick<BenchEngine, 'runGraphSweep'> = {
@@ -51,6 +53,38 @@ describe('GraphCompareSection', () => {
     expect(html).toContain('O(V + E)');
     // The button must not be matched by the browser gate's /run the sweeps/ locator.
     expect(html).not.toMatch(/run the sweeps/i);
+  });
+
+  it('starts from the saved picker, and rendering it neither saves nor measures', () => {
+    let saves = 0;
+    const html = renderToStaticMarkup(
+      createElement(GraphCompareSection, {
+        engineOf: () => null,
+        busy: false,
+        signal: 'nanos',
+        showTheory: true,
+        showSpread: true,
+        persist: {
+          initial: { ...DEFAULT_GRAPH_PICKER, family: 'edge-list', text: 'a,b\nb,c', header: true },
+          restore: async () => DEFAULT_GRAPH_PICKER,
+          save: () => void saves++,
+        },
+      }),
+    );
+    expect(html).toContain('aria-label="edge list"');
+    expect(html).toContain('a,b\nb,c');
+    expect(html).toContain('graph status: <strong>not run yet</strong>');
+    expect(saves).toBe(0);
+  });
+
+  it('labels its export buttons so the gate’s button locators cannot match them', () => {
+    // The buttons render only with a result, so the labels they render are a constant.
+    const labels = Object.values(GRAPH_EXPORT_LABELS);
+    expect(labels).toHaveLength(3);
+    for (const l of labels) {
+      expect(l).not.toMatch(/^measure the graph$/i);
+      expect(l).not.toMatch(/run the sweeps/i);
+    }
   });
 
   it('labels synthetic sweeps as generated and a partial reach as partial', async () => {

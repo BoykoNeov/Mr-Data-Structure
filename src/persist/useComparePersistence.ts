@@ -1,7 +1,29 @@
 import { useState } from 'react';
 import type { PickerState } from '../ui/DatasetPicker';
+import type { GraphPickerState } from '../ui/graphPicker';
 import { browserSession, type FirstRun, type SavedView, type Session } from './session';
 import type { SessionNoteProps } from './SessionNote';
+
+/**
+ * The graph section's slice of the session, handed to `GraphCompareSection` as one prop so the
+ * section stays storage-free in its render tests. Nothing here runs the graph: a restore only
+ * refills the form, and the save happens on *measure the graph*.
+ */
+export interface GraphPersistence {
+  /** The saved picker, its text `''` — for the first render. */
+  readonly initial: GraphPickerState;
+  /** The saved picker with its edge-list text, once IndexedDB has answered. */
+  readonly restore: () => Promise<GraphPickerState>;
+  readonly save: (state: GraphPickerState) => void;
+}
+
+function graphPersistence(session: Session): GraphPersistence {
+  return {
+    initial: session.graphInitial(),
+    restore: () => session.graphPicker(),
+    save: (state) => session.saveGraph(state),
+  };
+}
 
 /**
  * Compare's side of session persistence (docs/PLAN.md §13 — local only), as one hook so
@@ -16,6 +38,7 @@ import type { SessionNoteProps } from './SessionNote';
  */
 export function useComparePersistence(session: Session = browserSession()) {
   const [initial] = useState(() => session.initial());
+  const [graph] = useState(() => graphPersistence(session));
   const [picker, setPicker] = useState({ key: 0, initial: initial.picker });
   const [restoredFrom, setRestoredFrom] = useState<string | null>(null);
   const [cleared, setCleared] = useState(false);
@@ -48,6 +71,7 @@ export function useComparePersistence(session: Session = browserSession()) {
       setCleared(false);
     },
     saveView: (view: SavedView) => session.saveView(view),
+    graph,
     note,
   };
 }

@@ -16,7 +16,7 @@ import { Callout, ChartGuide, ComplexityLadder } from './Explain';
 import { DatasetPicker, describeDataset } from './DatasetPicker';
 import { SweepChart, seriesLabel, type SeriesView, type Signal } from './SweepChart';
 import { SlopeChart } from './SlopeChart';
-import { BTreeChurnNote, BTreeSearchNote } from './BTreeNotes';
+import { BTreeChurnNote, BTreeSearchNote, btreeSheetNote } from './BTreeNotes';
 import { BstSearchNote, bstSheetNote } from './BstNotes';
 import { download, downloadBlob, toCsv, toJson } from './export';
 import { plotCanvasOf, renderSheet, type ChartShot } from './png';
@@ -90,8 +90,9 @@ export function CompareSection() {
   // and so the mount-time auto-run, always measures the calibrated `max + 1 …` form.
   const [missForm, setMissForm] = useState<MissForm>(DEFAULT_MISS_FORM);
   // Which n the charts plot and fit against (./storedAxis). A view setting, not a measurement:
-  // the results and the gate's `window.__*Proof` mirrors stay on input n either way.
-  const [nAxis, setNAxis] = useState<NAxis>('input');
+  // the results and the gate's `window.__*Proof` mirrors stay on input n either way — which is
+  // why, unlike the miss form, it is remembered with the rest of the view.
+  const [nAxis, setNAxis] = useState<NAxis>(persisted.initial.view.nAxis);
 
   const run = async (d: Dataset, mixOverride?: ProbeMix) => {
     const engine = engineRef.current;
@@ -143,7 +144,7 @@ export function CompareSection() {
   }, []);
 
   // Remember the chart view (writes only when it differs from what is stored).
-  useEffect(() => persisted.saveView({ signal, showTheory, showSpread }), [signal, showTheory, showSpread]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => persisted.saveView({ signal, showTheory, showSpread, nAxis }), [signal, showTheory, showSpread, nAxis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fit on the selected signal (§2.2): op-count is the clean curve, wall-clock the real one —
   // and on the selected x-axis, which on the default `'input'` is exactly `toView`.
@@ -280,6 +281,8 @@ export function CompareSection() {
       result?.probeMix.missForm,
     );
     if (bstNote) notes.push(bstNote);
+    const btreeNote = btreeSheetNote(chartsOnScreen.flatMap((c) => c.views.map((v) => v.series.structure)));
+    if (btreeNote) notes.push(btreeNote);
     // Only while the light-blue line is on a chart being exported.
     if (chartsOnScreen.some((c) => c.views.some((v) => v.series.structure === 'hashoa'))) {
       const oaNote = oaLoadSheetNote(ranOaLoad, oaReach);
@@ -928,6 +931,8 @@ export function CompareSection() {
         signal={signal}
         showTheory={showTheory}
         showSpread={showSpread}
+        version={version}
+        persist={persisted.graph}
       />
     </section>
   );

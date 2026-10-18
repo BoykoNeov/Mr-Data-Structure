@@ -332,7 +332,10 @@ tool call does not survive into the next (each call is a fresh process).
   auto-run whatever pass 2–3 saved and silently measure the wrong thing — clear storage
   first. On a dev box an odd first run after reload is probably your saved session (press
   *forget saved session*). Persistence never saves results, and stores the paste **raw**
-  (re-parsing the exact text is what keeps keys exact).
+  (re-parsing the exact text is what keeps keys exact). **A new session section must be parsed
+  in `parseSettings`**: every save rewrites the record from that parse, so an unparsed section is
+  silently erased by the next unrelated save. Add it as an optional section of v1 — bumping
+  `SESSION_VERSION` wipes every saved session. The graph's edge list has its own IndexedDB key.
 - **Parallel slices that bump a shared count merge *silently* to the wrong number** when
   both make the identical edit: 6 → 7 on two branches merges cleanly as 7, not 8. The gate's
   series counts (`proof.length`, `mutation.length`), `runSweeps.test.ts`'s status count and

@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_PROBE_MIX } from '../bench/probeMix';
 import { DEFAULT_PICKER, buildDataset, type PickerState } from '../ui/DatasetPicker';
+import { DEFAULT_GRAPH_PICKER, type GraphPickerState } from '../ui/graphPicker';
 import { isExploreKind } from '../viz/VizPanel';
 import {
   DEFAULT_VIEW,
+  GRAPH_TEXT_KEY,
   PASTE_TEXT_KEY,
   SESSION_KEY,
   SESSION_VERSION,
@@ -56,7 +58,8 @@ describe('empty storage ⇒ today’s defaults, byte for byte', () => {
 
     expect(initial.picker).toBe(DEFAULT_PICKER); // same object: the picker never remounts
     expect(initial.presentFraction).toBe(DEFAULT_PROBE_MIX.presentFraction);
-    expect(initial.view).toEqual({ signal: 'nanos', showTheory: true, showSpread: true }); // CompareSection's pre-persistence literals
+    // CompareSection's pre-persistence literals, and the input-n axis it always started on.
+    expect(initial.view).toEqual({ signal: 'nanos', showTheory: true, showSpread: true, nAxis: 'input' });
     expect(initial.savedRun).toBeNull();
 
     const first = await session.firstRun(initial);
@@ -249,15 +252,17 @@ describe('generator runs, view, and tab', () => {
     const a = reload();
     a.session.saveView(DEFAULT_VIEW);
     expect(a.kv.writes).toBe(0);
-    a.session.saveView({ signal: 'opcount', showTheory: false, showSpread: true });
+    a.session.saveView({ signal: 'opcount', showTheory: false, showSpread: true, nAxis: 'input' });
     expect(a.kv.writes).toBe(1);
-    a.session.saveView({ signal: 'opcount', showTheory: false, showSpread: true });
+    a.session.saveView({ signal: 'opcount', showTheory: false, showSpread: true, nAxis: 'input' });
     expect(a.kv.writes).toBe(1);
+    a.session.saveView({ signal: 'opcount', showTheory: false, showSpread: true, nAxis: 'stored' });
+    expect(a.kv.writes).toBe(2); // the axis alone is a change
     a.session.saveRun({ ...DEFAULT_PICKER, kind: 'zipfian' }, 0.5);
     a.session.saveExploreTab('skiplist');
     const b = reload(a.kv, a.text);
     const initial = b.session.initial();
-    expect(initial.view).toEqual({ signal: 'opcount', showTheory: false, showSpread: true });
+    expect(initial.view).toEqual({ signal: 'opcount', showTheory: false, showSpread: true, nAxis: 'stored' });
     expect(initial.picker.kind).toBe('zipfian');
     expect(b.session.exploreTab(isExploreKind)).toBe('skiplist');
   });
@@ -316,10 +321,10 @@ describe('corrupt or foreign records are dropped, never trusted, never a crash',
     const raw = JSON.stringify({ v: 1, run: { ...goodRun, ...patch }, view: goodView });
     const s = parseSettings(raw);
     expect(s?.run).toBeUndefined();
-    expect(s?.view).toEqual(goodView); // the other section is kept
+    expect(s?.view).toEqual({ ...goodView, nAxis: 'input' }); // the other section is kept
     const session = createSession(memoryKv({ [SESSION_KEY]: raw }), memoryText());
     const initial = session.initial();
-    expect(initial.view).toEqual(goodView);
+    expect(initial.view).toEqual({ ...goodView, nAxis: 'input' });
     expect((await session.firstRun(initial)).dataset).toEqual(buildDataset(DEFAULT_PICKER));
   });
 
@@ -327,6 +332,129 @@ describe('corrupt or foreign records are dropped, never trusted, never a crash',
     const s = parseSettings(JSON.stringify({ v: 1, run: goodRun, view: { ...goodView, signal: 'cycles' } }));
     expect(s?.view).toBeUndefined();
     expect(s?.run?.picker.kind).toBe('sorted');
+    expect(parseSettings(JSON.stringify({ v: 1, view: { ...goodView, nAxis: 'output' } }))?.view).toBeUndefined();
+  });
+
+  it('reads a view saved before the axis was remembered as the input axis, not as invalid', () => {
+    // goodView has no nAxis: the shape every v1 record written before this field has.
+    expect(parseSettings(JSON.stringify({ v: 1, view: goodView }))?.view).toEqual({ ...goodView, nAxis: 'input' });
+    expect(parseSettings(JSON.stringify({ v: 1, view: { ...goodView, nAxis: 'stored' } }))?.view?.nAxis).toBe('stored');
+  });
+
+  const goodGraph = {
+    picker: { family: 'random', degree: 8, seed: 3, delimiter: 'tab', header: true, comments: false },
+    textLength: 0,
+    textHash: textHash(''),
+    savedAt: '2026-10-18T12:00:00.000Z',
+  };
+
+  it.each([
+    ['an unknown family', { picker: { ...goodGraph.picker, family: 'tree' } }],
+    ['a degree above the picker cap', { picker: { ...goodGraph.picker, degree: 65 } }],
+    ['a negative degree', { picker: { ...goodGraph.picker, degree: -1 } }],
+    ['a seed stored as null', { picker: { ...goodGraph.picker, seed: null } }],
+    ['an unknown separator', { picker: { ...goodGraph.picker, delimiter: 'semicolon' } }],
+    ['a header flag as a string', { picker: { ...goodGraph.picker, header: 'yes' } }],
+    ['a malformed text hash', { textHash: 'nothex!!' }],
+  ])('drops only the graph section for %s', (_name, patch) => {
+    expect(parseSettings(JSON.stringify({ v: 1, graph: goodGraph, view: goodView }))?.graph?.picker.degree).toBe(8);
+    const s = parseSettings(JSON.stringify({ v: 1, graph: { ...goodGraph, ...patch }, view: goodView }));
+    expect(s?.graph).toBeUndefined();
+    expect(s?.view?.signal).toBe('opcount');
+  });
+});
+
+describe('the graph section’s picker', () => {
+  const EDGES = Array.from({ length: 30 }, (_, i) => `02134-${i},n${i + 1}`).join('\r\n') + '\r\n😀,東京\r\n';
+  const edgePicker: GraphPickerState = { ...DEFAULT_GRAPH_PICKER, family: 'edge-list', text: EDGES, delimiter: 'comma' };
+
+  it('is the default with nothing stored, and asking never opens the database', async () => {
+    const a = reload();
+    expect(a.session.graphInitial()).toBe(DEFAULT_GRAPH_PICKER);
+    expect(await a.session.graphPicker()).toBe(DEFAULT_GRAPH_PICKER);
+    expect(a.text.calls).toBe(0);
+    expect(a.kv.writes).toBe(0);
+  });
+
+  it('restores a synthetic picker synchronously, never touching the text store', async () => {
+    const a = reload();
+    const state: GraphPickerState = { ...DEFAULT_GRAPH_PICKER, family: 'random', degree: 16, seed: 9 };
+    a.session.saveGraph(state);
+    await a.session.idle();
+    const b = reload(a.kv, a.text);
+    expect(b.session.graphInitial()).toEqual(state);
+    expect(await b.session.graphPicker()).toEqual(state);
+    expect(a.text.calls).toBe(0);
+  });
+
+  it('round-trips a pasted edge list exactly, under its own key', async () => {
+    const a = reload();
+    a.session.saveRun(pastePicker(NASTY_CSV), 0.5);
+    a.session.saveGraph(edgePicker);
+    await a.session.idle();
+    expect(a.text.data.get(GRAPH_TEXT_KEY)).toBe(EDGES);
+    expect(a.text.data.get(PASTE_TEXT_KEY)).toBe(NASTY_CSV); // neither paste overwrote the other
+    const b = reload(a.kv, a.text);
+    expect(b.session.graphInitial()).toEqual({ ...edgePicker, text: '' });
+    expect(await b.session.graphPicker()).toEqual(edgePicker);
+  });
+
+  it('never refills the form with an edge list other than the one saved', async () => {
+    const a = reload();
+    a.session.saveGraph(edgePicker);
+    await a.session.idle();
+    a.text.data.set(GRAPH_TEXT_KEY, EDGES.replace('n1', 'n7'));
+    const b = reload(a.kv, a.text);
+    expect(await b.session.graphPicker()).toBe(DEFAULT_GRAPH_PICKER);
+    await b.session.idle();
+    expect(parseSettings(a.kv.get(SESSION_KEY))?.graph).toBeUndefined();
+    expect(a.text.data.has(GRAPH_TEXT_KEY)).toBe(false);
+  });
+
+  it('a slow database refills the form without its text, and keeps the save', async () => {
+    const a = reload();
+    a.session.saveGraph(edgePicker);
+    await a.session.idle();
+    const slow: TextStore = { ...a.text, get: () => new Promise(() => {}) };
+    const b = createSession(a.kv, slow, { timeoutMs: 5 });
+    expect(await b.graphPicker()).toEqual({ ...edgePicker, text: '' });
+    expect(parseSettings(a.kv.get(SESSION_KEY))?.graph?.picker.family).toBe('edge-list');
+  });
+
+  it('survives every other save — each one rewrites the record from its parse', async () => {
+    const a = reload();
+    a.session.saveGraph(edgePicker);
+    a.session.saveRun({ ...DEFAULT_PICKER, kind: 'zipfian' }, 0.5);
+    a.session.saveView({ ...DEFAULT_VIEW, signal: 'opcount' });
+    a.session.saveExploreTab('graph');
+    await a.session.idle();
+    const b = reload(a.kv, a.text);
+    expect(await b.session.graphPicker()).toEqual(edgePicker);
+    // And the key run's dropped section (a paste whose text is gone) leaves it alone too.
+    a.session.saveRun(pastePicker(NASTY_CSV), 0.5);
+    await a.session.idle();
+    a.text.data.delete(PASTE_TEXT_KEY);
+    const c = reload(a.kv, a.text);
+    await c.session.firstRun(c.session.initial());
+    expect(parseSettings(a.kv.get(SESSION_KEY))?.run).toBeUndefined();
+    expect(await c.session.graphPicker()).toEqual(edgePicker);
+  });
+
+  it('switching from an edge list to a generated graph deletes the stored edge list', async () => {
+    const a = reload();
+    a.session.saveGraph(edgePicker);
+    a.session.saveGraph({ ...DEFAULT_GRAPH_PICKER, family: 'grid' });
+    await a.session.idle();
+    expect(a.text.data.has(GRAPH_TEXT_KEY)).toBe(false);
+  });
+
+  it('is forgotten with the rest of the session', async () => {
+    const a = reload();
+    a.session.saveGraph(edgePicker);
+    await a.session.clear();
+    expect(a.text.data.has(GRAPH_TEXT_KEY)).toBe(false);
+    const b = reload(a.kv, a.text);
+    expect(b.session.graphInitial()).toBe(DEFAULT_GRAPH_PICKER);
   });
 });
 

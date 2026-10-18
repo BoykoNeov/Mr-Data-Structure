@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BenchEngine } from '../bench/BenchEngine';
+import type { GraphPersistence } from '../persist/useComparePersistence';
 import {
   DEGREE_SWEEP_VERTICES,
   runGraphSweeps,
@@ -10,7 +11,10 @@ import {
 } from '../compare/runGraphSweeps';
 import { GRAPH } from '../registry';
 import { Callout } from './Explain';
-import { GraphChart, graphClassLabel } from './GraphChart';
+import { download, downloadBlob } from './export';
+import { GraphChart, graphClassLabel, graphSeriesLabel } from './GraphChart';
+import { graphSheetCaption, graphToCsv, graphToJson } from './graphExport';
+import { plotCanvasOf, renderSheet, type ChartShot } from './png';
 import type { Signal } from './SweepChart';
 import {
   DEFAULT_GRAPH_PICKER,
@@ -45,7 +49,27 @@ interface GraphCompareSectionProps {
   readonly signal: Signal;
   readonly showTheory: boolean;
   readonly showSpread: boolean;
+  /** The engine version, for the exports' provenance. */
+  readonly version?: string;
+  /** Session persistence for the picker; absent in render tests (then the defaults, nothing saved). */
+  readonly persist?: GraphPersistence;
 }
+
+/** The two charts, in page order — the PNG sheet's contents. */
+const GRAPH_CHARTS = [
+  { name: 'graph-vertices', title: 'Experiment 1 — more points, about the same links per point' },
+  { name: 'graph-degree', title: 'Experiment 2 — the same points, more and more links' },
+] as const;
+
+/**
+ * The export buttons' labels. None may match the browser gate's `^measure the graph$` or
+ * `/run the sweeps/` button locators (`GraphCompareSection.test.ts` checks).
+ */
+export const GRAPH_EXPORT_LABELS = {
+  csv: 'export graph CSV',
+  json: 'export graph JSON',
+  png: 'export graph PNG',
+} as const;
 
 const h3: React.CSSProperties = { fontSize: 16, marginTop: 28, marginBottom: 4 };
 const h4: React.CSSProperties = { fontSize: 15, marginTop: 20, marginBottom: 4 };
@@ -154,12 +178,36 @@ export function SweepBlock({
   );
 }
 
-export function GraphCompareSection({ engineOf, busy, signal, showTheory, showSpread }: GraphCompareSectionProps) {
-  const [picker, setPicker] = useState<GraphPickerState>(DEFAULT_GRAPH_PICKER);
+export function GraphCompareSection({
+  engineOf,
+  busy,
+  signal,
+  showTheory,
+  showSpread,
+  version = '',
+  persist,
+}: GraphCompareSectionProps) {
+  const [picker, setPicker] = useState<GraphPickerState>(persist?.initial ?? DEFAULT_GRAPH_PICKER);
   const [result, setResult] = useState<GraphCompareResult | null>(null);
   const [status, setStatus] = useState('not run yet');
   const [running, setRunning] = useState(false);
   const set = (patch: Partial<GraphPickerState>) => setPicker((s) => ({ ...s, ...patch }));
+  // The PNG export reads the two charts' canvases back out of this subtree.
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // A saved edge list arrives from IndexedDB after the first render. Every edit makes a new
+  // picker object, so "still the initial object" means untouched: never overwrite an edit.
+  // Restoring refills the form only — the graph is still measured only when asked.
+  useEffect(() => {
+    if (!persist) return;
+    let live = true;
+    void persist.restore().then((restored) => {
+      if (live) setPicker((current) => (current === persist.initial ? restored : current));
+    });
+    return () => {
+      live = false;
+    };
+  }, [persist]);
 
   const parsed = useMemo(() => parsePickerEdgeList(picker), [picker]);
 
@@ -169,6 +217,8 @@ export function GraphCompareSection({ engineOf, busy, signal, showTheory, showSp
     setRunning(true);
     try {
       const source = buildGraphSource(picker);
+      // Saved only once the picker built a measurable source, as the key runs save on run.
+      persist?.save(picker);
       await engine.ready();
       setResult(await runGraphSweeps(engine, source, setStatus));
       setStatus('ready');
@@ -187,6 +237,33 @@ export function GraphCompareSection({ engineOf, busy, signal, showTheory, showSp
     () => (result ? [toGraphView(result.degreeSweep.bfs.series, signal), toGraphView(result.degreeSweep.dfs.series, signal)] : []),
     [result, signal],
   );
+
+  const exportData = (kind: 'csv' | 'json') => {
+    if (!result) return;
+    if (kind === 'csv') {
+      download('mr-data-structure-graph.csv', graphToCsv(result), 'text/csv');
+    } else {
+      const meta = { signal, engine: version };
+      download('mr-data-structure-graph.json', graphToJson(result, { vertices: vViews, degree: dViews }, meta), 'application/json');
+    }
+  };
+
+  const exportPng = () => {
+    const root = rootRef.current;
+    if (!root || !result) return;
+    const views = [vViews, dViews];
+    const shots: ChartShot[] = [];
+    GRAPH_CHARTS.forEach((c, i) => {
+      const canvas = plotCanvasOf(root.querySelector<HTMLElement>(`[data-chart="${c.name}"]`));
+      if (canvas) {
+        shots.push({ title: c.title, canvas, legend: views[i].map((v) => ({ text: graphSeriesLabel(v), color: v.color })) });
+      }
+    });
+    if (shots.length === 0) return;
+    renderSheet(shots, graphSheetCaption(result, { signal, version })).toBlob((blob) => {
+      if (blob) downloadBlob('mr-data-structure-graph.png', blob);
+    });
+  };
 
   const onFile = (file: File | undefined) => {
     if (!file) return;
@@ -303,29 +380,43 @@ export function GraphCompareSection({ engineOf, busy, signal, showTheory, showSp
       </div>
 
       {result && vViews.length === 2 && dViews.length === 2 && (
-        <>
+        <div ref={rootRef}>
+          <p style={{ ...small, margin: '12px 0 0' }}>
+            Save this graph run:{' '}
+            <button onClick={() => exportData('csv')} style={{ fontSize: 12 }}>{GRAPH_EXPORT_LABELS.csv}</button>{' '}
+            <button onClick={() => exportData('json')} style={{ fontSize: 12 }}>{GRAPH_EXPORT_LABELS.json}</button>{' '}
+            <button
+              onClick={exportPng}
+              style={{ fontSize: 12 }}
+              title="both graph charts, stacked into one image with their legends, the identity checks and the memory caveat"
+            >
+              {GRAPH_EXPORT_LABELS.png}
+            </button>{' '}
+            — separate from the key runs’ exports above, because a graph point is a different thing: a whole
+            traversal, plotted at the vertices + 2 × edges it reached.
+          </p>
           <SweepBlock
-            title="Experiment 1 — more points, about the same links per point"
+            title={GRAPH_CHARTS[0].title}
             result={result.vertexSweep}
             views={vViews}
-            name="graph-vertices"
+            name={GRAPH_CHARTS[0].name}
             signal={signal}
             showTheory={showTheory}
             showSpread={showSpread}
           />
           <VertexSweepNote />
           <SweepBlock
-            title="Experiment 2 — the same points, more and more links"
+            title={GRAPH_CHARTS[1].title}
             result={result.degreeSweep}
             views={dViews}
-            name="graph-degree"
+            name={GRAPH_CHARTS[1].name}
             signal={signal}
             showTheory={showTheory}
             showSpread={showSpread}
           />
           <DegreeSweepNote />
           <WallClockCaveat />
-        </>
+        </div>
       )}
     </>
   );

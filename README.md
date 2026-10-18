@@ -131,7 +131,15 @@ default page measuring exactly what it did:
 - a **stored-size x-axis**, refitting every chart on how many keys each structure kept;
 - and the text-key animations above.
 
-Still open: the graph in the exports, and performance polish. The
+The graph section now **exports on its own** — CSV, JSON and a PNG whose caption always carries
+the warning that its wall-clock lines bend with memory, not with the walk — and remembers its
+picker, pasted edge list included, without ever running on load. The B-tree's "fewer hops, which
+the count cannot see" caveat now travels on the key charts' PNG, and the stored-size x-axis
+choice is remembered with the other chart settings (the miss form, like the load factor, is not:
+a reload always measures the calibrated default).
+
+Still open: a reload pass for saved sessions in the browser check, the mid-range misses' own
+tolerances, and performance polish. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
