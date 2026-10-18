@@ -23,8 +23,9 @@ import { plotCanvasOf, renderSheet, type ChartShot } from './png';
 import { DllChurnCaveat, DllSearchNote, dllSheetNote } from './DoublyListNotes';
 import { GraphCompareSection } from './GraphCompareSection';
 import { MaxOpSection } from './MaxOpSection';
-import { describeMix, type ProbeMix } from '../bench/probeMix';
+import { DEFAULT_MISS_FORM, describeMix, type MissForm, type ProbeMix } from '../bench/probeMix';
 import { ProbeMixControl, mixNotes, shareWord } from './ProbeMixControl';
+import { MissFormControl, missFormField, missFormNotes } from './MissFormControl';
 import { storedSizeNotes } from './storedSize';
 import { CHAINING_MAX_LOAD, DEFAULT_OA_MAX_LOAD, isDefaultOaLoad, oaLoadReach } from '../bench/oaLoad';
 import { OaLoadControl, OaLoadNote, describeOaLoad, oaLoadSheetNote } from './HashOaNotes';
@@ -83,18 +84,22 @@ export function CompareSection() {
   // persisted: the mount-time run is always the like-for-like 0.75 one. The notes key on
   // `result.oaMaxLoad`, what the charts on screen were measured at.
   const [oaMaxLoad, setOaMaxLoad] = useState(DEFAULT_OA_MAX_LOAD);
+  // Where the numeric misses sit for the next run (docs/PLAN.md §13). Not persisted: a reload,
+  // and so the mount-time auto-run, always measures the calibrated `max + 1 …` form.
+  const [missForm, setMissForm] = useState<MissForm>(DEFAULT_MISS_FORM);
 
   const run = async (d: Dataset, mixOverride?: ProbeMix) => {
     const engine = engineRef.current;
     if (!engine) return;
     setBusy(true);
     setDataset(d);
-    const mix = mixOverride ?? { presentFraction };
+    const mix = mixOverride ?? { presentFraction, ...missFormField(missForm) };
     try {
       await engine.ready();
       if (d.keyType === 'string') {
         setResult(null);
-        setStringResult(await runStringSweeps(engine, d, setStatus, undefined, mix));
+        // Text probes have no miss form, so a text run's summary must not claim one.
+        setStringResult(await runStringSweeps(engine, d, setStatus, undefined, { presentFraction: mix.presentFraction }));
       } else {
         setStringResult(null);
         setResult(await runAllSweeps(engine, d, setStatus, undefined, mix, oaMaxLoad));
@@ -250,7 +255,11 @@ export function CompareSection() {
     }
     const dllNote = dllSheetNote(churn.map((v) => v.series.structure));
     if (dllNote) notes.push(dllNote);
-    const bstNote = bstSheetNote(search.map((v) => v.series.structure), result?.probeMix.presentFraction);
+    const bstNote = bstSheetNote(
+      search.map((v) => v.series.structure),
+      result?.probeMix.presentFraction,
+      result?.probeMix.missForm,
+    );
     if (bstNote) notes.push(bstNote);
     // Only while the light-blue line is on a chart being exported.
     if (chartsOnScreen.some((c) => c.views.some((v) => v.series.structure === 'hashoa'))) {
@@ -279,6 +288,7 @@ export function CompareSection() {
     // A non-default probe mix and a structure that dropped repeated keys both change what a
     // reader should conclude from the picture, and the boxes saying so stay on the page.
     if (ranMixSummary) notes.push(...mixNotes(ranMixSummary, stringResult ? 'string' : 'number'));
+    notes.push(...missFormNotes(ranMixSummary));
     notes.push(...storedSizeNotes(chartsOnScreen.flatMap((c) => c.views)));
     return notes;
   };
@@ -345,7 +355,9 @@ export function CompareSection() {
       // Says which size the x-axis is, now that a point can carry both (./storedSize).
       nAxis: 'n = input keys in the prefix; points[].storedN = keys the structure held (its len())',
     };
-    if (kind === 'csv') download('mr-data-structure-sweep.csv', toCsv(views), 'text/csv');
+    // A CSV has no meta block, so a non-default miss form rides on its rows (./export).
+    const csvRun: Record<string, string> = ranMixSummary?.missForm === 'midRange' ? { search_misses: 'mid-range' } : {};
+    if (kind === 'csv') download('mr-data-structure-sweep.csv', toCsv(views, csvRun), 'text/csv');
     else download('mr-data-structure-sweep.json', toJson(views, meta), 'application/json');
   };
 
@@ -382,6 +394,7 @@ export function CompareSection() {
       />
       {/* After the picker on purpose: see ProbeMixControl's note on the gate's select lookup. */}
       <ProbeMixControl value={presentFraction} onChange={setPresentFraction} disabled={busy} />
+      <MissFormControl value={missForm} onChange={setMissForm} disabled={busy} textRun={stringResult !== null} />
       <OaLoadControl value={oaMaxLoad} onChange={setOaMaxLoad} disabled={busy} />
 
       <ChartGuide />
@@ -471,7 +484,14 @@ export function CompareSection() {
             (<strong>O(1)</strong>). On the wall clock the order can flip, because stepping along one array is
             kinder to the memory cache than following a chain (docs/METHODOLOGY.md §2.8).{' '}
             {/* Only true while the run asked absent keys at all — a hits-only run has none. */}
-            {(ranMixSummary?.absent ?? 64) > 0 && (
+            {(ranMixSummary?.absent ?? 64) > 0 && ranMixSummary?.missForm === 'midRange' && (
+              <>
+            <em>The olive line’s misses are honest here:</em> this run put every missing key between two
+            stored keys, so the skip list fails a comparison on each lane on the way down, just as the sorted
+            array runs its full binary search — where the misses sit no longer pushes these two lines apart.{' '}
+              </>
+            )}
+            {(ranMixSummary?.absent ?? 64) > 0 && ranMixSummary?.missForm !== 'midRange' && (
               <>
             <em>Read the olive line’s height with one
             allowance:</em> {shareWord(1 - (ranMixSummary?.presentFraction ?? 0.5))} of every structure’s query load here is keys just past the largest stored
@@ -492,12 +512,16 @@ export function CompareSection() {
             twin, the machine (cache, memory traffic) or the data is doing something the textbook doesn’t say.
           </Callout>
           {search.some((v) => v.series.structure === 'dll') && <DllSearchNote />}
-          <BTreeSearchNote present={search.some((v) => v.series.structure === 'btree')} />
+          <BTreeSearchNote
+            present={search.some((v) => v.series.structure === 'btree')}
+            midRangeMisses={result.probeMix.missForm === 'midRange'}
+          />
           <BstSearchNote
             present={search.some((v) => v.series.structure === 'bst')}
             sorted={sortedNote}
             reverse={reverse}
             presentFraction={result.probeMix.presentFraction}
+            missForm={result.probeMix.missForm}
           />
           {search.some((v) => v.series.structure === 'hashoa') && (
             <OaLoadNote maxLoad={ranOaLoad} reach={oaReach} chart="search" />

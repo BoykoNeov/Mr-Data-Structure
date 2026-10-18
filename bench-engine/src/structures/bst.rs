@@ -712,6 +712,37 @@ mod tests {
         }
     }
 
+    /// The opt-in **mid-range** miss form (`midRangeAbsent` in `src/bench/probeMix.ts`) closes
+    /// the blind spot above: a miss strictly between two stored keys has to descend to the gap
+    /// where it would sit. On the reverse-sorted left chain `n−1 → … → 0`, the miss `j + ½`
+    /// compares against `n−1, …, j+1` (each sends it left) and then `j` (sends it right, to a
+    /// null): exactly `n − j` comparisons. Spread evenly over the gaps by rank — the TS
+    /// builder's rule — the mean is ≈ n/2, so a misses-only run keeps the O(n) class.
+    #[test]
+    fn mid_range_misses_walk_the_whole_left_chain() {
+        for n in [10usize, 100, 1_000, 10_000] {
+            let keys: Vec<f64> = (0..n).rev().map(|i| i as f64).collect(); // reverse-sorted
+            let mut t = BstF64::new(&keys, n);
+            let gaps = n - 1;
+            let count = 64usize;
+            // Probe i in gap ⌊(2i + 1)·G / 2·count⌋; several share a gap when count > G (n = 10).
+            let gap_of: Vec<usize> = (0..count).map(|i| ((2 * i + 1) * gaps) / (2 * count)).collect();
+            let misses: Vec<f64> = gap_of
+                .iter()
+                .enumerate()
+                .map(|(i, &g)| {
+                    let run = gap_of.iter().filter(|&&h| h == g).count();
+                    let j = gap_of[..i].iter().filter(|&&h| h == g).count() + 1;
+                    g as f64 + j as f64 / (run + 1) as f64
+                })
+                .collect();
+            t.set_probes(&misses);
+            let want: usize = gap_of.iter().map(|&g| n - g).sum();
+            assert_eq!(t.search_counted(), want as f64, "n = {n}: a miss in gap j costs n − j");
+            assert!(t.search_counted() / 64.0 > n as f64 / 2.5, "n = {n}: mid-range misses walk the chain");
+        }
+    }
+
     #[test]
     fn churn_holds_size_and_averages_the_two_spine_round_trips() {
         // Chain 10→20→30 (a *right* chain). hi = 99 (> max) descends the right spine:

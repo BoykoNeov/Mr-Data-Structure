@@ -11,7 +11,14 @@ import { Callout } from './Explain';
  * the op-count axis counts. So any gap between it and its neighbours on the wall clock is
  * the machine, and no gap on the op-count signal is the expected result, not a failure.
  */
-export function BTreeSearchNote({ present }: { readonly present: boolean }) {
+export function BTreeSearchNote({
+  present,
+  midRangeMisses = false,
+}: {
+  readonly present: boolean;
+  /** The run's misses sat between stored keys (docs/PLAN.md §13): no "just past the largest" queries to name. */
+  readonly midRangeMisses?: boolean;
+}) {
   if (!present) return null;
   return (
     <Callout title="The B-tree (pale purple): same comparisons, fewer hops" tone="caveat">
@@ -24,9 +31,15 @@ export function BTreeSearchNote({ present }: { readonly present: boolean }) {
       one on <em>wall-clock</em>, that gap is this machine’s memory doing it, not extra work. If it does
       not, that is a result too: at these sizes everything may already fit in cache. Every B-tree search
       walks all the way to a leaf, so a key that is missing costs within one comparison of one that is
-      found, and
+      found, and{' '}
+      {midRangeMisses ? (
+        <>this run’s misses, which sit between stored keys, cost it about what a found key does (docs/METHODOLOGY.md §2.10).</>
+      ) : (
+        <>
       the shared workload’s many “just past the largest key” queries do not flatter this line the way
       they flatter the skip list’s (docs/METHODOLOGY.md §2.10).
+        </>
+      )}
     </Callout>
   );
 }

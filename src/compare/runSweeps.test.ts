@@ -363,6 +363,21 @@ describe('probe mix and stored size (docs/PLAN.md §6.3, §13)', () => {
     expect(s.probeMix).toMatchObject({ present: 0, absent: 128, atN: 500 });
   });
 
+  it('forwards the opt-in mid-range miss form, and reports it only where it was measured', async () => {
+    // The summary is built from the caller's mix, so the engine must receive the very same
+    // field — or every export would name a form the worker never measured (docs/PLAN.md §13).
+    const { engine, seen } = mixSpy();
+    const win: Record<string, unknown> = {};
+    const mix = { presentFraction: 0, missForm: 'midRange' as const };
+    const r = await runAllSweeps(engine, generateUniform(5_000, 0, 5_000, true, 1), undefined, win, mix);
+    expect(seen).toEqual([mix]);
+    expect(r.probeMix).toEqual({ presentFraction: 0, present: 0, absent: 128, atN: 5_000, missForm: 'midRange' });
+    expect((win.__compareMeta as { probeMix: unknown }).probeMix).toEqual(r.probeMix);
+    // A text run has no miss form: whatever the caller sent, its summary does not claim one.
+    const s = await runStringSweeps(engine, generateStringCorpus(500), undefined, {}, mix);
+    expect('missForm' in s.probeMix).toBe(false);
+  });
+
   it('carries the stored size at the top of the sweep into the gate proof', () => {
     const s = series('hashset', 'search', [10, 1000], () => 3);
     const deduped = { ...s, points: s.points.map((p) => ({ ...p, storedN: Math.round(p.n * 0.63) })) };

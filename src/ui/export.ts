@@ -24,8 +24,17 @@ import type { SeriesView } from './SweepChart';
 export const CSV_HEADER =
   'structure,op,n,nanos_per_op,min_nanos,max_nanos,stddev_nanos,op_count,batch,reps,stored_n,max_load';
 
-export function toCsv(views: readonly SeriesView[]): string {
-  const rows = [CSV_HEADER];
+/**
+ * `runColumns` are run-level provenance columns — the same value on every row — appended
+ * after {@link CSV_HEADER}'s, and only when given, so a run that has none exports exactly the
+ * bytes it always did. Today the one user is the opt-in mid-range miss form
+ * (`search_misses`, docs/PLAN.md §13): a CSV row carries no meta block, so the form has to
+ * ride on the rows or it does not leave the page.
+ */
+export function toCsv(views: readonly SeriesView[], runColumns: Readonly<Record<string, string>> = {}): string {
+  const extraNames = Object.keys(runColumns);
+  const extra = extraNames.map((k) => runColumns[k]);
+  const rows = [[CSV_HEADER, ...extraNames].join(',')];
   for (const v of views) {
     for (const p of v.series.points) {
       rows.push(
@@ -42,6 +51,7 @@ export function toCsv(views: readonly SeriesView[]): string {
           p.reps,
           p.storedN ?? '',
           v.series.maxLoad ?? '',
+          ...extra,
         ].join(','),
       );
     }

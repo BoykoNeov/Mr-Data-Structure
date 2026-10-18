@@ -73,7 +73,8 @@ type SearchStructCtor = new (keys: Float64Array, n: number) => SearchStruct;
 /**
  * A measurement runner factory backed by a WASM structure, for `search`. The query workload
  * for size `n` — a spread of present keys plus a block guaranteed absent just past the max
- * key — is built by `buildNumericProbes` (./probeMix) at the run's `mix`. Its default is the
+ * key (or, opt-in via `mix.missForm`, between stored keys) — is built by `buildNumericProbes`
+ * (./probeMix) at the run's `mix`. Its default is the
  * calibrated 64 + 64 workload (docs/PLAN.md §6.3), which keeps the array's linear-search
  * cost a clean function of `n` while the hash set stays flat.
  *
