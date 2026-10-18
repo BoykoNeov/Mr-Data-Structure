@@ -775,6 +775,23 @@ mod tests {
         );
     }
 
+    /// Some corpus delete must move a **whole run** back — at least two keys — or the corpus
+    /// would pin only the trivial shifts and a twin that moved one key and stopped would pass.
+    #[test]
+    fn a_corpus_delete_shifts_a_whole_run() {
+        let c = corpus::cases().into_iter().find(|c| c.name == "cluster").unwrap();
+        let mut s = HashSetBsF64::new(&c.keys, c.keys.len());
+        let before = s.slots();
+        let (removed, _, shift) = s.delete_one_split(c.deletes[0]);
+        assert!(removed);
+        let after = s.slots();
+        let moved = (0..before.len())
+            .filter(|&i| after[i].is_some() && after[i] != before[i])
+            .count();
+        assert!(moved >= 2, "the head's delete must shift several keys: {before:?} → {after:?}");
+        assert_eq!(shift, 2 * moved as u64, "every key scanned moved, each a probe + a hash");
+    }
+
     /// The `threshold` corpus case's churn really doubles the table in the settle.
     #[test]
     fn the_threshold_corpus_case_doubles_in_the_settle() {
@@ -838,12 +855,6 @@ pub(crate) mod corpus {
 
     pub(crate) fn cases() -> Vec<Case> {
         let zero_to_thirty: Vec<f64> = (0..=30).map(|i| i as f64).collect();
-        // The tombstone corpus's cluster: five keys sharing home slot 3 of 8 and one homed at
-        // 4, displaced by the run — here deleting the run's head shifts four keys back.
-        let homed_three = keys_homed_at(3, 8, 6);
-        let mut cluster = homed_three[..5].to_vec();
-        cluster.push(keys_homed_at(4, 8, 1)[0]);
-        let late_three = homed_three[5];
         // Three keys homed at the last slot of 8 and one homed at slot 0: the run wraps from
         // slot 7 into slots 0, 1, 2, and deleting the key in slot 7 must pull slot 0's back.
         vec![
@@ -889,14 +900,7 @@ pub(crate) mod corpus {
                 deletes: vec![0.5, -1.0],
                 reinserts: vec![-1.0, 4.5],
             },
-            Case {
-                // Delete the run's head, then a middle key: each shift pulls the rest back.
-                name: "cluster",
-                probes: cluster.iter().copied().chain([late_three, 1000.0]).collect(),
-                deletes: vec![cluster[0], cluster[2]],
-                reinserts: vec![late_three, cluster[2]],
-                keys: cluster,
-            },
+            cluster_case(),
             wrap_case(),
             Case {
                 // Six keys in eight slots: exactly at the threshold, so the churn insert (the
@@ -916,6 +920,32 @@ pub(crate) mod corpus {
                 reinserts: vec![150.0, 151.0],
             },
         ]
+    }
+
+    /// The tombstone corpus's cluster keys: five sharing home slot 3 of 8 and one homed at 4,
+    /// displaced by the run (here all the way round the wrap, into slot 0). The deletes are
+    /// *read off the built layout*, since the rehash's re-placement order decides who sits
+    /// where: first the run's head in slot 3 — its shift scan pulls every other key in the
+    /// run back one slot, across the wrap (`tests::a_corpus_delete_shifts_a_whole_run`) — then
+    /// whichever key is left in the middle of the run. Six keys in eight slots also put this
+    /// case exactly at the load threshold, so its churn doubles the table in the settle pass
+    /// (its `hbs_shape_churn` reads 16 slots), as the `threshold` case's does.
+    fn cluster_case() -> Case {
+        let homed_three = keys_homed_at(3, 8, 6);
+        let mut keys = homed_three[..5].to_vec();
+        keys.push(keys_homed_at(4, 8, 1)[0]);
+        let late_three = homed_three[5];
+        let mut m = HashSetBsF64::new(&keys, keys.len());
+        let head = m.slots()[3].expect("the run starts at its home slot");
+        m.delete_one_counted(head);
+        let middle = m.slots()[5].expect("the shifted run still covers slot 5");
+        Case {
+            name: "cluster",
+            probes: keys.iter().copied().chain([late_three, 1000.0]).collect(),
+            deletes: vec![head, middle],
+            reinserts: vec![late_three, middle],
+            keys,
+        }
     }
 
     /// Three keys homed at the last slot of 8 and one homed at slot 0: the run wraps from

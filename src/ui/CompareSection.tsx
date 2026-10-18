@@ -448,8 +448,9 @@ export function CompareSection() {
             kinder to the memory cache than following a chain (docs/METHODOLOGY.md §2.8).{' '}
             If you can’t find the indigo line, it is under the light-blue one: it is a <em>third</em> hash
             set, the same table built the same way, which only deletes differently — so with nothing deleted,
-            a lookup takes exactly the same steps in both. Counted in steps the two lines are one; on the
-            wall clock any gap is timing noise. The add/remove chart below is where they part.{' '}
+            a lookup takes exactly the same steps in both. Counted in steps the two lines are one. On the
+            wall clock they can sit a little apart, but whatever the gap is, it is not the way they delete,
+            because this chart deletes nothing. The add/remove chart below is where they part.{' '}
             {/* Only true while the run asked absent keys at all — a hits-only run has none. */}
             {(ranMixSummary?.absent ?? 64) > 0 && (
               <>
@@ -519,11 +520,12 @@ export function CompareSection() {
             keys leave behind, which join neighbouring runs together (docs/METHODOLOGY.md §2.8).{' '}
             The indigo line is the same table with the markers taken out: a removed key’s neighbours are
             slid back to close the gap, so nothing is left behind and every add-and-remove puts the table
-            back exactly as it was. Expect it near the light-blue line, not far below it. Sliding the
-            neighbours back walks the very stretch of table that a marker would have made the next add
-            walk — the work moves from the next add into the remove, it does not disappear. What does
-            disappear is the light-blue line’s disagreement with its own cross-check below: with no markers,
-            the add-and-remove cost and the sum of the separate add and remove costs agree.{' '}
+            back exactly as it was. Counted in steps, expect it near the light-blue line, not far below it.
+            Sliding the neighbours back walks the very stretch of table that a marker would have made the next
+            add walk — the work moves from the next add into the remove, it does not disappear. What does
+            disappear, in the step counts the engine’s own tests check, is the light-blue line’s disagreement
+            with its cross-check: with no markers, the add-and-remove cost and the sum of the separate add and
+            remove costs agree (the wall-clock split below is too noisy to show a gap that small).{' '}
             {sortedNote ? (
               <>
                 <strong>This dataset is sorted</strong>, so the naive BST built into a chain and its dashed
