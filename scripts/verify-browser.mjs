@@ -51,10 +51,14 @@ try {
   // sweeps (the last one runs after the heap's but publishes before it) — or until the app
   // reports an error. Generous timeout: the sweeps do real timed work, and there are thirteen
   // search series and a mutation sweep per structure family.
+  // waitForFunction(fn, arg, options): every wait here passes `null` as the arg. Without it the
+  // options object *is* the arg, the timeout is ignored, and Playwright's 30 s default applies —
+  // which held only while each run happened to finish inside 30 s.
   await page.waitForFunction(
     () =>
       window.__heapMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
+    null,
     { timeout: 120000 },
   );
   text = await page.evaluate(() => document.body.innerText);
@@ -731,6 +735,7 @@ try {
     () =>
       window.__heapMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
+    null,
     { timeout: 150000 },
   );
   revSearch = await page.evaluate(() => window.__sweepProof ?? null);
@@ -876,6 +881,7 @@ try {
     () =>
       window.__stringMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
+    null,
     { timeout: 150000 },
   );
   strSearch = await page.evaluate(() => window.__stringSweepProof ?? null);
@@ -1033,6 +1039,7 @@ try {
   await page.getByRole('button', { name: /^measure the graph$/i }).click();
   await page.waitForFunction(
     () => window.__graphProof !== undefined || /graph status:\s*error/.test(document.body.innerText),
+    null,
     { timeout: 120000 },
   );
   graphProof = await page.evaluate(() => window.__graphProof ?? null);
@@ -1103,6 +1110,7 @@ try {
     () =>
       window.__heapMutationProof !== undefined ||
       /status:\s*error/.test(document.body.innerText),
+    null,
     { timeout: 150000 },
   );
   const midSearch = await page.evaluate(() => window.__sweepProof ?? null);
