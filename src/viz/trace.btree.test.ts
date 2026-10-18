@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import corpusText from '../../conformance/corpus-btree.txt?raw';
 import { BTreeF64, type BTreeEvents } from '../structures/btree';
 import { countCostEvents, type BTreeEvent } from './events';
-import { btreeModel, foldBTree, btreeLevelsOf, type BTreeModel } from './model';
+import { btreeModel, foldBTree, reduceBTree, btreeLevelsOf, btreeShapeOf, btreeNodeAtPath, type BTreeModel } from './model';
 import { BTREE_SEED, BTREE_EXPLORE_T } from './VizPanel';
 
 /**
@@ -102,6 +102,8 @@ function traced(b: BTreeF64) {
       expect(events.filter(STRUCTURAL[k]).length).toBe(after[k] - before[k]);
     }
     model = foldBTree(model, events);
+    // parentage too, not just the level listing: which child hangs from which node
+    expect(btreeShapeOf(model)).toEqual(b.snapshot());
     return { r, events };
   };
   return { run, drawn: () => fmt(model), model: () => model };
@@ -233,16 +235,28 @@ describe('B-tree: a long random stream folds op by op and reaches every structur
       for (const [j, e] of events.entries()) {
         // a root split is the split right after the new root grows above the full one
         if (e.kind === 'btree.split') seen.add(events[j - 1]?.kind === 'btree.growRoot' ? 'rootSplit' : 'split');
-        if (e.kind === 'btree.borrow') seen.add(`borrow-${e.from}`);
-        if (e.kind === 'btree.merge') seen.add(`merge-${e.side}`);
+        // an internal repair moves child pointers — the case a level listing cannot check
+        const internal = (path: readonly number[]) => (btreeNodeAtPath(model, path)?.kids ?? null) !== null;
+        if (e.kind === 'btree.borrow') {
+          seen.add(`borrow-${e.from}`);
+          if (internal([...e.path, e.child])) seen.add('borrow-internal');
+        }
+        if (e.kind === 'btree.merge') {
+          seen.add(`merge-${e.side}`);
+          if (internal([...e.path, e.index])) seen.add('merge-internal');
+        }
+        model = reduceBTree(model, e);
       }
-      model = foldBTree(model, events);
       if (events.some((e) => e.kind === 'btree.collapseRoot')) seen.add(model.root === null ? 'collapseEmpty' : 'collapseChild');
       expect(btreeLevelsOf(model)).toEqual(b.levels());
+      expect(btreeShapeOf(model)).toEqual(b.snapshot());
       if (b.keysInOrder().length !== new Set(b.keysInOrder()).size) seen.add('duplicates');
     }
     expect([...seen].sort()).toEqual(
-      ['borrow-left', 'borrow-right', 'collapseChild', 'collapseEmpty', 'duplicates', 'merge-left', 'merge-right', 'predecessor', 'rootSplit', 'split'],
+      [
+        'borrow-internal', 'borrow-left', 'borrow-right', 'collapseChild', 'collapseEmpty', 'duplicates',
+        'merge-internal', 'merge-left', 'merge-right', 'predecessor', 'rootSplit', 'split',
+      ],
     );
   });
 });

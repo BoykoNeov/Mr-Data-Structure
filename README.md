@@ -104,7 +104,8 @@ calibrated 50/50, reproduced exactly), and a structure that keeps one copy of ea
 key says how many it actually held beside the input size — on the chart, in the exports
 and in the PNG. And your **session is remembered in this browser**: your last run's
 dataset — pasted data included — and chart settings come back on reload, while results are
-always re-measured, never restored. Every structure now has its own animation. Still open: the
+always re-measured, never restored. The last three missing animations are done (only the string-key array and hash set, the
+number-key versions' algorithms run on text, have no tab of their own). Still open: the
 graph in the exports, and performance polish. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles

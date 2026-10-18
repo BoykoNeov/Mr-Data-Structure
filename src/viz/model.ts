@@ -673,6 +673,15 @@ export function btreeLevelsOf(m: BTreeModel): number[][][] {
   return out;
 }
 
+/** The model as the twin's nested {@link BTreeShape}, ids stripped. Unlike
+ * {@link btreeLevelsOf} it keeps **parentage** — which child hangs from which node — the one
+ * thing a level listing cannot show, and exactly what an internal borrow, a split's child
+ * boundary and a merge's child concatenation change. */
+export function btreeShapeOf(m: BTreeModel): BTreeShape | null {
+  const walk = (n: BTreeDisplayNode): BTreeShape => ({ keys: [...n.keys], kids: n.kids === null ? null : n.kids.map(walk) });
+  return m.root === null ? null : walk(m.root);
+}
+
 /** Replace the node at child-index `path` with `edit(node)`, path-copying the spine. */
 function editBTree(
   node: BTreeDisplayNode,
