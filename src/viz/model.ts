@@ -15,10 +15,11 @@
 
 import type {
   ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
-  TrieEvent, SkipListEvent, GraphEvent, GraphAlgo, RbtEvent,
+  TrieEvent, SkipListEvent, GraphEvent, GraphAlgo, RbtEvent, BTreeEvent,
 } from './events';
 import type { BstShape } from '../structures/bst';
 import type { RbtShape } from '../structures/rbt';
+import type { BTreeShape } from '../structures/btree';
 import type { DoublyShape } from '../structures/linkedList';
 import type { TrieShape } from '../structures/trie';
 
@@ -629,6 +630,161 @@ export function rbtRedRedIds(m: RbtModel): ReadonlySet<number> {
   };
   walk(m.root, false);
   return out;
+}
+
+// ── B-tree (docs/PLAN.md §8, "Trees / heaps"; docs/METHODOLOGY.md §2.10) ─────
+// Wide nodes addressed by child-index path. Each node keeps a stable id so a split, a
+// borrow or a merge animates. Identity follows the twin's own objects: a split's left half
+// keeps the full node's id and the right half is new (a root split also adds the grown
+// root); a merge keeps the left child and drops the right; a root collapse drops the
+// root. The fold is checked against the twin's `levels()` after every op (`model.test.ts`)
+// and against the corpus's `btree_levels` lines (`trace.btree.test.ts`).
+
+/** A drawn B-tree node: its keys in order and its children (`null` for a leaf). */
+export interface BTreeDisplayNode {
+  readonly id: number;
+  readonly keys: readonly number[];
+  readonly kids: readonly BTreeDisplayNode[] | null;
+}
+
+export interface BTreeModel {
+  readonly root: BTreeDisplayNode | null;
+  readonly nextId: number;
+}
+
+/** Build the model from the twin's nested snapshot (pre-order ids). */
+export function btreeModel(shape: BTreeShape | null): BTreeModel {
+  let id = 0;
+  const walk = (s: BTreeShape): BTreeDisplayNode => {
+    const self = id++;
+    return { id: self, keys: [...s.keys], kids: s.kids === null ? null : s.kids.map(walk) };
+  };
+  return { root: shape === null ? null : walk(shape), nextId: id };
+}
+
+/** The model level by level, root first — the twin's `levels()` notation. */
+export function btreeLevelsOf(m: BTreeModel): number[][][] {
+  const out: number[][][] = [];
+  let cur: BTreeDisplayNode[] = m.root === null ? [] : [m.root];
+  while (cur.length > 0) {
+    out.push(cur.map((n) => [...n.keys]));
+    cur = cur.flatMap((n) => (n.kids === null ? [] : [...n.kids]));
+  }
+  return out;
+}
+
+/** Replace the node at child-index `path` with `edit(node)`, path-copying the spine. */
+function editBTree(
+  node: BTreeDisplayNode,
+  path: readonly number[],
+  edit: (target: BTreeDisplayNode) => BTreeDisplayNode,
+): BTreeDisplayNode {
+  if (path.length === 0) return edit(node);
+  const [i, ...rest] = path;
+  if (node.kids === null || node.kids[i] === undefined) return node; // invalid path
+  const kids = node.kids.slice();
+  kids[i] = editBTree(kids[i], rest, edit);
+  return { ...node, kids };
+}
+
+/** Resolve a child-index path to the drawn node there, or `undefined`. */
+export function btreeNodeAtPath(m: BTreeModel, path: readonly number[]): BTreeDisplayNode | undefined {
+  let cur = m.root;
+  for (const i of path) {
+    if (cur === null || cur.kids === null) return undefined;
+    cur = cur.kids[i] ?? null;
+  }
+  return cur ?? undefined;
+}
+
+const spliced = <T,>(xs: readonly T[], at: number, del: number, ...add: T[]): T[] => {
+  const out = xs.slice();
+  out.splice(at, del, ...add);
+  return out;
+};
+
+/** Fold one B-tree event. The structural events mirror the twin's own array surgery
+ * exactly (`splitChild`, the two borrows, `merge`, the root grow / collapse, key placement
+ * and the predecessor swap); probes / descends / the equality check / the median compare /
+ * the result are highlight-only. */
+export function reduceBTree(m: BTreeModel, e: BTreeEvent): BTreeModel {
+  const root = m.root;
+  switch (e.kind) {
+    case 'btree.growRoot':
+      return { root: { id: m.nextId, keys: [], kids: root === null ? [] : [root] }, nextId: m.nextId + 1 };
+    case 'btree.split': {
+      if (root === null) return m;
+      const t = e.t;
+      const rightId = m.nextId;
+      const next = editBTree(root, e.path, (p) => {
+        const y = p.kids![e.index];
+        const left: BTreeDisplayNode = { ...y, keys: y.keys.slice(0, t - 1), kids: y.kids === null ? null : y.kids.slice(0, t) };
+        const right: BTreeDisplayNode = { id: rightId, keys: y.keys.slice(t), kids: y.kids === null ? null : y.kids.slice(t) };
+        return { ...p, keys: spliced(p.keys, e.index, 0, y.keys[t - 1]), kids: spliced(p.kids!, e.index, 1, left, right) };
+      });
+      return { root: next, nextId: m.nextId + 1 };
+    }
+    case 'btree.insertKey':
+      if (root === null) return { root: { id: m.nextId, keys: [e.value], kids: null }, nextId: m.nextId + 1 };
+      return { root: editBTree(root, e.path, (n) => ({ ...n, keys: spliced(n.keys, e.index, 0, e.value) })), nextId: m.nextId };
+    case 'btree.removeKey':
+      if (root === null) return m;
+      return { root: editBTree(root, e.path, (n) => ({ ...n, keys: spliced(n.keys, e.index, 1) })), nextId: m.nextId };
+    case 'btree.replaceWithPred': {
+      if (root === null) return m;
+      const swapped = editBTree(root, e.path, (n) => ({ ...n, keys: spliced(n.keys, e.index, 1, e.value) }));
+      return { root: editBTree(swapped, e.leafPath, (n) => ({ ...n, keys: n.keys.slice(0, -1) })), nextId: m.nextId };
+    }
+    case 'btree.borrow': {
+      if (root === null) return m;
+      const c = e.child;
+      const next = editBTree(root, e.path, (p) => {
+        const kids = p.kids!.slice();
+        const keys = p.keys.slice();
+        const n = kids[c];
+        if (e.from === 'left') {
+          const l = kids[c - 1];
+          kids[c] = {
+            ...n,
+            keys: [keys[c - 1], ...n.keys],
+            kids: n.kids === null ? null : [l.kids![l.kids!.length - 1], ...n.kids],
+          };
+          keys[c - 1] = l.keys[l.keys.length - 1];
+          kids[c - 1] = { ...l, keys: l.keys.slice(0, -1), kids: l.kids === null ? null : l.kids.slice(0, -1) };
+        } else {
+          const r = kids[c + 1];
+          kids[c] = { ...n, keys: [...n.keys, keys[c]], kids: n.kids === null ? null : [...n.kids, r.kids![0]] };
+          keys[c] = r.keys[0];
+          kids[c + 1] = { ...r, keys: r.keys.slice(1), kids: r.kids === null ? null : r.kids.slice(1) };
+        }
+        return { ...p, keys, kids };
+      });
+      return { root: next, nextId: m.nextId };
+    }
+    case 'btree.merge': {
+      if (root === null) return m;
+      const i = e.index;
+      const next = editBTree(root, e.path, (p) => {
+        const a = p.kids![i];
+        const b = p.kids![i + 1];
+        const merged: BTreeDisplayNode = {
+          ...a,
+          keys: [...a.keys, p.keys[i], ...b.keys],
+          kids: a.kids === null ? null : [...a.kids, ...b.kids!],
+        };
+        return { ...p, keys: spliced(p.keys, i, 1), kids: spliced(p.kids!, i, 2, merged) };
+      });
+      return { root: next, nextId: m.nextId };
+    }
+    case 'btree.collapseRoot':
+      return { root: root === null || root.kids === null ? null : root.kids[0], nextId: m.nextId };
+    default:
+      return m;
+  }
+}
+
+export function foldBTree(initial: BTreeModel, events: readonly BTreeEvent[]): BTreeModel {
+  return events.reduce(reduceBTree, initial);
 }
 
 // ── Binary min-heap (docs/PLAN.md §8, "Trees / heaps") ───────────────────────

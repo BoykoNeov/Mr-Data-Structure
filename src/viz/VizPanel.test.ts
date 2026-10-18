@@ -4,9 +4,10 @@ import { GraphAdj } from '../structures/graph';
 import { DoublyLinkedListF64 } from '../structures/linkedList';
 import { HashSetOaF64 } from '../structures/hashSetOa';
 import { RbtF64 } from '../structures/rbt';
-import { describeSkip, describeGraph, summarizeGraph, describeDoubly, DOUBLY_INTRO, GRAPH_SEED, describeOa, OA_SEED, describeRbt, RBT_SEED, RBT_INTRO } from './VizPanel';
-import { graphModel, reduceGraph, doublyModel, foldDoublyList, oaModel, foldOa, rbtModel, foldRbt, type GraphModel } from './model';
-import type { SkipListEvent, GraphEvent, DoublyListEvent, HashSetOaEvent, RbtEvent } from './events';
+import { BTreeF64 } from '../structures/btree';
+import { describeSkip, describeGraph, summarizeGraph, describeDoubly, DOUBLY_INTRO, GRAPH_SEED, describeOa, OA_SEED, describeRbt, RBT_SEED, RBT_INTRO, describeBTree, BTREE_SEED, BTREE_EXPLORE_T, BTREE_INTRO } from './VizPanel';
+import { graphModel, reduceGraph, doublyModel, foldDoublyList, oaModel, foldOa, rbtModel, foldRbt, btreeModel, foldBTree, type GraphModel } from './model';
+import type { SkipListEvent, GraphEvent, DoublyListEvent, HashSetOaEvent, RbtEvent, BTreeEvent } from './events';
 
 /**
  * The skip list's step caption reads the comparison direction from value-vs-target,
@@ -280,5 +281,67 @@ describe('red-black captions: recolours are outside the ops, no claim of fewer r
   it('nothing says the red-black tree rotates less than the AVL', () => {
     for (const { text } of all()) expect(text).not.toMatch(/fewer rotations|rotates less|less rotation/i);
     expect(RBT_INTRO).toContain('not fewer rotations overall');
+  });
+});
+
+describe('B-tree captions: no early stop, no test without a candidate, repair only on underflow', () => {
+  const captions = (b: BTreeF64, op: (tr: (e: BTreeEvent) => void) => void) => {
+    const before = btreeModel(b.snapshot());
+    const events: BTreeEvent[] = [];
+    op((e) => events.push(e));
+    // the panel captions each event against the model with that event applied
+    return events.map((e, i) => ({ e, text: describeBTree(e, foldBTree(before, events.slice(0, i + 1))) }));
+  };
+  const seed = () => BTreeF64.fromKeys(BTREE_SEED, BTREE_EXPLORE_T);
+
+  it('a match in an inner node is remembered, and the walk goes on to a leaf', () => {
+    const b = seed();
+    const all = captions(b, (tr) => b.search(60, tr));
+    const inner = all.find(({ e }) => e.kind === 'btree.descend' && e.fresh && !e.leaf);
+    expect(inner?.text).toContain('does not stop the walk');
+    expect(all.find(({ e }) => e.kind === 'btree.check')?.text).toContain('the one comparison the deferral costs');
+    expect(all[all.length - 1].text).toContain('2 nodes visited (not in the op-count)');
+  });
+
+  it('a walk that never saw a key ≥ the target is absent with no equality test', () => {
+    const b = seed();
+    const leaf = captions(b, (tr) => b.search(99, tr)).find(({ e }) => e.kind === 'btree.descend' && e.leaf);
+    expect(leaf?.text).toContain('no equality test needed');
+  });
+
+  it('an equal key during an insert goes right, worded as such', () => {
+    const b = seed();
+    const eq = captions(b, (tr) => b.insert(60, tr)).find(({ e }) => e.kind === 'btree.probe' && e.value === 60);
+    expect(eq?.text).toContain('goes after its equals');
+  });
+
+  it('key moves are free; borrow and merge are structural ops; a borrow ends the repair', () => {
+    const b = seed();
+    const del = captions(b, (tr) => b.delete(70, tr));
+    expect(del.find(({ e }) => e.kind === 'btree.removeKey')?.text).toContain('free');
+    expect(del.find(({ e }) => e.kind === 'btree.borrow')?.text).toContain('a borrow ends the repair');
+    b.delete(85);
+    const merge = captions(b, (tr) => b.delete(90, tr)).find(({ e }) => e.kind === 'btree.merge');
+    expect(merge?.text).toContain('one structural op');
+    const inner = seed();
+    const swap = captions(inner, (tr) => inner.delete(60, tr)).find(({ e }) => e.kind === 'btree.replaceWithPred');
+    expect(swap?.text).toContain('in-order predecessor (a key move, free)');
+  });
+
+  it('a root collapse says what is left', () => {
+    const b = BTreeF64.fromKeys([42], 3);
+    expect(captions(b, (tr) => b.delete(42, tr)).find(({ e }) => e.kind === 'btree.collapseRoot')?.text).toContain('the tree is empty');
+  });
+
+  it('nothing claims a smaller op-count than a binary tree, or describes the delete as CLRS’s pre-fill', () => {
+    expect(BTREE_INTRO).toContain('the op-count cannot see them');
+    expect(BTREE_INTRO).not.toMatch(/fewer comparisons|quarter/i);
+    const b = seed();
+    const texts = [
+      ...captions(b, (tr) => b.search(60, tr)),
+      ...captions(b, (tr) => b.insert(33, tr)),
+      ...captions(b, (tr) => b.delete(70, tr)),
+    ].map(({ text }) => text);
+    for (const x of texts) expect(x).not.toMatch(/fewer comparisons|pre-?fill|CLRS/i);
   });
 });

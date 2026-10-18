@@ -737,6 +737,180 @@ export type RbtEvent =
   | RbtFixCase
   | RbtResult;
 
+// ── B-tree (docs/PLAN.md §8, "Trees / heaps", balanced; Phase 6) ────────────
+//
+// Wide nodes of minimum degree `t` (at most `2t − 1` keys). A node is addressed by its
+// **child-index path** from the root (`[]` = the root, `[2, 0]` = the root's third child's
+// first child) — the B-tree's analog of the binary trees' `'L'|'R'` steps.
+//
+// **Cost metric — comparisons + splits/merges/borrows (docs/PLAN.md §8):** one per key
+// comparison inside a node, one for the deferred equality test, one for a non-root split's
+// comparison against the lifted median, and one per structural event. So the cost events
+// are `btree.probe`, `btree.check`, `btree.medianCompare`, `btree.split`, `btree.borrow`
+// and `btree.merge`, and `countCostEvents(stream) === ops` for search, insert AND delete,
+// pinned against `conformance/corpus-btree.txt` in `src/viz/trace.btree.test.ts`. Free, as
+// both twins count them: choosing the child to descend into (`btree.descend`), placing a
+// key, delete's swap with its in-order predecessor (key *moves* are bounded block copies),
+// growing a new root above a full one, and collapsing an emptied root.
+//
+// The B-tree's real advantage over the AVL is **node hops**, not comparisons — its
+// comparison count should match the AVL's (docs/METHODOLOGY.md §2.10) — and the op-count
+// cannot see hops. The view therefore shows nodes visited as a separate, uncounted tally.
+
+/** One comparison inside the node at `path`: `target` against `keys[mid]` (`value`),
+ * within the live binary-search window `[lo, hi)` — a cost event. `bound` says which
+ * search is running: `'lower'` (search / delete: first key `≥ target`, so `value <
+ * target` goes right) or `'upper'` (insert: first key `> target`, so an **equal** key
+ * goes right too — duplicates are placed after their equals). `right` is the outcome. */
+export interface BTreeProbe {
+  readonly kind: 'btree.probe';
+  readonly path: readonly number[];
+  readonly lo: number;
+  readonly hi: number;
+  readonly mid: number;
+  readonly value: number;
+  readonly target: number;
+  readonly bound: 'lower' | 'upper';
+  readonly right: boolean;
+}
+
+/** The binary search in the node at `path` settled on slot `index`. For search / delete,
+ * `candidate` is the key remembered as the best match *after* this node — the deepest
+ * first-key-`≥ target` seen so far, so it moves down the tree — and `fresh` says whether
+ * this node supplied it (it has a key `≥ target`) or the one from above was kept;
+ * `null` while no level has had one. An insert remembers nothing (`null`, `false`).
+ * `leaf` ends the descent; otherwise the walk goes down to child `index`. Free: choosing
+ * a child is not a comparison. */
+export interface BTreeDescend {
+  readonly kind: 'btree.descend';
+  readonly path: readonly number[];
+  readonly index: number;
+  readonly candidate: number | null;
+  readonly fresh: boolean;
+  readonly leaf: boolean;
+}
+
+/** The single deferred equality test at the end of a search or delete: is the remembered
+ * `candidate` equal to `target`? One comparison — a cost event. Emitted only when a
+ * candidate exists; a walk that never saw a key `≥ target` is absent with no test. */
+export interface BTreeCheck {
+  readonly kind: 'btree.check';
+  readonly target: number;
+  readonly candidate: number;
+  readonly found: boolean;
+}
+
+/** The root at `oldRoot`'s place is full, so a new empty root grows above it before the
+ * split (the tree only ever grows at the top, which keeps every leaf at one depth). Free
+ * — the split that follows is the counted event. */
+export interface BTreeGrowRoot {
+  readonly kind: 'btree.growRoot';
+}
+
+/** Split the full child `index` of the node at `path` (CLRS): the key at position
+ * `t − 1` (`median`) moves up into the parent, the keys above it move to a new right
+ * sibling. One structural event — a cost event. `t` is carried so the reducer does not
+ * have to know the tree's minimum degree. */
+export interface BTreeSplit {
+  readonly kind: 'btree.split';
+  readonly path: readonly number[];
+  readonly index: number;
+  readonly median: number;
+  readonly t: number;
+}
+
+/** After a **non-root** split, one comparison against the lifted `median` chooses which
+ * half the insert continues into (`right`: median `≤ target`). A cost event. A root split
+ * has none — the next probe in the new one-key root makes that choice. */
+export interface BTreeMedianCompare {
+  readonly kind: 'btree.medianCompare';
+  readonly path: readonly number[];
+  /** Where the lifted median now sits in the node at `path`. */
+  readonly index: number;
+  readonly median: number;
+  readonly target: number;
+  readonly right: boolean;
+}
+
+/** Place `value` at slot `index` of the leaf at `path` (insert). Free. */
+export interface BTreeInsertKey {
+  readonly kind: 'btree.insertKey';
+  readonly path: readonly number[];
+  readonly index: number;
+  readonly value: number;
+}
+
+/** Remove the key at slot `index` of the leaf at `path` (delete, when the match is in the
+ * leaf). Free. */
+export interface BTreeRemoveKey {
+  readonly kind: 'btree.removeKey';
+  readonly path: readonly number[];
+  readonly index: number;
+}
+
+/** The match sits in an internal node: overwrite it (`path`, slot `index`) with the last
+ * key of the leaf at `leafPath` — its in-order predecessor, which the descent is already
+ * standing on — and drop that key from the leaf. `value` is the predecessor. Free (a key
+ * move, not a comparison). */
+export interface BTreeReplaceWithPred {
+  readonly kind: 'btree.replaceWithPred';
+  readonly path: readonly number[];
+  readonly index: number;
+  readonly leafPath: readonly number[];
+  readonly value: number;
+}
+
+/** Child `child` of the node at `path` fell below `t − 1` keys and borrows one through
+ * the parent from its `from` sibling (a rotation of one key). One structural event — a
+ * cost event; a borrow always ends the repair. */
+export interface BTreeBorrow {
+  readonly kind: 'btree.borrow';
+  readonly path: readonly number[];
+  readonly child: number;
+  readonly from: 'left' | 'right';
+}
+
+/** Merge children `index` and `index + 1` of the node at `path`, pulling separator
+ * `index` down between them. `side` says which sibling the underflowing child merged with
+ * — `'left'` (it was child `index + 1` and disappears into its left sibling) or `'right'`
+ * (it was child `index` and absorbs its right sibling). One structural event — a cost
+ * event; the parent may now underflow in turn. */
+export interface BTreeMerge {
+  readonly kind: 'btree.merge';
+  readonly path: readonly number[];
+  readonly index: number;
+  readonly side: 'left' | 'right';
+}
+
+/** The root was left with no keys and is removed: its only child becomes the root, or
+ * the tree becomes empty. Free — part of the merge (or removal) that emptied it. */
+export interface BTreeCollapseRoot {
+  readonly kind: 'btree.collapseRoot';
+}
+
+/** Terminal marker for a search/delete: whether the key was present, and the nodes the
+ * walk visited — the hop count the op-count cannot see. Not a cost event. */
+export interface BTreeResult {
+  readonly kind: 'btree.result';
+  readonly found: boolean;
+  readonly nodeVisits: number;
+}
+
+export type BTreeEvent =
+  | BTreeProbe
+  | BTreeDescend
+  | BTreeCheck
+  | BTreeGrowRoot
+  | BTreeSplit
+  | BTreeMedianCompare
+  | BTreeInsertKey
+  | BTreeRemoveKey
+  | BTreeReplaceWithPred
+  | BTreeBorrow
+  | BTreeMerge
+  | BTreeCollapseRoot
+  | BTreeResult;
+
 // ── Binary min-heap (docs/PLAN.md §8, "Trees / heaps") ──────────────────────
 //
 // Array-backed **complete binary tree**; the renderer draws BOTH the array and the
@@ -1114,6 +1288,7 @@ export type VizEvent =
   | BstEvent
   | AvlEvent
   | RbtEvent
+  | BTreeEvent
   | HeapEvent
   | TrieEvent
   | SkipListEvent
@@ -1157,6 +1332,14 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   // the fix-up case markers and the successor walk are free.
   'rbt.compare',
   'rbt.rotate',
+  // B-tree: comparisons + splits/merges/borrows. Choosing a child, placing / moving keys,
+  // growing a new root and collapsing an empty one are free, as both twins count them.
+  'btree.probe',
+  'btree.check',
+  'btree.medianCompare',
+  'btree.split',
+  'btree.borrow',
+  'btree.merge',
   // Min-heap: comparisons + swaps (docs/PLAN.md §8). Sift comparisons, search-scan
   // comparisons, and swaps are the cost events.
   'heap.compare',

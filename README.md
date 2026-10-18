@@ -84,7 +84,9 @@ random inserts, and pays for its looser balance on sorted input. Its Explore tab
 by name — which node is being fixed and which neighbour's colour decided how — with colour
 changes counted apart from the comparisons and rotations it shares with the AVL. A **B-tree** makes the
 AVL's number of comparisons in a quarter of its node hops; whether that shows on the clock
-is printed for you to read, not claimed. An **open-addressing hash set**, held to the
+is printed for you to read, not claimed. Its Explore tab draws smaller nodes so the tree
+fits on screen, and shows the nodes each walk visits beside the comparison count — the
+saving the count itself cannot see. An **open-addressing hash set**, held to the
 chaining set's exact table sizes, pays more probes per lookup (primary clustering, matching
 Knuth's formulas) while staying flat, behind a tombstone policy that keeps its add/remove
 from drifting with the timer's repetition count. Its Explore tab shows why: the same keys
@@ -102,8 +104,7 @@ calibrated 50/50, reproduced exactly), and a structure that keeps one copy of ea
 key says how many it actually held beside the input size — on the chart, in the exports
 and in the PNG. And your **session is remembered in this browser**: your last run's
 dataset — pasted data included — and chart settings come back on reload, while results are
-always re-measured, never restored. Still open: an animation for the
-B-tree, the
+always re-measured, never restored. Every structure now has its own animation. Still open: the
 graph in the exports, and performance polish. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles

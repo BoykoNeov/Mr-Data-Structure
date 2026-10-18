@@ -704,6 +704,15 @@ comparisons (`methodology_btree::sorted_input_builds_half_full_nodes_without_cha
 `shapeSensitive` stays false; the constant is stated beside the chart. Regime 11 (§2.3) is
 tight because every leaf is at one depth (`btree_churn_and_finite_differences_agree_tightly`).
 
+**Watching it (Explore).** The B-tree tab animates the counting convention at t = 3 (the
+benchmark's t = 16 would not fit; the corpus covers both): each in-node probe, the deferred
+equality test, a non-root split's median comparison and each split / borrow / merge is a cost
+event; choosing a child, key moves and the root growing or collapsing are free. Two
+invariants are chained to `corpus-btree.txt` (`src/viz/trace.btree.test.ts`): cost events
+equal `ops`, and structural events by kind equal the twin's `eventCounts()` deltas. Nodes
+visited are drawn as a separate tally — the hop count this section's hypothesis is about,
+which the op-count does not contain.
+
 ### 2.11 A second pointer that buys nothing (the doubly linked list)
 
 The doubly linked list (`doubly_linked_list.rs`, StructureId `'dll'`) is the singly list

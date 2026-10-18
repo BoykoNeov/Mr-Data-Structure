@@ -228,6 +228,14 @@ tool call does not survive into the next (each call is a fresh process).
   *should* match the AVL's; its advantage is hops, which the op-count cannot see — the gate
   only *logs* the clock comparison (`btree hypothesis (info only)`); don't turn it into an
   assertion.
+- **The B-tree animation runs at t = 3, and its hop tally is deliberately outside the count.**
+  The Explore tab's nodes hold at most 5 keys so the tree fits; the benchmark's hold 31 — say so
+  wherever a number is quoted, and never quote "a quarter of the AVL's hops" (that is t = 16).
+  Nodes visited ride on `btree.result` and the footer, never in `COST_EVENT_KINDS`. Free steps,
+  as the twins count them: `btree.descend`, key placement / the predecessor swap, `growRoot`,
+  `collapseRoot`. A **root split has no `btree.medianCompare`** (the next probe in the new root
+  makes that choice) — emitting one double-counts. `trace.btree.test.ts` holds two invariants:
+  cost events == `ops`, and structural events by kind == the `eventCounts()` deltas.
 - **The open-addressing set's tombstone policy is a measurement decision** (METHODOLOGY
   §2.8), all four rules mirrored in the TS twin and `corpus-hoa.txt`: insert reuses the
   first tombstone on its path; tombstones count toward the load; `set_churn_key` primes to

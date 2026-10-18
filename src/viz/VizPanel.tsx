@@ -7,12 +7,13 @@ import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedLi
 import { BstF64 } from '../structures/bst';
 import { AvlF64 } from '../structures/avl';
 import { RbtF64 } from '../structures/rbt';
+import { BTreeF64 } from '../structures/btree';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import { browserSession } from '../persist/session';
-import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, RbtEvent, BstStep, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
+import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, RbtEvent, BstStep, BTreeEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   oaModel, foldOa, type OaModel,
@@ -21,6 +22,7 @@ import {
   bstModel, foldBst, type BstModel,
   avlModel, foldAvl, type AvlModel,
   rbtModel, foldRbt, rbtNodeAtPath, type RbtModel,
+  btreeModel, foldBTree, type BTreeModel,
   heapModel, foldHeap, type HeapModel,
   trieModel, foldTrie, type TrieModel,
   skipModel, foldSkip, type SkipModel,
@@ -37,6 +39,7 @@ import { DoublyListView } from './DoublyListView';
 import { BstView } from './BstView';
 import { AvlView } from './AvlView';
 import { RbtView } from './RbtView';
+import { BTreeView } from './BTreeView';
 import { HeapView } from './HeapView';
 import { TrieView, byteLabel } from './TrieView';
 import { SkipListView } from './SkipListView';
@@ -55,7 +58,7 @@ import { Controls, type OpSpec } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'hashoa' | 'bst' | 'avl' | 'rbt' | 'heap' | 'trie' | 'skiplist' | 'graph';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'hashoa' | 'bst' | 'avl' | 'rbt' | 'btree' | 'heap' | 'trie' | 'skiplist' | 'graph';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
@@ -90,6 +93,22 @@ const AVL_SEED = [50, 30, 70, 20, 40, 60, 80];
 export const RBT_SEED: readonly number[] = AVL_SEED;
 export const RBT_INTRO =
   'Red-black tree — the AVL tab’s ordering and keys, balanced by colour instead of height: no red node may have a red child, and every path down has the same number of black nodes. It pays the AVL’s metric, comparisons + rotations; colour changes are tallied on their own and are not in the ops. Its promise is a bound per operation — at most 2 rotations per insert and 3 per delete — not fewer rotations overall. Insert 90, 95, 99: both tabs pay 3, 5, 5 ops, and this tree also makes 10 recolours. To watch the delete fix-up, delete 20, 40 and then 30: removing a black leaf leaves its path one black short.';
+// The B-tree tab draws nodes of minimum degree 3 (at most 5 keys) so the tree fits on
+// screen; the benchmark's nodes hold up to 31 (t = 16). Same algorithm, same counting —
+// the corpus covers t = 2, 3 and 16. The seed was chosen by computing it: the root holds
+// 30, 60, 75 over four leaves, one of them full and one at the minimum, so
+//  - search(60) finds 60 in the root and still walks on to a leaf: 5 comparisons in only
+//    2 nodes — the deferred equality test, and the hops the op-count cannot see;
+//  - insert(33) lands in the full leaf and splits it;
+//  - delete(70) leaves its leaf short and borrows from the left sibling; then delete(85)
+//    and delete(90) leave the last leaf short with no sibling to spare a key, so it merges.
+// `trace.btree.test.ts` pins each of those. No sentence here compares its op-count with
+// the AVL's: its comparisons should match a binary tree's; its saving is node hops.
+export const BTREE_EXPLORE_T = 3;
+export const BTREE_SEED: readonly number[] = [30, 10, 50, 70, 20, 90, 40, 60, 80, 15, 25, 35, 45, 55, 65, 75, 85];
+export const BTREE_INTRO =
+  'B-tree — wide nodes that each hold several sorted keys (at most 5 here, so the tree fits on screen; the benchmark’s hold 31 — the same algorithm, counted the same way). A lookup binary-searches inside each node and drops to one child, and every leaf sits at the same depth. It never stops early on a match in an inner node: it remembers the best candidate and makes one equality test at the leaf. Try search(60): 60 is in the root, yet the walk goes on to a leaf — 5 comparisons in 2 nodes. The nodes visited are shown beside the count because fewer node hops are the B-tree’s real saving, and the op-count cannot see them. Insert 33 to split a full leaf; delete 70 to borrow a key from a sibling, then delete 85 and 90 to merge two leaves.';
+
 // Built by sifting each key up; the result is a valid min-heap (root = 10).
 const HEAP_SEED = [50, 30, 70, 20, 40, 60, 10];
 // Every key here is a teaching decision (docs/PLAN.md §5): `car`/`cart`/`cat` share
@@ -396,6 +415,64 @@ export function describeRbt(e: RbtEvent | undefined, m: RbtModel): string {
       return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
   return '';
+}
+
+/**
+ * The B-tree step caption (docs/METHODOLOGY.md §2.10). It reads the folded model for the
+ * root a collapse leaves behind. The wordings that matter, pinned in `VizPanel.test.ts`:
+ * an inner-node match does not stop the walk, a walk with no candidate is absent with no
+ * equality test, key moves are free, and the repair runs bottom-up only on underflow (not
+ * CLRS's pre-fill). Exported for `VizPanel.test.ts`.
+ */
+export function describeBTree(e: BTreeEvent | undefined, m: BTreeModel): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'btree.probe': {
+      const dir =
+        e.bound === 'lower'
+          ? e.right
+            ? `${e.value} < ${e.target} → look right of it`
+            : `${e.value} ≥ ${e.target} → look left, keeping ${e.value} in view`
+          : e.right
+            ? e.value === e.target
+              ? `${e.value} = ${e.target} → an insert goes after its equals, so look right`
+              : `${e.value} < ${e.target} → look right of it`
+            : `${e.value} > ${e.target} → look left of it`;
+      return `binary search inside the node: ${dir} (one comparison)`;
+    }
+    case 'btree.descend':
+      if (e.leaf)
+        return e.candidate === null
+          ? 'reached the leaf, and no key on the whole path was ≥ the target → absent, no equality test needed'
+          : `reached the leaf — the walk always ends here; now one equality test on the remembered ${e.candidate}`;
+      return e.fresh
+        ? `remember ${e.candidate} as the candidate and go down to child ${e.index + 1} — even a key equal to the target does not stop the walk; it goes on to a leaf and tests once there (free: choosing a child is not a comparison)`
+        : `go down to child ${e.index + 1}${e.candidate === null ? '' : `, still carrying ${e.candidate}`} (free: choosing a child is not a comparison)`;
+    case 'btree.check':
+      return `equality test: ${e.candidate} ${e.found ? '=' : '≠'} ${e.target} → ${e.found ? 'found ✓' : 'not found ✗'} — the one comparison the deferral costs`;
+    case 'btree.growRoot':
+      return 'the root is full: grow a new empty root above it (free) — the tree only ever gets taller at the top, which keeps every leaf at one depth';
+    case 'btree.split':
+      return `split the full node: its middle key ${e.median} moves up into the parent and the keys above it move to a new right sibling (one structural op)`;
+    case 'btree.medianCompare':
+      return `compare ${e.target} vs the lifted ${e.median} → continue in the ${e.right ? 'right' : 'left'} half (one comparison)`;
+    case 'btree.insertKey':
+      return `place ${e.value} in the leaf at slot ${e.index + 1} (free — moving keys inside a node is not counted)`;
+    case 'btree.removeKey':
+      return 'remove the key from its leaf (free — a key move, not a comparison)';
+    case 'btree.replaceWithPred':
+      return `the key sits in an inner node: overwrite it with ${e.value}, the last key of the leaf the walk ended in — its in-order predecessor (a key move, free)`;
+    case 'btree.borrow':
+      return `that node is now below its minimum, so it borrows one key from its ${e.from} sibling through the parent (one structural op) — a borrow ends the repair`;
+    case 'btree.merge':
+      return 'that node is now below its minimum and its sibling has no key to spare → merge the two, pulling their separating key down from the parent (one structural op); the parent may now be short in turn, so the repair moves up';
+    case 'btree.collapseRoot':
+      return m.root === null
+        ? 'the root has no keys left → remove it; the tree is empty (free)'
+        : 'the root has no keys left → remove it; its only child is the new root, one level shorter everywhere (free)';
+    case 'btree.result':
+      return `${e.found ? 'result: found ✓' : 'result: not found ✗'} · ${e.nodeVisits} node${e.nodeVisits === 1 ? '' : 's'} visited (not in the op-count)`;
+  }
 }
 
 function describeHeap(e: HeapEvent | undefined): string {
@@ -937,6 +1014,53 @@ export function RbtPanel() {
   );
 }
 
+export function BTreePanel() {
+  const ref = useRef<BTreeF64 | null>(null);
+  if (ref.current === null) ref.current = BTreeF64.fromKeys(BTREE_SEED, BTREE_EXPLORE_T);
+  const [base, setBase] = useState<BTreeModel>(() => btreeModel(BTreeF64.fromKeys(BTREE_SEED, BTREE_EXPLORE_T).snapshot()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<BTreeEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const b = ref.current!;
+    const snapshot = btreeModel(b.snapshot()); // before-state
+    const events: BTreeEvent[] = [];
+    const push = (e: BTreeEvent) => events.push(e);
+    const structural = () => events.filter((e) => e.kind === 'btree.split' || e.kind === 'btree.borrow' || e.kind === 'btree.merge').length;
+    const visits = () => {
+      const last = events[events.length - 1];
+      return last && last.kind === 'btree.result' ? last.nodeVisits : 0;
+    };
+    const split = (ops: number, what: string) => {
+      const s = structural();
+      return `${ops} ops (${ops - s} comparisons${s ? ` + ${s} ${what}` : ''})`;
+    };
+    if (op === 'search') {
+      const r = b.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} comparisons in ${visits()} node${visits() === 1 ? '' : 's'} visited — the hops are not in the op-count`);
+    } else if (op === 'insert') {
+      const r = b.insert(value, push);
+      setSummary(`insert(${value}) → placed · ${split(r.ops, structural() === 1 ? 'split' : 'splits')}`);
+    } else {
+      const r = b.delete(value, push);
+      setSummary(`delete(${value}) → ${r.removed ? 'removed' : 'absent'} · ${split(r.ops, 'borrow/merge')} · ${visits()} nodes visited`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldBTree(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || BTREE_INTRO}</p>
+      <BTreeView model={model} active={active} />
+      <Controls player={player} onOp={onOp} caption={describeBTree(active, model)} />
+    </>
+  );
+}
+
 export function HeapPanel() {
   const ref = useRef<MinHeapF64 | null>(null);
   if (ref.current === null) ref.current = MinHeapF64.fromKeys(HEAP_SEED);
@@ -1141,6 +1265,7 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'bst', label: 'binary search tree' },
   { kind: 'avl', label: 'AVL tree' },
   { kind: 'rbt', label: 'red-black tree' },
+  { kind: 'btree', label: 'B-tree' },
   { kind: 'heap', label: 'min-heap' },
   { kind: 'trie', label: 'trie (text keys)' },
   { kind: 'skiplist', label: 'skip list' },
@@ -1158,6 +1283,7 @@ function panelFor(kind: Kind) {
     case 'bst': return <BstPanel />;
     case 'avl': return <AvlPanel />;
     case 'rbt': return <RbtPanel />;
+    case 'btree': return <BTreePanel />;
     case 'heap': return <HeapPanel />;
     case 'trie': return <TriePanel />;
     case 'skiplist': return <SkipListPanel />;
