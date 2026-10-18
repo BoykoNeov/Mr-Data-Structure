@@ -1452,7 +1452,7 @@ insert/search/delete group on a shared key type.
     - *A clock-free worst-single-operation view* (`maxop.rs`, `MaxOpSection`), on its own button:
       one fixed build-then-delete replay per structure, each counter's maximum taken on its own.
       Red-black ≤ 2 / ≤ 3 rotations per op on every input order; the AVL's insert ≤ 2 too, its
-      worst delete reaching 10 at n = 4000 on shuffled keys but 2 on sorted ones; the array's
+      worst delete reaching 10 at n = 4000 on the Rust test's shuffled keys (9 on the default page) but 2 on sorted ones; the array's
       append op-count 0 beside a 2048-key grow. METHODOLOGY §4 hurdle 13.
     - *Mid-range misses* (`midRangeAbsent`, radios after the probe mix): absent keys strictly
       between adjacent stored keys, rank-spread, half-integers on dense integers. Closes hurdle 9's

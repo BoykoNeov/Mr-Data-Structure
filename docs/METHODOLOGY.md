@@ -1096,8 +1096,8 @@ Ordered by how much they can mislead a reader today.
    arena growth in the linked twins is a storage detail and is not reported). A single op
    is far too short for the browser's clock, so nothing there is timed. What it shows: the
    red-black tree's ≤ 2 / ≤ 3 holds per operation on every input order; the AVL's insert is
-   also ≤ 2; the AVL's worst delete reaches 10 at n = 4 000 on shuffled and duplicate-heavy
-   keys (≤ 2·height) but stays at 2 on sorted input, where its tree is near-perfect and the
+   also ≤ 2; the AVL's worst delete reaches 10 at n = 4 000 on the Rust tests' shuffled and
+   duplicate-heavy keys (9 on the default page's dataset; ≤ 2·height either way) but stays at 2 on sorted input, where its tree is near-perfect and the
    red-black tree's worst op-count is the higher one (height 21 vs 12). Totals are
    unchanged (§2.9). A maximum is a property of one key sequence, so the tests assert
    bands, not growth curves.
