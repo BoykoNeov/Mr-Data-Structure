@@ -63,6 +63,7 @@ pub mod dyn_array_str;
 pub mod graph;
 pub mod hash_set;
 pub mod hash_set_oa;
+pub mod hash_set_bs;
 pub mod hash_set_str;
 pub mod heap;
 pub mod linked_list;
@@ -81,6 +82,8 @@ mod conformance_rbt;
 mod conformance_btree;
 #[cfg(test)]
 mod methodology_btree;
+#[cfg(test)]
+mod methodology_hbs;
 
 /// Decode the first `n` keys of an offsets+UTF-8-bytes marshal buffer
 /// (docs/PLAN.md §4.2) into owned `String`s. `offsets` has length `count + 1`

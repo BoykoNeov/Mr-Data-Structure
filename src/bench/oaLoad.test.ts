@@ -62,10 +62,11 @@ describe('the open-addressing load-factor control (docs/PLAN.md §13)', () => {
     expect(oaLoadReach(ladder, 0.5)).toMatchObject({ max: 0.48828125, resized: 5 });
   });
 
-  it('stamps both hash sets with their thresholds and leaves every other series alone', () => {
+  it('stamps every hash set with its threshold and leaves every other series alone', () => {
     const s = (structure: StructureId): SweepSeries => ({ structure, op: 'search', points: [point(10)] });
-    const out = stampMaxLoad([s('array'), s('hashset'), s('hashoa')], 0.5);
-    expect(out.map((x) => x.maxLoad)).toEqual([undefined, 0.75, 0.5]);
+    // Only the tombstone set follows the control; the backward-shift set stays at 0.75 with chaining.
+    const out = stampMaxLoad([s('array'), s('hashset'), s('hashoa'), s('hashbs')], 0.5);
+    expect(out.map((x) => x.maxLoad)).toEqual([undefined, 0.75, 0.5, 0.75]);
     expect(out[0]).toEqual(s('array'));
   });
 });

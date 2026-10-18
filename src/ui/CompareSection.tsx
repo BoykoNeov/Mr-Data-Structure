@@ -171,14 +171,26 @@ export function CompareSection() {
   const arrayScan = useMemo(() => search.filter((v) => v.series.structure === 'array'), [search]);
   const churn = useMemo(
     () =>
-      [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? []), ...(result?.btree ?? [])]
+      [
+        ...(result?.mutation ?? []),
+        ...(result?.trees ?? []),
+        ...(result?.skiplist ?? []),
+        ...(result?.btree ?? []),
+        ...(result?.hashbs ?? []),
+      ]
         .filter((v) => v.series.op === 'churn')
         .map((v) => onAxis(v.series)),
     [result, signal, nAxis],
   );
   const split = useMemo(
     () =>
-      [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? []), ...(result?.btree ?? [])]
+      [
+        ...(result?.mutation ?? []),
+        ...(result?.trees ?? []),
+        ...(result?.skiplist ?? []),
+        ...(result?.btree ?? []),
+        ...(result?.hashbs ?? []),
+      ]
         .filter((v) => v.series.op !== 'churn')
         .map((v) => onAxis(v.series)),
     [result, signal, nAxis],
@@ -456,13 +468,14 @@ export function CompareSection() {
         <>
       <h3 style={h3}>Search — the cost of finding a key</h3>
       <p style={{ color: '#555', marginTop: 0 }}>
-        Eleven structures look up a key eight different ways: the unsorted array scans from the front, the two
+        Twelve structures look up a key eight different ways: the unsorted array scans from the front, the two
         linked lists walk node by node (the doubly list’s back-pointer never helps a lookup, so they share a
         way), the sorted array binary-searches, the skip list drops down a tower of
         ever-sparser express lanes, three binary trees — the plain BST, the AVL and the red-black tree —
         descend from the root (only the last two keep themselves balanced), the B-tree
         binary-searches inside a few wide nodes, the hash set jumps straight to a bucket and walks its chain,
-        and the open-addressing hash set jumps straight to a slot and steps along the table past any collisions.
+        and the two open-addressing hash sets jump straight to a slot and step along the table past any collisions
+        (they differ only in how they delete, which a lookup never does).
         (The min-heap is measured too, but it answers a different question and gets its own section below.)
       </p>
       {search.length > 0 && (
@@ -502,6 +515,21 @@ export function CompareSection() {
             and its count saws up and down as the table fills and doubles; both stay flat
             (<strong>O(1)</strong>). On the wall clock the order can flip, because stepping along one array is
             kinder to the memory cache than following a chain (docs/METHODOLOGY.md §2.8).{' '}
+            {oaLikeForLike ? (
+              <>
+                If you can’t find the indigo line, it is under the light-blue one: it is a <em>third</em> hash
+                set, the same table built the same way, which only deletes differently — so with nothing deleted,
+                a lookup takes exactly the same steps in both. Counted in steps the two lines are one. On the
+                wall clock they can sit a little apart, but whatever the gap is, it is not the way they delete,
+                because this chart deletes nothing. The add/remove chart below is where they part.
+              </>
+            ) : (
+              <>
+                The indigo line is a <em>third</em> hash set, the light-blue one’s design with a different
+                delete. It always fills to {CHAINING_MAX_LOAD} before growing, so on this run it does not sit
+                under the light-blue line: where their tables differ in size, their step counts differ too.
+              </>
+            )}{' '}
             {/* Only true while the run asked absent keys at all — a hits-only run has none. */}
             {(ranMixSummary?.absent ?? 64) > 0 && ranMixSummary?.missForm === 'midRange' && (
               <>
@@ -592,6 +620,25 @@ export function CompareSection() {
                 Counted in steps, where its line sits against the blue one also depends on this run’s
                 fill-before-growing setting ({ranOaLoad}, not the blue one’s {CHAINING_MAX_LOAD}) — see the note
                 below the chart (docs/METHODOLOGY.md §2.8).
+              </>
+            )}{' '}
+            {oaLikeForLike ? (
+              <>
+                The indigo line is the same table with the markers taken out: a removed key’s neighbours are
+                slid back to close the gap, so nothing is left behind and every add-and-remove puts the table
+                back exactly as it was. Counted in steps, expect it near the light-blue line, not far below it.
+                Sliding the neighbours back walks the very stretch of table that a marker would have made the next
+                add walk — the work moves from the next add into the remove, it does not disappear. What does
+                disappear, in the step counts the engine’s own tests check, is the light-blue line’s disagreement
+                with its cross-check: with no markers, the add-and-remove cost and the sum of the separate add and
+                remove costs agree (the wall-clock split below is too noisy to show a gap that small).
+              </>
+            ) : (
+              <>
+                The indigo line is the light-blue set’s design with the markers taken out — a removed key’s
+                neighbours are slid back to close the gap — but it always fills to {CHAINING_MAX_LOAD} before
+                growing, like the blue one. On this run it is therefore not the same table as the light-blue
+                line; read the two against each other on a run at the default setting.
               </>
             )}{' '}
             {sortedNote ? (

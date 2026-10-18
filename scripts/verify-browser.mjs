@@ -32,6 +32,7 @@ let revSkip = null;
 let rbt = null;
 let revRbt = null;
 let btree = null;
+let hbs = null;
 let revBtree = null;
 let revSearch = null;
 let strSearch = null;
@@ -46,8 +47,9 @@ try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   // The sweeps run in a worker; wait until the **min-heap** mutation proof publishes — it
   // is set last, after the search sweep and the flat (array, both hash sets, sorted array,
-  // both lists), BST, AVL, skip-list, red-black and B-tree mutation sweeps — or until the app
-  // reports an error. Generous timeout: the sweeps do real timed work, and there are twelve
+  // both lists), BST, AVL, skip-list, red-black, B-tree and backward-shift hash set mutation
+  // sweeps (the last one runs after the heap's but publishes before it) — or until the app
+  // reports an error. Generous timeout: the sweeps do real timed work, and there are thirteen
   // search series and a mutation sweep per structure family.
   await page.waitForFunction(
     () =>
@@ -64,6 +66,7 @@ try {
   skip = await page.evaluate(() => window.__skipMutationProof ?? null);
   rbt = await page.evaluate(() => window.__rbtMutationProof ?? null);
   btree = await page.evaluate(() => window.__btreeMutationProof ?? null);
+  hbs = await page.evaluate(() => window.__hbsMutationProof ?? null);
   meta = await page.evaluate(() => window.__compareMeta ?? null);
 
   const want = (name, cond) => checks.push({ name, pass: !!cond });
@@ -138,9 +141,10 @@ try {
     const hashoaSearch = proof.find((p) => p.structure === 'hashoa');
     const bstSearch = proof.find((p) => p.structure === 'bst');
     const avlSearch = proof.find((p) => p.structure === 'avl');
+    const hashbsSearch = proof.find((p) => p.structure === 'hashbs');
     want(
-      'twelve search series measured',
-      proof.length === 12 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch && rbtSearch && btreeSearch && hashoaSearch && bstSearch && avlSearch,
+      'thirteen search series measured',
+      proof.length === 13 && array && ll && sarrSearch && hashset && heapSearch && skipSearch && dllSearch && rbtSearch && btreeSearch && hashoaSearch && bstSearch && avlSearch && hashbsSearch,
     );
     if (array) {
       const ratio = array.lastNanos / array.firstNanos;
@@ -281,6 +285,21 @@ try {
       want(
         `open-addressing search flatter than array (${hashoaSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
         hashoaSearch.slope < array.slope,
+      );
+    }
+    // Backward-shift hash set (docs/METHODOLOGY.md §2.8, regime NEW). A search sweep never
+    // deletes, and a delete-free build of this set is the open-addressing set's table slot for
+    // slot (pinned clock-free in `structures::methodology_hbs`), so it takes the same band for
+    // the same reason. No ratio between the two lines is asserted: they do identical work, and
+    // any gap between them is the clock.
+    if (hashbsSearch && array) {
+      want(
+        `backward-shift search flat (slope ${hashbsSearch.slope.toFixed(2)} < 0.4)`,
+        hashbsSearch.slope < 0.4,
+      );
+      want(
+        `backward-shift search flatter than array (${hashbsSearch.slope.toFixed(2)} < ${array.slope.toFixed(2)})`,
+        hashbsSearch.slope < array.slope,
       );
     }
   }
@@ -553,6 +572,33 @@ try {
       want(`B-tree churn sub-linear (slope ${bChurn.slope.toFixed(2)} < 0.6)`, bChurn.slope < 0.6);
       want(`B-tree churn stays near-flat (ratio ${ratio.toFixed(1)} < 6)`, ratio < 6);
     }
+  }
+
+  // Backward-shift hash set mutation (docs/METHODOLOGY.md §2.8, regime NEW): its own engine
+  // call, run after every other mutation sweep. With no tombstone a churn pair restores the
+  // table bit for bit, so the op-count is flat by construction; the real clock is asked only
+  // for the slope band the open-addressing set's churn takes (two-sided, 0.6 — the same block
+  // of churn keys samples the same clusters). Which of the two open-addressing lines is lower
+  // on the clock is logged, never asserted: on the op-count they differ by a few percent
+  // (7.39 vs 7.69 in Rust), well inside wall-clock noise.
+  if (hbs) {
+    const bsChurn = hbs.find((m) => m.structure === 'hashbs' && m.op === 'churn');
+    want('three backward-shift mutation series measured', hbs.length === 3);
+    if (bsChurn) {
+      want(
+        `backward-shift churn stays flat (|slope| ${Math.abs(bsChurn.slope).toFixed(2)} < 0.6)`,
+        Math.abs(bsChurn.slope) < 0.6,
+      );
+      const aChurn = mutation && mutation.find((m) => m.structure === 'array' && m.op === 'churn');
+      if (aChurn) {
+        want(
+          `backward-shift churn flatter than array churn (${bsChurn.slope.toFixed(2)} < ${aChurn.slope.toFixed(2)})`,
+          bsChurn.slope < aChurn.slope,
+        );
+      }
+    }
+  } else {
+    want('backward-shift mutation proof published', false);
   }
 
   // Min-heap mutation (docs/PLAN.md §6.3, §8 trees/heaps): the churn primary here is
@@ -1179,6 +1225,19 @@ if (btree && avl) {
   if (b && a) {
     console.log(
       `--- btree hypothesis (info only): churn at top n, B-tree ${b.lastNanos.toFixed(1)} ns vs AVL ${a.lastNanos.toFixed(1)} ns (ratio ${(b.lastNanos / a.lastNanos).toFixed(2)}; confounded — the AVL allocates per pair) ---`,
+    );
+  }
+}
+// The backward-shift set against the tombstone set on the clock (docs/METHODOLOGY.md §2.8,
+// regime NEW), printed and deliberately NOT asserted: a few percent apart on op-counts.
+if (hbs) {
+  console.log('--- backward-shift hash set mutation proof ---');
+  console.log(JSON.stringify(hbs, null, 2));
+  const b = hbs.find((m) => m.op === 'churn');
+  const o = mutation && mutation.find((m) => m.structure === 'hashoa' && m.op === 'churn');
+  if (b && o) {
+    console.log(
+      `--- backward-shift hypothesis (info only): churn at top n, backward shift ${b.lastNanos.toFixed(1)} ns vs tombstones ${o.lastNanos.toFixed(1)} ns (ratio ${(b.lastNanos / o.lastNanos).toFixed(2)}) ---`,
     );
   }
 }

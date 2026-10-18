@@ -16,7 +16,7 @@ import type { StructureId } from './bench/measure';
  */
 describe('structure registry', () => {
   it('covers every StructureId exactly once, with a distinct colour each', () => {
-    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa'];
+    const ids: StructureId[] = ['array', 'hashset', 'bst', 'avl', 'sarr', 'll', 'heap', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'hashbs'];
     for (const id of ids) expect(REGISTRY[id].id).toBe(id);
     // STRUCTURES is the *numeric* catalogue — the one the shared charts draw from.
     expect(STRUCTURES.map((s) => s.id).sort()).toEqual([...ids].sort());
@@ -134,6 +134,21 @@ describe('structure registry', () => {
     expect(REGISTRY.hashoa.costMetric).toBe('hashes + slot probes');
     expect(isCanonical('hashoa')).toBe(true);
     expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('hashoa');
+  });
+
+  it('pins the backward-shift hash set beside the tombstone one: same classes, same metric, its own hue', () => {
+    // A comparison of delete policies on one table (docs/METHODOLOGY.md §2.8, regime NEW):
+    // every theoretical slot and the metric's name match the tombstone set's.
+    for (const op of ['search', 'insert', 'delete', 'churn'] as const) {
+      expect(REGISTRY.hashbs.average[op]).toBe(REGISTRY.hashoa.average[op]);
+      expect(REGISTRY.hashbs.worst[op]).toBe(REGISTRY.hashoa.worst[op]);
+    }
+    expect(REGISTRY.hashbs.costMetric).toBe(REGISTRY.hashoa.costMetric);
+    expect(REGISTRY.hashbs.family).toBe('hashing');
+    expect(REGISTRY.hashbs.shapeSensitive).toBe(false);
+    expect(REGISTRY.hashbs.color).toBe('#5254a3');
+    expect(isCanonical('hashbs')).toBe(true);
+    expect(CANONICAL_STRUCTURES.map((s) => s.id)).toContain('hashbs');
   });
 
   it('pins the §8 search classes: O(n) scan/walk, O(log n) binary search, O(1) hash', () => {

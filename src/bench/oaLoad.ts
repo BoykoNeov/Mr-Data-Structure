@@ -108,14 +108,15 @@ export function oaLoadReach(points: readonly SweepPoint[], maxLoad: number): OaL
 
 /**
  * Stamp each hash set series with the threshold it was measured at (`SweepSeries.maxLoad`):
- * the open-addressing set's `oaMaxLoad`, the chaining set's fixed 0.75. Every other series is
- * returned untouched. The worker calls this on the two sweeps the open-addressing set is in.
+ * the open-addressing set's `oaMaxLoad`; the chaining set's and the backward-shift set's fixed
+ * 0.75 (the control moves only the tombstone set). Every other series is returned untouched.
+ * The worker calls this on every sweep a hash set is in.
  */
 export function stampMaxLoad(series: readonly SweepSeries[], oaMaxLoad: number): SweepSeries[] {
   return series.map((s) =>
     s.structure === 'hashoa'
       ? { ...s, maxLoad: oaMaxLoad }
-      : s.structure === 'hashset'
+      : s.structure === 'hashset' || s.structure === 'hashbs'
         ? { ...s, maxLoad: CHAINING_MAX_LOAD }
         : s,
   );

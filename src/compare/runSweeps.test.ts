@@ -73,6 +73,9 @@ function fakeEngine(log: string[]): BenchEngine {
         // gate's bands were calibrated under. Shuffled data: both O(log n).
         series('bst', 'search', sizes, (n) => 1.4 * Math.log2(n)),
         series('avl', 'search', sizes, (n) => Math.log2(n)),
+        // The backward-shift hash set, after all of them: on a delete-free build it is the
+        // open-addressing set's table, so its search line is that one's (METHODOLOGY §2.8).
+        series('hashbs', 'search', sizes, () => 5),
       ];
     },
     runMutationSweep: async (_k, sizes) => {
@@ -115,6 +118,10 @@ function fakeEngine(log: string[]): BenchEngine {
       log.push(`heap:${sizes.length}`);
       return mutTrio('heap', sizes, (n) => Math.log2(n));
     },
+    runHashBsMutationSweep: async (_k, sizes) => {
+      log.push(`hashbs:${sizes.length}`);
+      return mutTrio('hashbs', sizes, () => 4);
+    },
     // The string twins run the same shapes as their numeric counterparts — the point of
     // the string run is the *constant* (bytes per key), which a fake clock cannot carry.
     runStringSweep: async (offsets, bytes, sizes) => {
@@ -150,7 +157,7 @@ function fakeEngine(log: string[]): BenchEngine {
 }
 
 describe('runAllSweeps', () => {
-  it('drives every sweep from one dataset and publishes the seven proofs in order', async () => {
+  it('drives every sweep from one dataset and publishes the nine proofs in order', async () => {
     const log: string[] = [];
     const statuses: string[] = [];
     const win: Record<string, unknown> = {};
@@ -162,10 +169,10 @@ describe('runAllSweeps', () => {
     expect(r.searchSizes[r.searchSizes.length - 1]).toBe(50_000); // capped by the dataset
     expect(r.mutationSizes[r.mutationSizes.length - 1]).toBe(MUT_MAX);
     expect(log[0]).toBe(`search:50000:${r.searchSizes.length}`);
-    expect(statuses).toHaveLength(8);
+    expect(statuses).toHaveLength(9);
 
     expect(r.search.map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'bst', 'avl',
+      'array', 'll', 'sarr', 'hashset', 'heap', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'bst', 'avl', 'hashbs',
     ]);
     expect(r.search[0].fit.best).toBe('O(n)');
     expect(r.search[3].fit.best).toBe('O(1)');
@@ -217,12 +224,21 @@ describe('runAllSweeps', () => {
     expect(r.heap.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
       'heap.churn', 'heap.insert', 'heap.delete',
     ]);
+    // The backward-shift hash set: its own bucket and its own engine call, run *after* the
+    // heap's so no existing series' conditions moved, yet published before the heap proof
+    // (the gate's "done" signal) — see the globals' order below.
+    expect(r.hashbs.map((v) => `${v.series.structure}.${v.series.op}`)).toEqual([
+      'hashbs.churn', 'hashbs.insert', 'hashbs.delete',
+    ]);
+    expect(r.hashbs[0].fit.best).toBe('O(1)');
+    expect(log.indexOf(`heap:${r.mutationSizes.length}`)).toBeLessThan(log.indexOf(`hashbs:${r.mutationSizes.length}`));
+    expect(log[log.length - 1]).toBe(`hashbs:${r.mutationSizes.length}`);
     expect(r.shape).toBe('random');
 
     // Risk R6 at the seam: the shared search chart sees only canonical structures, and
     // the heap's scan is available separately for its own section.
     expect(canonicalSearch(r).map((v) => v.series.structure)).toEqual([
-      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'bst', 'avl',
+      'array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'bst', 'avl', 'hashbs',
     ]);
     expect(heapSearch(r).map((v) => v.series.structure)).toEqual(['heap']);
 
@@ -235,6 +251,7 @@ describe('runAllSweeps', () => {
       '__skipMutationProof',
       '__rbtMutationProof',
       '__btreeMutationProof',
+      '__hbsMutationProof',
       '__compareMeta',
       '__heapMutationProof',
     ]);
@@ -260,7 +277,7 @@ describe('runAllSweeps', () => {
 
   it('never puts a string-keyed structure in a numeric result (docs/METHODOLOGY.md §2.5)', async () => {
     const r = await runAllSweeps(fakeEngine([]), generateUniform(5_000, 0, 5_000, true, 1));
-    const every = [...r.search, ...r.mutation, ...r.trees, ...r.skiplist, ...r.btree, ...r.heap];
+    const every = [...r.search, ...r.mutation, ...r.trees, ...r.skiplist, ...r.btree, ...r.hashbs, ...r.heap];
     // Sharing a chart takes the same op set *and* the same key type. The two runs produce
     // different result objects precisely so no chart can be handed a mixture.
     expect(every.every((v) => REGISTRY[v.series.structure].keyType === 'number')).toBe(true);

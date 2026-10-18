@@ -58,6 +58,7 @@ use super::btree::{BTree, MIN_DEGREE};
 use super::doubly_linked_list::DoublyLinkedListF64;
 use super::dyn_array::ArrayF64;
 use super::hash_set::HashSetF64;
+use super::hash_set_bs::HashSetBsF64;
 use super::hash_set_oa::HashSetOaF64;
 use super::linked_list::LinkedListF64;
 use super::rbt::RbtF64;
@@ -67,8 +68,8 @@ use wasm_bindgen::prelude::*;
 
 /// The structure ids this module profiles — the registry's canonical numeric structures
 /// (`src/registry.ts`), in the order the TS side lists them.
-pub const MAX_OP_STRUCTURES: [&str; 11] =
-    ["array", "ll", "sarr", "hashset", "skiplist", "dll", "rbt", "btree", "hashoa", "bst", "avl"];
+pub const MAX_OP_STRUCTURES: [&str; 12] =
+    ["array", "ll", "sarr", "hashset", "skiplist", "dll", "rbt", "btree", "hashoa", "bst", "avl", "hashbs"];
 
 /// What one profiled run returns: per counter, the largest single-operation value over the
 /// build and over the delete pass (see the module doc for the workload). Fields that do not
@@ -323,6 +324,25 @@ impl Subject for OpenAddressing {
     }
 }
 
+/// The backward-shift set: the same table as [`OpenAddressing`] on a delete-free build, so the
+/// same rebuilds; its delete's shift scan is inside `delete_one_counted`'s ops, as on the chart.
+struct BackwardShift(HashSetBsF64);
+impl Subject for BackwardShift {
+    fn insert(&mut self, key: f64) -> Step {
+        let cap = self.0.capacity();
+        let (_, ops) = self.0.insert_one_counted(key);
+        let moved = if self.0.capacity() != cap { self.0.len() as u64 } else { 0 };
+        Step { moved: Some(moved), ..Step::ops(ops) }
+    }
+    fn delete(&mut self, key: f64) -> (bool, Step) {
+        let (r, ops) = self.0.delete_one_counted(key);
+        (r, Step::ops(ops))
+    }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 /// The plain adapters: insert → `u64`, delete → `(bool, u64)`, no extra counters.
 macro_rules! plain_subject {
     ($name:ident, $ty:ty) => {
@@ -413,6 +433,7 @@ pub fn profile(structure: &str, keys: &[f64], n: usize) -> Option<MaxOpProfile> 
         "sarr" => run(Sorted(SortedArrayF64::new_empty()), keys),
         "hashset" => run(Chaining(HashSetF64::new(empty, 0)), keys),
         "hashoa" => run(OpenAddressing(HashSetOaF64::new(empty, 0)), keys),
+        "hashbs" => run(BackwardShift(HashSetBsF64::new(empty, 0)), keys),
         "ll" => run(Singly(LinkedListF64::new_empty()), keys),
         "dll" => run(Doubly(DoublyLinkedListF64::new_empty()), keys),
         "skiplist" => run(Skip(SkipListF64::new_empty()), keys),
@@ -596,6 +617,9 @@ mod tests {
         let o = p("hashoa", &ks);
         assert!(o.insert_max_moved > 1500.0, "OA rehash moved {}", o.insert_max_moved);
         assert_eq!(o.insert_max_moved, h.insert_max_moved, "same growth points, same keys moved");
+        let b = p("hashbs", &ks);
+        assert_eq!(b.insert_max_moved, o.insert_max_moved, "a delete-free build is the OA set's table");
+        assert_eq!(b.insert_max_ops, o.insert_max_ops, "same table, same probes on every insert");
         let s = p("sarr", &ks);
         assert!(s.insert_max_moved >= 2000.0);
         for id in ["ll", "dll", "skiplist", "bst", "btree", "avl", "rbt"] {
@@ -615,7 +639,7 @@ mod tests {
             s.dedup();
             s.len()
         };
-        for id in ["hashset", "hashoa"] {
+        for id in ["hashset", "hashoa", "hashbs"] {
             let r = p(id, &ks);
             assert_eq!(r.stored as usize, distinct, "{id}");
             assert_eq!(r.delete_misses as usize, ks.len() - distinct, "{id}");

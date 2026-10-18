@@ -18,7 +18,7 @@ import { STORED_CSV_COLUMNS, storedCsvCells, storedJsonFields } from './storedAx
  * (docs/METHODOLOGY.md §4 hurdle 8).
  *
  * `max_load` is the rehash threshold of a **hash set** row (`SweepSeries.maxLoad`, docs/PLAN.md
- * §13) — the chaining set's fixed 0.75 and the open-addressing set's chosen one — so a CSV says
+ * §13) — the chaining and backward-shift sets' fixed 0.75, the open-addressing set's chosen one — so a CSV says
  * on its own whether the pair was measured like for like; empty on every other row. Appended
  * after `stored_n` for the same reason.
  */

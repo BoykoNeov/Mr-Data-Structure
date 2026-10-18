@@ -22,6 +22,6 @@ describe('max-op wire contract (docs/PLAN.md §13)', () => {
     expect(MAX_OP_STRUCTURES).not.toContain('heap');
     expect(MAX_OP_STRUCTURES).not.toContain('graph');
     // Mirrors `MAX_OP_STRUCTURES` in bench-engine/src/structures/maxop.rs, order included.
-    expect(MAX_OP_STRUCTURES).toEqual(['array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'bst', 'avl']);
+    expect(MAX_OP_STRUCTURES).toEqual(['array', 'll', 'sarr', 'hashset', 'skiplist', 'dll', 'rbt', 'btree', 'hashoa', 'bst', 'avl', 'hashbs']);
   });
 });

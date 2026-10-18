@@ -55,6 +55,7 @@ export const MAX_OP_STRUCTURES: readonly StructureId[] = [
   'hashoa',
   'bst',
   'avl',
+  'hashbs',
 ];
 
 /** Copy the profile's fields off a wasm object (or anything carrying them) into a plain one. */

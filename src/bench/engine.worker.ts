@@ -11,6 +11,7 @@ import init, {
   MinHeapF64,
   SkipListF64,
   HashSetOaF64,
+  HashSetBsF64,
   ArrayStr,
   HashSetStr,
   TrieStr,
@@ -517,8 +518,8 @@ const api = {
     // At a non-default `oaMaxLoad` (./oaLoad) the two tables no longer share a capacity at every
     // n, and that sentence stops being true — the page says so beside the chart and on the PNG.
     const hashoa = measureSweep(sizes, searchRunnerFactory(hashOaAt(oaMaxLoad), keys, mix), now, opts);
-    // The **BST** and the **AVL** come last, after the ten series the runtime gate's search
-    // bands were calibrated on, so adding them moved none of those conditions. They are the
+    // The **BST** and the **AVL** come after the ten series the runtime gate's search
+    // bands were calibrated on (only the backward-shift hash set, below, follows them), so adding them moved none of those conditions. They are the
     // pair the mutation chart already draws, now on the search chart too: one descent from the
     // root, so each line reads its tree's depth. On shuffled input the two nearly coincide; on
     // sorted input the BST is a chain and its search is O(n) while the AVL's stays O(log n) —
@@ -535,6 +536,15 @@ const api = {
     // (docs/METHODOLOGY.md §4 hurdle 15).
     const bst = measureSweep(sizes, searchRunnerFactory(BstF64, keys, mix), now, opts);
     const avl = measureSweep(sizes, searchRunnerFactory(AvlF64, keys, mix), now, opts);
+    // The **backward-shift hash set** comes after all of them, so adding it moved no
+    // existing series' conditions. A search sweep never deletes, and a delete-free build of
+    // this set is the open-addressing set's table slot for slot (same hash, probe step,
+    // doubling and re-placement order — `structures::methodology_hbs::
+    // a_delete_free_build_is_the_tombstone_sets_table_slot_for_slot`), so on the op-count
+    // signal this line lies exactly on the light-blue one. That coincidence is the control:
+    // whatever separates the two on the churn chart is the delete policy and nothing else.
+    // No wall-clock ratio between them is asserted anywhere.
+    const hashbs = measureSweep(sizes, searchRunnerFactory(HashSetBsF64, keys, mix), now, opts);
     // Array → linked list → sorted array → hash set: the spread of search cost,
     // O(n) scan → O(n) pointer-walk → O(log n) → O(1) (docs/PLAN.md §8). The array and
     // the linked list share the *same* O(n) shape via different mechanisms — the §2.2
@@ -595,6 +605,7 @@ const api = {
       { structure: 'hashoa', op: 'search', points: hashoa },
       { structure: 'bst', op: 'search', points: bst },
       { structure: 'avl', op: 'search', points: avl },
+      { structure: 'hashbs', op: 'search', points: hashbs },
     ], oaMaxLoad);
   },
   /**
@@ -816,6 +827,40 @@ const api = {
       opts,
     );
     return [{ structure: 'btree', op: 'churn', points: churn }, fd.insert, fd.delete];
+  },
+  /**
+   * Run the §6.3 size-mutating measurement for the **backward-shift hash set** across
+   * `sizes`: churn primary plus the finite-difference split, three series tagged `'hashbs'`
+   * (docs/PLAN.md §13; docs/METHODOLOGY.md §2.8, regime NEW). Its own call, run by the
+   * Compare pipeline **after every existing mutation sweep** (the heap's included), so
+   * adding it changed no existing series' conditions — not because its recipe differs: it is
+   * the flat structures' single-key runner with the open-addressing set's `max + 1`, which
+   * `set_churn_key` expands into the **same block** of absent keys the tombstone set churns.
+   * Equal footing is the point: the two lines then differ only in what a delete leaves
+   * behind. There is no priming (no tombstone exists), only a capacity settle that matters at
+   * the load threshold, and every pair restores the table bit for bit
+   * (`hash_set_bs::tests::the_first_pair_is_already_the_steady_state`). `keys` is
+   * transferred in by the caller.
+   */
+  async runHashBsMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]> {
+    await ready;
+    const now = () => performance.now();
+    const Ctor = HashSetBsF64 as unknown as MutationStructCtor;
+    const churn = measureSweep(sizes, churnRunnerFactory(Ctor, keys, aboveMax), now, opts);
+    const fd = measureMutationFd(
+      'hashbs',
+      sizes,
+      buildRunnerFactory(Ctor, keys),
+      buildTeardownRunnerFactory(Ctor, keys),
+      now,
+      opts,
+    );
+    // Fixed at 0.75 like the chaining set; stamped so its CSV rows say so (./oaLoad).
+    return stampMaxLoad([{ structure: 'hashbs', op: 'churn', points: churn }, fd.insert, fd.delete], DEFAULT_OA_MAX_LOAD);
   },
   /**
    * Run the §6.3 size-mutating measurement for the **min-heap** across `sizes` — the churn

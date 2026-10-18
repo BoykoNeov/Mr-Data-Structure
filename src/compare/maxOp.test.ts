@@ -18,7 +18,7 @@ import {
 } from './maxOp';
 
 const TREES: readonly StructureId[] = ['avl', 'rbt'];
-const RESIZING: readonly StructureId[] = ['array', 'sarr', 'hashset', 'hashoa'];
+const RESIZING: readonly StructureId[] = ['array', 'sarr', 'hashset', 'hashoa', 'hashbs'];
 
 /**
  * A fake profile with the real shape: `NaN` where a counter does not apply, exactly as the
