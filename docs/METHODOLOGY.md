@@ -103,7 +103,7 @@ position. Every regime is pinned clock-free on exact op-counts in
 | # | structure | regime | why | class agreement |
 |---|---|---|---|---|
 | 1 | unsorted array | **tight** (< 2 %) | costs are position-uniform: insert is a free append, any delete is O(n) | yes, O(n) |
-| 2 | hash set | **loose** (< 50 %) | both sides are tiny O(1) counts; the churn key's chain vs the swept average | yes, O(1) |
+| 2 | hash set | **close** (< 20 %; 8 %: churn 3.75 vs sum 3.46) | both sides are tiny O(1) counts; churn averages its key block's chains against the swept average (§2.8 rule 4) | yes, O(1) |
 | 3 | BST, sorted input (chain) | **FD sum overshoots churn** on the insert side (1500 vs 1002) | the *delete* halves match exactly (both alternate the two ends), but churn's insert averages a full-chain descent with a root-adjacent one (≈ n/2) while the build drops every key at the chain's bottom (≈ n) | class only, O(n) |
 | 4 | BST, shuffled (balanced) | **FD sum overshoots churn** (~32 %: 23.7 vs 18) | churn rides the two cheap spines (≈ ln n each) while `insert_fd` reflects the average depth (≈ 2 ln n) and `delete_fd` is added on top | class only, O(log n) |
 | 5 | AVL | **close** (~10 %), churn ≥ sum | height and average depth differ by only ~1.44×, so the spine probes and the average insert nearly coincide | yes, O(log n) |
@@ -535,7 +535,7 @@ that breaks a naive tombstone policy. Four rules, each pinned:
    points where the block stayed within 1.40× and the 64-key mean within 1.13×
    (`hash_set::tests::a_single_churn_key_samples_one_bucket`). It needs no priming — a pair
    appends to a chain and removes that last entry, so the table is restored exactly — and
-   its churn now sits within 8 % of its FD sum, where one key needed a 50 % slack.
+   its churn now sits within 8 % of its FD sum, where the one-key version's test allowed a 50 % slack.
 
 **Watching it (Explore).** The open-addressing tab animates the counting convention
 literally: `hoa.hash` and `hoa.probe` are the only cost events, the empty slot that ends a

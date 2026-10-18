@@ -1488,7 +1488,7 @@ insert/search/delete group on a shared key type.
     open-addressing sets' `clamp(⌊len/32⌋, 1, 16)`-key block from `max + 1` and reports the mean
     per pair, instead of one key. One key's cost is its bucket's chain: on the mutation ladder it
     stepped up to 2.33× between sweep points, the block stays within 1.40×, and churn now sits
-    within 8 % of the FD sum (the old test needed a 50 % slack). No priming — a chained pair
+    within 8 % of the FD sum (the one-key test allowed a 50 % slack). No priming — a chained pair
     restores the table exactly. This **changes the mount-time run's hash set churn line** (the
     first §13 extra that does), slightly and towards steadier; regime 12's chaining baseline is
     unchanged at 3.94. Gate: `hashset churn stays flat` passed (slopes 0.05, −0.01) on two runs on
