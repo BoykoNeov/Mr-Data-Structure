@@ -18,7 +18,9 @@ import init, {
   RbtF64,
   GraphAdj,
   BTreeF64,
+  max_op_profile,
 } from '../../bench-engine/pkg/bench_engine.js';
+import { readMaxOpProfile, type RawMaxOpProfile } from './maxOp';
 import { measureGraphs, type GraphInput, type GraphTraversalMeasure } from './graphBench';
 import { encodeStringKeys } from '../data/marshal';
 import {
@@ -1020,6 +1022,34 @@ const api = {
     await ready;
     const now = () => performance.now();
     return measureGraphs(graphs, (edges, numVertices) => new GraphAdj(edges, numVertices), now, opts);
+  },
+  /**
+   * The worst-single-operation profile (docs/PLAN.md §13; `bench-engine/src/structures/maxop.rs`):
+   * for each structure and each size, the largest per-call count over the build and over the
+   * ends-first delete pass. **Clock-free** — no `measureSweep`, no `performance.now()` — so its
+   * figures are exact and this call cannot shift any timed series. Called on request only,
+   * never from the mount-time run. Structure-major, as the caller lists them; an id the Rust
+   * side does not profile is an error, not a gap.
+   */
+  async runMaxOpProfile(
+    keys: Float64Array,
+    sizes: number[],
+    structures: readonly StructureId[],
+  ): Promise<RawMaxOpProfile[]> {
+    await ready;
+    const out: RawMaxOpProfile[] = [];
+    for (const structure of structures) {
+      for (const n of sizes) {
+        const p = max_op_profile(structure, keys.subarray(0, n), n);
+        if (!p) throw new Error(`no max-op profile for '${structure}'`);
+        try {
+          out.push(readMaxOpProfile(structure, p));
+        } finally {
+          p.free();
+        }
+      }
+    }
+    return out;
   },
 };
 

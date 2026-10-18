@@ -139,6 +139,12 @@ function fakeEngine(log: string[]): BenchEngine {
       log.push('graph');
       throw new Error('a key-dataset run must not measure the graph');
     },
+    // The worst-single-operation profile runs on request only (src/compare/maxOp.ts), never
+    // inside a sweep run — the mount-time auto-run must measure exactly what it always has.
+    runMaxOpProfile: async () => {
+      log.push('maxop');
+      throw new Error('a sweep run must not profile the worst single operation');
+    },
     dispose: () => {},
   };
 }

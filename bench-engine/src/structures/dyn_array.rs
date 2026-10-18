@@ -235,6 +235,21 @@ impl ArrayF64 {
         (removed, ops)
     }
 
+    /// Test/max-op helper: append one key, returning its op-count — always 0, since an
+    /// append compares and shifts nothing (the metric above). Any reallocation the push
+    /// triggers is *not* in that count; [`Self::capacity`] lets the caller see it
+    /// (`structures::maxop`, docs/PLAN.md §13). Mutates the array.
+    pub fn insert_one_counted(&mut self, key: f64) -> u64 {
+        self.data.push(key);
+        0
+    }
+
+    /// Slots the backing block holds before it must grow — a max-op hook for observing a
+    /// reallocation from outside (`structures::maxop`); not on the wasm surface.
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
+    }
+
     /// Stored keys in insertion order — the array's iteration order. A
     /// conformance hook (docs/PLAN.md §12); not on the wasm surface.
     pub fn keys_in_order(&self) -> Vec<f64> {
