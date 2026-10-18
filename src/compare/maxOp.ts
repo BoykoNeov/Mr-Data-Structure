@@ -2,7 +2,8 @@ import type { BenchEngine } from '../bench/BenchEngine';
 import { MAX_OP_STRUCTURES, type RawMaxOpProfile } from '../bench/maxOp';
 import type { StructureId } from '../bench/measure';
 import { marshalKeys, type Dataset } from '../data';
-import { REGISTRY } from '../registry';
+import { REGISTRY, type InputShape } from '../registry';
+import { inputShapeOf } from './shape';
 
 /**
  * The **worst single operation** view's orchestration and data shaping (docs/PLAN.md §13,
@@ -72,6 +73,8 @@ export interface MaxOpResult {
   /** Always `true`: the marker exports carry so a reader cannot mistake these for timings. */
   readonly clockFree: true;
   readonly workload: string;
+  /** The dataset's input order, as the overlay reads it (`./shape`) — the findings name sorted input only on it. */
+  readonly shape: InputShape;
   readonly sizes: readonly number[];
   readonly structures: readonly StructureId[];
   /** Structure-major: every size of the first structure, then the next. */
@@ -166,8 +169,10 @@ export function maxOpFindings(r: MaxOpResult): string[] {
               `up, and that per-operation bound is the real difference between the two schemes. It says nothing about ` +
               `rotation totals, which are close (METHODOLOGY §2.9).`
           : `On this data the AVL’s worst delete stayed within the red-black limit too. Its expensive deletes need a ` +
-              `tree that is already lopsided somewhere; sorted input builds a near-perfect one, so the two schemes ` +
-              `come out level here.`,
+              `tree that is already lopsided somewhere; ` +
+              (r.shape === 'sorted'
+                ? `sorted (or nearly sorted) input builds a near-perfect one, so the two schemes come out level here.`
+                : `on this sequence of keys the tree never got lopsided enough for one delete to cascade far.`),
       );
     }
   }
@@ -238,6 +243,7 @@ export async function runMaxOp(
   const result: MaxOpResult = {
     clockFree: true,
     workload: MAX_OP_WORKLOAD,
+    shape: inputShapeOf(dataset),
     sizes: [...sizes],
     structures: MAX_OP_STRUCTURES,
     rows: raw.map(shapeMaxOp),
@@ -294,6 +300,7 @@ export function maxOpJson(r: MaxOpResult, meta: Record<string, unknown> = {}): s
       clockFree: r.clockFree,
       signal: MAX_OP_SIGNAL,
       workload: r.workload,
+      inputShape: r.shape,
       findings: maxOpFindings(r),
       sizes: r.sizes,
       rows: r.rows,

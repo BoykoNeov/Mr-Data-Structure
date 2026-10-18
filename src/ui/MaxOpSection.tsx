@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { BenchEngine } from '../bench/BenchEngine';
 import type { StructureId } from '../bench/measure';
 import {
@@ -241,41 +241,55 @@ export function MaxOpNotes() {
   );
 }
 
+/** A finished profile and the dataset it counted, captured when the count started. */
+interface Counted {
+  readonly result: MaxOpResult;
+  readonly description: string;
+  readonly order: Dataset['order'];
+}
+
 export function MaxOpSection({ engineOf, busy, dataset, sizes }: MaxOpSectionProps) {
-  const [result, setResult] = useState<MaxOpResult | null>(null);
+  const [counted, setCounted] = useState<Counted | null>(null);
   const [status, setStatus] = useState('not run yet');
   const [running, setRunning] = useState(false);
+  // The dataset on screen *now*, for a profile that resolves after the user moved on.
+  const current = useRef<Dataset | null>(dataset);
 
   // A profile belongs to the dataset it counted; a new run on screen retires it.
   useEffect(() => {
-    setResult(null);
+    current.current = dataset;
+    setCounted(null);
     setStatus('not run yet');
   }, [dataset]);
-
-  const description = dataset ? describeDataset(dataset) : '';
 
   const run = async () => {
     const engine = engineOf();
     if (!engine || !dataset || !sizes) return;
+    const started = dataset;
+    const description = describeDataset(started);
     setRunning(true);
     try {
       await engine.ready();
-      setResult(await runMaxOp(engine, dataset, sizes, setStatus));
+      const result = await runMaxOp(engine, started, sizes, setStatus);
+      // The picker stays live while this counts; a result for a dataset no longer on screen
+      // would sit under the wrong "Counted on" line and export with the wrong provenance.
+      if (current.current !== started) return;
+      setCounted({ result, description, order: started.order });
       setStatus('ready');
     } catch (err) {
-      setStatus('error: ' + (err as Error).message);
+      if (current.current === started) setStatus('error: ' + (err as Error).message);
     } finally {
       setRunning(false);
     }
   };
 
   const exportAs = (kind: 'csv' | 'json') => {
-    if (!result) return;
-    if (kind === 'csv') download('mr-data-structure-worst-op.csv', maxOpCsv(result), 'text/csv');
+    if (!counted) return;
+    if (kind === 'csv') download('mr-data-structure-worst-op.csv', maxOpCsv(counted.result), 'text/csv');
     else
       download(
         'mr-data-structure-worst-op.json',
-        maxOpJson(result, { dataset: description, order: dataset?.order }),
+        maxOpJson(counted.result, { dataset: counted.description, order: counted.order }),
         'application/json',
       );
   };
@@ -301,7 +315,7 @@ export function MaxOpSection({ engineOf, busy, dataset, sizes }: MaxOpSectionPro
             {running ? status : busy ? 'waiting for the key sweeps above' : ready ? status : 'needs a run on numeric keys first'}
           </strong>
         </span>
-        {result && (
+        {counted && (
           <>
             {' '}
             <button onClick={() => exportAs('csv')} style={{ marginLeft: 12, fontSize: 12 }}>export counts CSV</button>{' '}
@@ -309,7 +323,7 @@ export function MaxOpSection({ engineOf, busy, dataset, sizes }: MaxOpSectionPro
           </>
         )}
       </div>
-      {result && <MaxOpResults result={result} description={description} />}
+      {counted && <MaxOpResults result={counted.result} description={counted.description} />}
     </>
   );
 }

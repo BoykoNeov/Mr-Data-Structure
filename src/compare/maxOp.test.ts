@@ -123,10 +123,21 @@ describe('maxOpFindings: sentences the data supports, never a claim about totals
   it('on sorted data: the two schemes level, and the deeper red-black tree’s worst delete dearer', async () => {
     const r = await runMaxOp(fakeEngine(() => 2), generateSorted(5000), SIZES, undefined, undefined);
     const f = maxOpFindings(r).join(' ');
+    expect(r.shape).toBe('sorted');
     expect(f).toMatch(/stayed within the red-black limit too/);
+    expect(f).toMatch(/sorted \(or nearly sorted\) input builds a near-perfect one/);
     expect(f).not.toMatch(/one AVL delete needed/);
     expect(f).toMatch(/red-black tree’s worst delete .* costs more than the AVL’s/);
     expect(f).not.toMatch(NO_TOTALS);
+  });
+
+  it('does not credit sorted input when the data is not sorted', async () => {
+    const r = await runMaxOp(fakeEngine(() => 2), uniform, SIZES, undefined, undefined);
+    expect(r.shape).toBe('random');
+    const f = maxOpFindings(r).join(' ');
+    expect(f).toMatch(/stayed within the red-black limit too/);
+    expect(f).not.toMatch(/sorted (\(or nearly sorted\) )?input/i);
+    expect(f).toMatch(/never got lopsided enough/);
   });
 
   it('flags a broken red-black bound instead of reporting it as held', async () => {
