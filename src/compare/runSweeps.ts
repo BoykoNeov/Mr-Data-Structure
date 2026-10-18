@@ -8,6 +8,7 @@ import {
   type ProbeMixSummary,
 } from '../bench/probeMix';
 import { geometricSweep } from '../bench/sweep';
+import { checkOaMaxLoad, DEFAULT_OA_MAX_LOAD } from '../bench/oaLoad';
 import {
   marshalKeys,
   type Dataset,
@@ -129,6 +130,12 @@ export interface CompareResult {
   readonly mutationSizes: readonly number[];
   /** The present/absent probe mix the search sweep ran at (docs/PLAN.md §6.3, ./probeMix). */
   readonly probeMix: ProbeMixSummary;
+  /**
+   * The open-addressing hash set's rehash threshold this run measured (docs/PLAN.md §13,
+   * `../bench/oaLoad`). 0.75 is the chaining set's, and the like-for-like pairing; anything
+   * else is what the page's load-factor caveat keys on.
+   */
+  readonly oaMaxLoad: number;
 }
 
 /**
@@ -220,6 +227,8 @@ interface ProofWindow {
     meanKeyBytes: number;
     /** The search probe mix this run measured (the gate's slope bands assume the default). */
     probeMix?: ProbeMixSummary;
+    /** The open-addressing set's rehash threshold (numeric runs only; the gate expects 0.75). */
+    oaMaxLoad?: number;
   };
 }
 
@@ -286,6 +295,12 @@ export function meanKeyBytes(offsets: Uint32Array): number {
  *
  * `mix` is the search sweep's present/absent probe split (docs/PLAN.md §6.3); it reaches
  * every structure alike, and the default is the workload the runtime gate was calibrated on.
+ *
+ * `oaMaxLoad` is the open-addressing hash set's rehash threshold (docs/PLAN.md §13,
+ * `../bench/oaLoad`) — the one knob here that reaches a *single* structure, by design: the
+ * chaining set stays at 0.75, so a non-default value ends the like-for-like pairing, and the
+ * result carries it so every view of the run can say so. It goes to both engine calls the
+ * set is measured in, explicitly, and is checked before either one.
  */
 export async function runAllSweeps(
   engine: BenchEngine,
@@ -293,19 +308,21 @@ export async function runAllSweeps(
   onStatus: (s: string) => void = () => {},
   win: ProofWindow | undefined = typeof window === 'undefined' ? undefined : (window as ProofWindow),
   mix: ProbeMix = DEFAULT_PROBE_MIX,
+  oaMaxLoad: number = DEFAULT_OA_MAX_LOAD,
 ): Promise<CompareResult> {
   const data = numericOrThrow(dataset);
+  checkOaMaxLoad(oaMaxLoad);
   const shape = inputShapeOf(data);
   const searchSizes = sizesFor(data, SWEEP_MIN, SWEEP_MAX);
   const mutationSizes = sizesFor(data, Math.min(MUT_MIN, data.size), MUT_MAX);
   const probeMix = summarizeMix(mix, searchSizes[searchSizes.length - 1]);
 
   onStatus('running search sweep…');
-  const search = (await engine.runSweep(keyBuffer(data), searchSizes, SEARCH_OPTS, mix)).map((s) => toView(s));
+  const search = (await engine.runSweep(keyBuffer(data), searchSizes, SEARCH_OPTS, mix, oaMaxLoad)).map((s) => toView(s));
   if (win) win.__sweepProof = toProof(search);
 
   onStatus('running mutation sweep (array, hash sets, sorted array, linked lists)…');
-  const mutation = (await engine.runMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
+  const mutation = (await engine.runMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS, oaMaxLoad)).map((s) => toView(s));
   if (win) win.__mutationProof = toProof(mutation);
 
   onStatus('running BST mutation sweep…');
@@ -339,6 +356,7 @@ export async function runAllSweeps(
       keyType: 'number',
       meanKeyBytes: 0,
       probeMix,
+      oaMaxLoad,
     };
     // Set last, so the runtime gate can poll this one global as the "all sweeps done" signal.
     win.__heapMutationProof = toProof(heap);
@@ -355,6 +373,7 @@ export async function runAllSweeps(
     searchSizes,
     mutationSizes,
     probeMix,
+    oaMaxLoad,
   };
 }
 

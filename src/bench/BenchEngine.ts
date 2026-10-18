@@ -30,12 +30,17 @@ export interface BenchEngine {
    *
    * `mix` is the present/absent probe split (docs/PLAN.md §6.3, `./probeMix`) — one value
    * applied to **every** structure in the run; omitted ⇒ the calibrated 64 + 64 default.
+   *
+   * `oaMaxLoad` is the **open-addressing hash set's** rehash threshold (docs/PLAN.md §13,
+   * `./oaLoad`) and nothing else's — the chaining set stays at 0.75; omitted ⇒ 0.75, the
+   * like-for-like pairing. Both hash set series come back with `maxLoad` stamped.
    */
   runSweep(
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,
     mix?: ProbeMix,
+    oaMaxLoad?: number,
   ): Promise<SweepSeries[]>;
 
   /**
@@ -48,11 +53,15 @@ export interface BenchEngine {
    * Keep `sizes` modest — four of the six have an O(n²) build or teardown (the
    * array's ordered delete, the sorted array's shifting insert and delete, both
    * linked lists' walk-to-the-tail teardown).
+   *
+   * `oaMaxLoad` is the open-addressing set's threshold, as in {@link runSweep}: it reaches that
+   * set's churn and both of its finite-difference halves.
    */
   runMutationSweep(
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,
+    oaMaxLoad?: number,
   ): Promise<SweepSeries[]>;
 
   /**

@@ -18,6 +18,7 @@ import {
 } from './runSweeps';
 import { REGISTRY } from '../registry';
 import { inputShapeOf, isMonotone } from './shape';
+import { stampMaxLoad } from '../bench/oaLoad';
 
 /**
  * The Compare pipeline is pure orchestration over the engine boundary, so it is
@@ -386,5 +387,61 @@ describe('helpers', () => {
     expect(inputShapeOf(makeDataset([1, 3, 2], 'number', { kind: 'as-loaded' }))).toBe('random');
     expect(inputShapeOf(makeDataset(['b', 'a'], 'string', { kind: 'as-loaded' }))).toBe('random');
     expect(isMonotone([1])).toBe(true);
+  });
+});
+
+describe('the open-addressing load factor (docs/PLAN.md §13)', () => {
+  /** The fake engine, recording the threshold each of the two hash-set calls received. */
+  function loadSpy(): { engine: BenchEngine; seen: string[] } {
+    const seen: string[] = [];
+    const base = fakeEngine([]);
+    return {
+      seen,
+      engine: {
+        ...base,
+        runSweep: async (keys, sizes, opts, mix, oaMaxLoad) => {
+          seen.push(`search:${oaMaxLoad}`);
+          return stampMaxLoad(await base.runSweep(keys, sizes, opts, mix), oaMaxLoad ?? 0.75);
+        },
+        runMutationSweep: async (keys, sizes, opts, oaMaxLoad) => {
+          seen.push(`mut:${oaMaxLoad}`);
+          return stampMaxLoad(await base.runMutationSweep(keys, sizes, opts), oaMaxLoad ?? 0.75);
+        },
+      },
+    };
+  }
+
+  it('passes 0.75 explicitly to both calls by default, and reports it to the gate', async () => {
+    const { engine, seen } = loadSpy();
+    const win: Record<string, unknown> = {};
+    const r = await runAllSweeps(engine, generateUniform(5_000, 0, 5_000, true, 1), undefined, win);
+    expect(seen).toEqual(['search:0.75', 'mut:0.75']);
+    expect(r.oaMaxLoad).toBe(0.75);
+    expect((win.__compareMeta as { oaMaxLoad: unknown }).oaMaxLoad).toBe(0.75);
+    // No new global, no new status line: the gate's key order and "done" signal are untouched.
+    expect(Object.keys(win)).toHaveLength(9);
+  });
+
+  it('carries a chosen threshold to both calls the set is measured in, and onto the result', async () => {
+    const { engine, seen } = loadSpy();
+    const win: Record<string, unknown> = {};
+    const r = await runAllSweeps(engine, generateUniform(5_000, 0, 5_000, true, 1), undefined, win, undefined, 0.5);
+    expect(seen).toEqual(['search:0.5', 'mut:0.5']);
+    expect(r.oaMaxLoad).toBe(0.5);
+    expect((win.__compareMeta as { oaMaxLoad: unknown }).oaMaxLoad).toBe(0.5);
+    // The stamps reach the views: the open-addressing set at 0.5, the chaining set still 0.75.
+    const stamp = (st: string, op: string) =>
+      [...r.search, ...r.mutation].find((v) => v.series.structure === st && v.series.op === op)?.series.maxLoad;
+    expect([stamp('hashoa', 'search'), stamp('hashoa', 'churn'), stamp('hashoa', 'delete')]).toEqual([0.5, 0.5, 0.5]);
+    expect([stamp('hashset', 'search'), stamp('hashset', 'churn')]).toEqual([0.75, 0.75]);
+    expect(stamp('array', 'search')).toBeUndefined();
+  });
+
+  it('refuses a threshold the engine would trap on before calling it', async () => {
+    const { engine, seen } = loadSpy();
+    await expect(
+      runAllSweeps(engine, generateUniform(5_000, 0, 5_000, true, 1), undefined, {}, undefined, 1),
+    ).rejects.toThrow(/outside/);
+    expect(seen).toEqual([]);
   });
 });

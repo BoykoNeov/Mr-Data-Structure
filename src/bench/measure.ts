@@ -119,6 +119,13 @@ export interface SweepSeries {
   readonly structure: StructureId;
   readonly op: SweepOp;
   readonly points: readonly SweepPoint[];
+  /**
+   * The rehash threshold a **hash set** series was measured at (docs/PLAN.md §13, the
+   * load-factor control; `./oaLoad`). Stamped by the engine on the chaining and the
+   * open-addressing set only, so an export can say whether the pair shared a load factor;
+   * absent on every other series.
+   */
+  readonly maxLoad?: number;
 }
 
 /**

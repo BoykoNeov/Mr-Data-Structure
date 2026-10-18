@@ -43,19 +43,21 @@ class WasmBenchEngine implements BenchEngine {
     sizes: number[],
     opts?: MeasureOptions,
     mix?: ProbeMix,
+    oaMaxLoad?: number,
   ): Promise<SweepSeries[]> {
     // Transfer the key buffer rather than clone it (docs/PLAN.md risk R7); this
     // detaches `keys` on this thread, so the caller must not reuse it.
-    return this.api.runSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts, mix);
+    return this.api.runSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts, mix, oaMaxLoad);
   }
 
   runMutationSweep(
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,
+    oaMaxLoad?: number,
   ): Promise<SweepSeries[]> {
     // Transfer the key buffer (docs/PLAN.md risk R7) — detaches `keys` here.
-    return this.api.runMutationSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts);
+    return this.api.runMutationSweep(Comlink.transfer(keys, [keys.buffer]), sizes, opts, oaMaxLoad);
   }
 
   runBstMutationSweep(

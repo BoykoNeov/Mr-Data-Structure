@@ -15,9 +15,14 @@ import type { SeriesView } from './SweepChart';
  * data with repeats, and empty where the series has no built instance (the
  * finite-difference halves). Appended last so existing column positions do not move
  * (docs/METHODOLOGY.md §4 hurdle 8).
+ *
+ * `max_load` is the rehash threshold of a **hash set** row (`SweepSeries.maxLoad`, docs/PLAN.md
+ * §13) — the chaining set's fixed 0.75 and the open-addressing set's chosen one — so a CSV says
+ * on its own whether the pair was measured like for like; empty on every other row. Appended
+ * after `stored_n` for the same reason.
  */
 export const CSV_HEADER =
-  'structure,op,n,nanos_per_op,min_nanos,max_nanos,stddev_nanos,op_count,batch,reps,stored_n';
+  'structure,op,n,nanos_per_op,min_nanos,max_nanos,stddev_nanos,op_count,batch,reps,stored_n,max_load';
 
 export function toCsv(views: readonly SeriesView[]): string {
   const rows = [CSV_HEADER];
@@ -36,6 +41,7 @@ export function toCsv(views: readonly SeriesView[]): string {
           p.batch,
           p.reps,
           p.storedN ?? '',
+          v.series.maxLoad ?? '',
         ].join(','),
       );
     }
@@ -52,6 +58,8 @@ export function toJson(views: readonly SeriesView[], meta: Record<string, unknow
       series: views.map((v) => ({
         structure: v.series.structure,
         op: v.series.op,
+        // A hash set's rehash threshold (docs/PLAN.md §13), as the CSV's `max_load` column.
+        ...(v.series.maxLoad === undefined ? {} : { maxLoad: v.series.maxLoad }),
         fit: {
           best: v.fit.best,
           r2: v.fit.r2,

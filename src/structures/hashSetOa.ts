@@ -19,8 +19,9 @@
  * together they fix the layout and therefore every probe count — keep churn honest:
  *  1. insert reuses the **first** tombstone on its path, after walking on to an empty
  *     slot to confirm the key is absent;
- *  2. tombstones count toward the load: rehash when `live + tombs > 0.75 · cap`, purging
- *     in place when `live ≤ 0.375 · cap`, otherwise doubling (the table never shrinks);
+ *  2. tombstones count toward the load: rehash when `live + tombs > L · cap`, purging
+ *     in place when `live ≤ L · cap / 2`, otherwise doubling (the table never shrinks) —
+ *     `L` is 0.75 unless the constructor is given another threshold (below);
  *  3. {@link HashSetOaF64.setChurnKey} primes each churn key with an untimed
  *     insert+delete pair, repeating whole passes until one changes nothing;
  *  4. churn cycles a block of `clamp(⌊len / 32⌋, 1, 16)` consecutive keys, not one.
@@ -31,13 +32,19 @@
  * (`src/viz/trace.hoa.test.ts`, chained to the corpus). The empty slot that ends a walk
  * (`hoa.stop`) and the rehash's re-placement are traced but free, as they are uncounted.
  * The churn helpers stay untraced; the untraced path allocates nothing.
+ *
+ * The threshold `L` is a constructor option (docs/PLAN.md §13, the load-factor control),
+ * mirroring Rust's `with_max_load`: the Compare page's opt-in 0.5 / 0.9 tables. Every rule
+ * reads `L` where it read 0.75, and the default — what `new HashSetOaF64()` and the Explore
+ * tab's seed build — is exactly the 0.75 table the corpus pins.
  */
 
 import { mixF64 } from './mix';
 import type { Tracer, HashSetOaEvent, HoaMove } from '../viz/events';
 
 const INITIAL_SLOTS = 4;
-/** Rehash when `(live + tombstones) / slots` would exceed this — the chaining set's 0.75. */
+/** Rehash when `(live + tombstones) / slots` would exceed this — the chaining set's 0.75, and
+ * the threshold whenever the constructor is given none. */
 const MAX_LOAD = 0.75;
 const CHURN_BLOCK_MAX = 16;
 const KEYS_PER_CHURN_KEY = 32;
@@ -78,12 +85,30 @@ export class HashSetOaF64 {
   private tombs = 0;
   private rehashes = 0;
   private churnKeys: number[] = [];
+  private readonly load: number;
+
+  /**
+   * An empty table at rehash threshold `maxLoad` (default 0.75). Like Rust's
+   * `with_max_load`, rejects anything outside `[0.25, 1)`: at 1 a miss could find no empty
+   * slot to stop at, and below 0.25 one doubling may not restore the threshold.
+   */
+  constructor(maxLoad: number = MAX_LOAD) {
+    if (!(maxLoad >= 0.25 && maxLoad < 1)) {
+      throw new Error(`open-addressing max load ${maxLoad} outside [0.25, 1)`);
+    }
+    this.load = maxLoad;
+  }
 
   /** Build from a key sequence by inserting each in order (duplicates collapse). */
-  static fromKeys(keys: readonly number[]): HashSetOaF64 {
-    const s = new HashSetOaF64();
+  static fromKeys(keys: readonly number[], maxLoad: number = MAX_LOAD): HashSetOaF64 {
+    const s = new HashSetOaF64(maxLoad);
     for (const k of keys) s.insert(k);
     return s;
+  }
+
+  /** The rehash threshold this table was built with. */
+  get maxLoad(): number {
+    return this.load;
   }
 
   /** Number of distinct stored keys. */
@@ -194,7 +219,7 @@ export class HashSetOaF64 {
     this.keys[slot] = key;
     this.count += 1;
     trace?.({ kind: 'hoa.place', slot, value: key, reused: slot === firstTomb });
-    if (this.count + this.tombs > MAX_LOAD * cap) this.rehash(trace);
+    if (this.count + this.tombs > this.load * cap) this.rehash(trace);
     return { inserted: true, ops };
   }
 
@@ -238,7 +263,7 @@ export class HashSetOaF64 {
    */
   private rehash(trace?: Tracer<HashSetOaEvent>): void {
     const cap = this.state.length;
-    const newCap = this.count > (MAX_LOAD * cap) / 2 ? cap * 2 : cap;
+    const newCap = this.count > (this.load * cap) / 2 ? cap * 2 : cap;
     const tombs = this.tombs;
     const oldKeys = this.keys;
     const oldState = this.state;

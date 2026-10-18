@@ -25,6 +25,8 @@ import { GraphCompareSection } from './GraphCompareSection';
 import { describeMix, type ProbeMix } from '../bench/probeMix';
 import { ProbeMixControl, mixNotes, shareWord } from './ProbeMixControl';
 import { storedSizeNotes } from './storedSize';
+import { CHAINING_MAX_LOAD, DEFAULT_OA_MAX_LOAD, isDefaultOaLoad, oaLoadReach } from '../bench/oaLoad';
+import { OaLoadControl, OaLoadNote, describeOaLoad, oaLoadSheetNote } from './HashOaNotes';
 import { useComparePersistence } from '../persist/useComparePersistence';
 import { SessionNote } from '../persist/SessionNote';
 
@@ -76,6 +78,10 @@ export function CompareSection() {
   // The search probe mix for the *next* run (docs/PLAN.md §6.3). What the charts on screen
   // were measured at is `result.probeMix`, which the captions and exports report instead.
   const [presentFraction, setPresentFraction] = useState(persisted.initial.presentFraction);
+  // The open-addressing set's rehash threshold for the *next* run (docs/PLAN.md §13). Not
+  // persisted: the mount-time run is always the like-for-like 0.75 one. The notes key on
+  // `result.oaMaxLoad`, what the charts on screen were measured at.
+  const [oaMaxLoad, setOaMaxLoad] = useState(DEFAULT_OA_MAX_LOAD);
 
   const run = async (d: Dataset, mixOverride?: ProbeMix) => {
     const engine = engineRef.current;
@@ -90,7 +96,7 @@ export function CompareSection() {
         setStringResult(await runStringSweeps(engine, d, setStatus, undefined, mix));
       } else {
         setStringResult(null);
-        setResult(await runAllSweeps(engine, d, setStatus, undefined, mix));
+        setResult(await runAllSweeps(engine, d, setStatus, undefined, mix, oaMaxLoad));
       }
       setStatus('ready');
     } catch (err) {
@@ -190,6 +196,14 @@ export function CompareSection() {
   /** The probe mix the on-screen results were measured at (not the control's next-run value). */
   const ranMixSummary = result?.probeMix ?? stringResult?.probeMix ?? null;
   const reverse = dataset?.order.kind === 'reverse-sorted';
+  /** The open-addressing threshold the on-screen numeric run measured (0.75 before any run). */
+  const ranOaLoad = result?.oaMaxLoad ?? DEFAULT_OA_MAX_LOAD;
+  const oaLikeForLike = isDefaultOaLoad(ranOaLoad);
+  /** The load factors that run's open-addressing search points sat at (../bench/oaLoad). */
+  const oaReach = useMemo(() => {
+    const s = result?.search.find((v) => v.series.structure === 'hashoa');
+    return s ? oaLoadReach(s.series.points, result?.oaMaxLoad ?? DEFAULT_OA_MAX_LOAD) : null;
+  }, [result]);
 
   /**
    * Every chart currently on screen, in the order the page shows them, each paired with
@@ -237,6 +251,11 @@ export function CompareSection() {
     if (dllNote) notes.push(dllNote);
     const bstNote = bstSheetNote(search.map((v) => v.series.structure), result?.probeMix.presentFraction);
     if (bstNote) notes.push(bstNote);
+    // Only while the light-blue line is on a chart being exported.
+    if (chartsOnScreen.some((c) => c.views.some((v) => v.series.structure === 'hashoa'))) {
+      const oaNote = oaLoadSheetNote(ranOaLoad, oaReach);
+      if (oaNote) notes.push(oaNote);
+    }
     // Only while the run asked absent keys at all — a hits-only run has no "shared absent probes".
     if (stringSearch.some((v) => v.series.structure === 'triestr') && (ranMixSummary?.absent ?? 64) > 0) {
       notes.push(
@@ -320,6 +339,8 @@ export function CompareSection() {
       engine: version,
       ...(stringResult ? { meanKeyBytes: stringResult.meanKeyBytes } : {}),
       ...(ranMixSummary ? { probeMix: ranMixSummary } : {}),
+      // Both hash sets' rehash thresholds (docs/PLAN.md §13): equal is the like-for-like run.
+      ...(result ? { maxLoad: { hashset: CHAINING_MAX_LOAD, hashoa: result.oaMaxLoad } } : {}),
       // Says which size the x-axis is, now that a point can carry both (./storedSize).
       nAxis: 'n = input keys in the prefix; points[].storedN = keys the structure held (its len())',
     };
@@ -345,6 +366,7 @@ export function CompareSection() {
         <li>engine: <code>{version || '—'}</code></li>
         {dataset && <li>dataset: {describeDataset(dataset)}</li>}
         {ranMixSummary && <li>{describeMix(ranMixSummary)}</li>}
+        {!oaLikeForLike && <li>{describeOaLoad(ranOaLoad)}</li>}
       </ul>
 
       <SessionNote {...persisted.note} />
@@ -359,6 +381,7 @@ export function CompareSection() {
       />
       {/* After the picker on purpose: see ProbeMixControl's note on the gate's select lookup. */}
       <ProbeMixControl value={presentFraction} onChange={setPresentFraction} disabled={busy} />
+      <OaLoadControl value={oaMaxLoad} onChange={setOaMaxLoad} disabled={busy} />
 
       <ChartGuide />
       <p style={{ color: '#555', marginBottom: 0 }}>Quick reference for the shapes you’ll read off the charts:</p>
@@ -427,10 +450,23 @@ export function CompareSection() {
             reading together on the add/remove chart below.{' '}
             The light-blue line is a <em>second</em> hash set that settles collisions differently: no chains,
             just one flat table where a key that finds its slot taken steps to the next free one (open
-            addressing). It uses the same hash and the same table size as the blue one at every n, so the gap
-            between them is the collision strategy alone. Counted in steps, it does more work on average —
-            neighbouring collisions pile into one run, and a lookup for a missing key must walk to the end of
-            it — and its count saws up and down as the table fills and doubles; both stay flat
+            addressing).{' '}
+            {oaLikeForLike ? (
+              <>
+                It uses the same hash and the same table size as the blue one at every n, so the gap between them
+                is the collision strategy alone. Counted in steps, it does more work on average —
+                neighbouring collisions pile into one run, and a lookup for a missing key must walk to the end of
+                it —
+              </>
+            ) : (
+              <>
+                It uses the same hash as the blue one, but this run let it fill to {ranOaLoad} before growing, so
+                the gap between them is not the collision strategy alone (see the note below the chart): whether it
+                does more work per lookup than the blue one, and how much, depends on that setting as much as on
+                clustering —
+              </>
+            )}{' '}
+            and its count saws up and down as the table fills and doubles; both stay flat
             (<strong>O(1)</strong>). On the wall clock the order can flip, because stepping along one array is
             kinder to the memory cache than following a chain (docs/METHODOLOGY.md §2.8).{' '}
             {/* Only true while the run asked absent keys at all — a hits-only run has none. */}
@@ -462,6 +498,9 @@ export function CompareSection() {
             reverse={reverse}
             presentFraction={result.probeMix.presentFraction}
           />
+          {search.some((v) => v.series.structure === 'hashoa') && (
+            <OaLoadNote maxLoad={ranOaLoad} reach={oaReach} chart="search" />
+          )}
         </>
       )}
 
@@ -497,9 +536,20 @@ export function CompareSection() {
             honest only because of a rule you cannot see: a removed key leaves a marker (a tombstone) that
             the next insert reuses. Without that rule every add-and-remove would strand one more marker, each
             lookup would walk further, and the cost would grow with how many repetitions the timer happened
-            to run — not with n. Counted in steps, its line sits above the blue one for two reasons of
-            about equal size: clustering (as on the search chart), and the markers its own add-and-remove
-            keys leave behind, which join neighbouring runs together (docs/METHODOLOGY.md §2.8).{' '}
+            to run — not with n.{' '}
+            {oaLikeForLike ? (
+              <>
+                Counted in steps, its line sits above the blue one for two reasons of about equal size:
+                clustering (as on the search chart), and the markers its own add-and-remove keys leave behind,
+                which join neighbouring runs together (docs/METHODOLOGY.md §2.8).
+              </>
+            ) : (
+              <>
+                Counted in steps, where its line sits against the blue one also depends on this run’s
+                fill-before-growing setting ({ranOaLoad}, not the blue one’s {CHAINING_MAX_LOAD}) — see the note
+                below the chart (docs/METHODOLOGY.md §2.8).
+              </>
+            )}{' '}
             {sortedNote ? (
               <>
                 <strong>This dataset is sorted</strong>, so the naive BST built into a chain and its dashed
@@ -531,6 +581,9 @@ export function CompareSection() {
           </Callout>
 
           <BTreeChurnNote present={churn.some((v) => v.series.structure === 'btree')} sorted={sortedNote} />
+          {churn.some((v) => v.series.structure === 'hashoa') && (
+            <OaLoadNote maxLoad={ranOaLoad} reach={null} chart="churn" />
+          )}
 
           <Callout title="The flat orange line is a trap — read it with the split below" tone="caveat">
             The linked list’s add/remove line sits flat at <strong>O(1)</strong>, right down with the hash set.
