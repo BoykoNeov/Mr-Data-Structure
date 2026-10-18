@@ -91,6 +91,15 @@ try {
       `default run measured the calibrated probe mix (${pm ? `${pm.present} + ${pm.absent}` : 'none reported'}; want 64 + 64)`,
       pm && pm.presentFraction === 0.5 && pm.present === 64 && pm.absent === 64,
     );
+    // Open-addressing load factor (docs/PLAN.md §13; src/bench/oaLoad.ts): every hash-set band
+    // here assumes that set shares the chaining set's 0.75, and the threshold is now a user
+    // control. Assert the default run measured 0.75 and the page printed no "not like for
+    // like" caveat — deterministic, no clock involved.
+    want(
+      `default run measured the open-addressing set at 0.75 (got ${meta.oaMaxLoad})`,
+      meta.oaMaxLoad === 0.75,
+    );
+    want('default page carries no load-factor caveat', !text.includes('Not like for like'));
   }
   if (proof) {
     // Stored size next to input size (METHODOLOGY §4 hurdle 8). The default uniform dataset

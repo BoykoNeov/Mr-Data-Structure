@@ -28,6 +28,7 @@ import {
   prefixOf,
 } from './stringWorkload';
 import { buildNumericProbes, DEFAULT_PROBE_MIX, type ProbeMix } from './probeMix';
+import { checkOaMaxLoad, DEFAULT_OA_MAX_LOAD, stampMaxLoad } from './oaLoad';
 import {
   measureSweep,
   measureMutationFd,
@@ -394,6 +395,35 @@ function treeChurnRunnerFactory(
   };
 }
 
+/**
+ * The open-addressing set at the run's rehash threshold (docs/PLAN.md §13, the load-factor
+ * control; ./oaLoad), shaped as both constructor surfaces its runners take. At the default it
+ * **is** the wasm class, so the default page takes the same JS path as before the control
+ * existed, with op-counts pinned identical (`hash_set_oa::tests::the_constructors_without_a_load_are_the_075_table`);
+ * the one difference is inside Rust, where every insert now reads the threshold from a field
+ * rather than a constant. Otherwise it is a stand-in whose `new` and four statics forward to the `_at`
+ * exports — all four, because the finite-difference runners build their own sets, and a load
+ * reaching only the instance constructor would measure churn at one threshold and the
+ * insert/delete split at another in the same run.
+ */
+function hashOaAt(maxLoad: number): MutationStructCtor & SearchStructCtor {
+  if (maxLoad === DEFAULT_OA_MAX_LOAD) {
+    return HashSetOaF64 as unknown as MutationStructCtor & SearchStructCtor;
+  }
+  const load = checkOaMaxLoad(maxLoad);
+  // `new` on a function that returns an object yields that object — the wasm instance.
+  const AtLoad = function (keys: Float64Array, n: number) {
+    return HashSetOaF64.with_max_load(keys, n, load);
+  };
+  const statics: MutationStructStatics = {
+    build_insert_n: (keys, n) => HashSetOaF64.build_insert_n_at(keys, n, load),
+    build_insert_counted: (keys, n) => HashSetOaF64.build_insert_counted_at(keys, n, load),
+    build_then_teardown_n: (keys, n) => HashSetOaF64.build_then_teardown_n_at(keys, n, load),
+    teardown_counted: (keys, n) => HashSetOaF64.teardown_counted_at(keys, n, load),
+  };
+  return Object.assign(AtLoad, statics) as unknown as MutationStructCtor & SearchStructCtor;
+}
+
 /** Build runner (insert side): `run(k)` does `k` builds-from-empty to size n. */
 function buildRunnerFactory(Ctor: MutationStructStatics, keys: Float64Array): OpRunnerFactory {
   return (n) => {
@@ -448,12 +478,15 @@ const api = {
    * timing each point against the worker's `performance.now()` (docs/PLAN.md §6).
    * `keys` is the marshalled numeric key buffer (transferred in by the caller). `mix` is
    * the run's present/absent probe split (./probeMix), one value for every structure.
+   * `oaMaxLoad` is the open-addressing set's rehash threshold (./oaLoad) — that set's only;
+   * the chaining set stays at 0.75 — and both hash set series come back stamped with theirs.
    */
   async runSweep(
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,
     mix: ProbeMix = DEFAULT_PROBE_MIX,
+    oaMaxLoad: number = DEFAULT_OA_MAX_LOAD,
   ): Promise<SweepSeries[]> {
     await ready;
     const now = () => performance.now();
@@ -478,7 +511,9 @@ const api = {
     // primary clustering — and its probe count saws with α more loudly than chaining's,
     // with no trend in n. Its misses are its dear query (Knuth: ½(1 + 1/(1−α)²)), so a
     // misses-heavy mix raises its constant more than the chaining set's.
-    const hashoa = measureSweep(sizes, searchRunnerFactory(HashSetOaF64, keys, mix), now, opts);
+    // At a non-default `oaMaxLoad` (./oaLoad) the two tables no longer share a capacity at every
+    // n, and that sentence stops being true — the page says so beside the chart and on the PNG.
+    const hashoa = measureSweep(sizes, searchRunnerFactory(hashOaAt(oaMaxLoad), keys, mix), now, opts);
     // The **BST** and the **AVL** come last, after the ten series the runtime gate's search
     // bands were calibrated on, so adding them moved none of those conditions. They are the
     // pair the mutation chart already draws, now on the search chart too: one descent from the
@@ -533,7 +568,7 @@ const api = {
     // — now beside it on this chart — the clock-free op-counts say that constant is the same on
     // shuffled input and a few percent higher on sorted (`structures::methodology::
     // rbt_pays_its_looser_bound_in_comparisons_on_sorted_input`, docs/METHODOLOGY.md §2.9).
-    return [
+    return stampMaxLoad([
       { structure: 'array', op: 'search', points: array },
       { structure: 'll', op: 'search', points: ll },
       { structure: 'sarr', op: 'search', points: sarr },
@@ -557,7 +592,7 @@ const api = {
       { structure: 'hashoa', op: 'search', points: hashoa },
       { structure: 'bst', op: 'search', points: bst },
       { structure: 'avl', op: 'search', points: avl },
-    ];
+    ], oaMaxLoad);
   },
   /**
    * Run the §6.3 size-mutating measurement for the six **flat** structures across
@@ -585,11 +620,15 @@ const api = {
    *   head-inserting list that costs O(n). The canonical O(n) delete-by-value shows up
    *   in this structure's finite-difference `delete` series instead, which is why the
    *   two series must be read together (METHODOLOGY §2.3, regime 7).
+   *
+   * `oaMaxLoad` is the open-addressing set's rehash threshold, as in {@link runSweep}: it
+   * reaches that set's churn *and* both finite-difference runners, never the chaining set's.
    */
   async runMutationSweep(
     keys: Float64Array,
     sizes: number[],
     opts?: MeasureOptions,
+    oaMaxLoad: number = DEFAULT_OA_MAX_LOAD,
   ): Promise<SweepSeries[]> {
     await ready;
     const now = () => performance.now();
@@ -609,7 +648,7 @@ const api = {
       // position to bias. But `set_churn_key` expands it into a primed *block* of
       // `max + 1 …` keys (docs/METHODOLOGY.md §2.8): one key under linear probing samples
       // one cluster, and that alone made the curve jump several-fold between sweep points.
-      ['hashoa', HashSetOaF64 as unknown as MutationStructCtor, aboveMax],
+      ['hashoa', hashOaAt(oaMaxLoad), aboveMax],
     ];
     const out: SweepSeries[] = [];
     for (const [structure, Ctor, pickKey] of structures) {
@@ -625,7 +664,7 @@ const api = {
       );
       out.push(fd.insert, fd.delete);
     }
-    return out;
+    return stampMaxLoad(out, oaMaxLoad);
   },
   /**
    * Run the §6.3 size-mutating measurement for the **BST** (the first tree bench

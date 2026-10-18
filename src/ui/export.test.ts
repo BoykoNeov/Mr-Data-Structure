@@ -23,15 +23,15 @@ describe('export', () => {
     const lines = csv.trim().split('\n');
     expect(lines[0]).toBe(CSV_HEADER);
     expect(lines).toHaveLength(4);
-    // stored_n is last and empty here: this series carries no stored counts.
-    expect(lines[1]).toBe('array,search,10,10,9,11,0.1,5,8,5,');
+    // stored_n and max_load are empty here: this series carries no stored counts and is no hash set.
+    expect(lines[1]).toBe('array,search,10,10,9,11,0.1,5,8,5,,');
   });
 
   it('puts the stored size beside the input size, appended so no column moves', () => {
     expect(CSV_HEADER.split(',').slice(0, 10).join(',')).toBe(
       'structure,op,n,nanos_per_op,min_nanos,max_nanos,stddev_nanos,op_count,batch,reps',
     );
-    expect(CSV_HEADER.endsWith(',stored_n')).toBe(true);
+    expect(CSV_HEADER.split(',')[10]).toBe('stored_n');
     const deduped: SeriesView = {
       ...view,
       series: {
@@ -41,9 +41,19 @@ describe('export', () => {
       },
     };
     const lines = toCsv([deduped]).trim().split('\n');
-    expect(lines[3].split(',')).toEqual(['hashset', 'search', '1000', '1000', '900', '1100', '0.1', '500', '8', '5', '630']);
+    expect(lines[3].split(',')).toEqual(['hashset', 'search', '1000', '1000', '900', '1100', '0.1', '500', '8', '5', '630', '']);
     const j = JSON.parse(toJson([deduped]));
     expect(j.series[0].points[2]).toMatchObject({ n: 1000, storedN: 630 });
+  });
+
+  it('records a hash set row’s rehash threshold, appended after stored_n (docs/PLAN.md §13)', () => {
+    expect(CSV_HEADER.endsWith(',stored_n,max_load')).toBe(true);
+    const oa: SeriesView = { ...view, series: { ...series, structure: 'hashoa', maxLoad: 0.5 } };
+    const cells = toCsv([oa]).trim().split('\n')[1].split(',');
+    expect(cells[0]).toBe('hashoa');
+    expect(cells[11]).toBe('0.5');
+    expect(JSON.parse(toJson([oa])).series[0].maxLoad).toBe(0.5);
+    expect(JSON.parse(toJson([view])).series[0]).not.toHaveProperty('maxLoad');
   });
 
   it('writes JSON with the fit (class, slope ± stderr, local slopes) beside the points', () => {

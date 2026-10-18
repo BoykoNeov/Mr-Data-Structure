@@ -58,13 +58,39 @@
 //! Semantics mirror the chaining set: a **set** (duplicates collapse on insert, first
 //! occurrence wins), `len` is the stored distinct count, and `teardown_keys` keeps the
 //! distinct keys in insertion order so teardown deletes each exactly once.
+//!
+//! **The 0.75 ceiling is a default, and an opt-in control can move it** (docs/PLAN.md §13,
+//! "a load-factor control"). `with_max_load` and the `*_at` statics build the same table at
+//! another threshold — 0.5, linear probing's usual ceiling, or 0.9 — with every rule above
+//! unchanged and the threshold read in their place: rehash when `live + tombs > L · cap`,
+//! purge in place when `live ≤ L · cap / 2`, else double. The chaining set stays at 0.75, so
+//! at any other `L` the two tables no longer share a capacity at every n and the pair of lines
+//! stops isolating the collision strategy; the UI says so wherever the curve travels. Every
+//! constructor without a load (`new`, `build_insert_n`, …) is exactly the 0.75 table.
 
 use super::mix_f64;
 use wasm_bindgen::prelude::*;
 
 const INITIAL_SLOTS: usize = 4;
-/// Rehash when `(live + tombstones) / slots` would exceed this — the chaining set's 0.75.
+/// Rehash when `(live + tombstones) / slots` would exceed this — the chaining set's 0.75, and
+/// the threshold of every constructor that does not take one.
 const MAX_LOAD: f64 = 0.75;
+/// The lowest threshold `with_max_load` accepts. At `L ≥ 0.25` a 4-slot table already has
+/// `L · cap ≥ 1`, so one doubling always restores `live + tombs ≤ L · cap` (the invariant the
+/// insert's "an empty slot exists" relies on); below it a single doubling may not.
+const MIN_MAX_LOAD: f64 = 0.25;
+
+/// Reject a threshold the load invariant cannot hold at: `L < 1` leaves at least one empty
+/// slot at rest (`⌊L · cap⌋ ≤ cap − 1`), so every miss terminates; `L ≥ 0.25` keeps a single
+/// rehash sufficient (see [`MIN_MAX_LOAD`]). A panic here traps the wasm call — the UI only
+/// offers fixed values, so reaching it is a caller error, never a user one.
+fn checked_load(max_load: f64) -> f64 {
+    assert!(
+        (MIN_MAX_LOAD..1.0).contains(&max_load),
+        "open-addressing max load {max_load} outside [{MIN_MAX_LOAD}, 1)"
+    );
+    max_load
+}
 
 const EMPTY: u8 = 0;
 const LIVE: u8 = 1;
@@ -88,6 +114,8 @@ pub struct HashSetOaF64 {
     rehashes: u32,
     /// Distinct keys captured at build time, in insertion order (see the module doc).
     teardown_keys: Vec<f64>,
+    /// The rehash threshold `L` (module doc): [`MAX_LOAD`] unless built `with_max_load`.
+    max_load: f64,
 }
 
 /// Most churn keys a block holds (module doc, rule 4).
@@ -110,8 +138,14 @@ impl HashSetOaF64 {
     /// rehashes) is untimed (docs/PLAN.md §6.3, "search is size-preserving").
     #[wasm_bindgen(constructor)]
     pub fn new(keys: &[f64], n: usize) -> HashSetOaF64 {
+        HashSetOaF64::with_max_load(keys, n, MAX_LOAD)
+    }
+
+    /// As [`HashSetOaF64::new`], at rehash threshold `max_load` instead of 0.75 (module doc;
+    /// docs/PLAN.md §13). Panics outside `[0.25, 1)` — see `checked_load`.
+    pub fn with_max_load(keys: &[f64], n: usize, max_load: f64) -> HashSetOaF64 {
         let n = n.min(keys.len());
-        let mut set = HashSetOaF64::empty();
+        let mut set = HashSetOaF64::empty_at(max_load);
         let mut ops = 0u64;
         for &k in &keys[..n] {
             if set.insert_generic::<false, true>(k, &mut ops) {
@@ -119,6 +153,11 @@ impl HashSetOaF64 {
             }
         }
         set
+    }
+
+    /// The rehash threshold this table was built with.
+    pub fn max_load(&self) -> f64 {
+        self.max_load
     }
 
     /// Number of distinct stored keys.
@@ -242,15 +281,25 @@ impl HashSetOaF64 {
     /// Timed: build a fresh set of size `n` from empty (rehashes amortized in). Returns
     /// `len` to defeat DCE.
     pub fn build_insert_n(keys: &[f64], n: usize) -> u32 {
-        HashSetOaF64::new(keys, n).len as u32
+        HashSetOaF64::build_insert_n_at(keys, n, MAX_LOAD)
+    }
+
+    /// [`HashSetOaF64::build_insert_n`] at threshold `max_load`.
+    pub fn build_insert_n_at(keys: &[f64], n: usize, max_load: f64) -> u32 {
+        HashSetOaF64::with_max_load(keys, n, max_load).len as u32
     }
 
     /// Op-count for the cumulative build to size `n`: total hashes + slot probes of the
     /// per-insert dedupe walks (rehash redistribution is amortized structural work and is
     /// deliberately not counted, as in the chaining set).
     pub fn build_insert_counted(keys: &[f64], n: usize) -> f64 {
+        HashSetOaF64::build_insert_counted_at(keys, n, MAX_LOAD)
+    }
+
+    /// [`HashSetOaF64::build_insert_counted`] at threshold `max_load`.
+    pub fn build_insert_counted_at(keys: &[f64], n: usize, max_load: f64) -> f64 {
         let n = n.min(keys.len());
-        let mut s = HashSetOaF64::empty();
+        let mut s = HashSetOaF64::empty_at(max_load);
         let mut ops = 0u64;
         for &k in &keys[..n] {
             s.insert_generic::<true, true>(k, &mut ops);
@@ -276,7 +325,12 @@ impl HashSetOaF64 {
     /// deletes step over earlier ones, so every delete costs what a successful search did
     /// in the full table — O(1) each, O(n) in total.
     pub fn teardown_counted(keys: &[f64], n: usize) -> f64 {
-        let mut s = HashSetOaF64::new(keys, n);
+        HashSetOaF64::teardown_counted_at(keys, n, MAX_LOAD)
+    }
+
+    /// [`HashSetOaF64::teardown_counted`] at threshold `max_load`.
+    pub fn teardown_counted_at(keys: &[f64], n: usize, max_load: f64) -> f64 {
+        let mut s = HashSetOaF64::with_max_load(keys, n, max_load);
         let mut ops = 0u64;
         let order = s.teardown_keys.clone();
         for k in order {
@@ -288,14 +342,20 @@ impl HashSetOaF64 {
     /// Timed: build a fresh size-`n` set, then tear it all down, in one call. Subtracting
     /// the `build_insert_n` time isolates the teardown (docs/PLAN.md §6.3).
     pub fn build_then_teardown_n(keys: &[f64], n: usize) -> u32 {
-        let mut s = HashSetOaF64::new(keys, n);
+        HashSetOaF64::build_then_teardown_n_at(keys, n, MAX_LOAD)
+    }
+
+    /// [`HashSetOaF64::build_then_teardown_n`] at threshold `max_load`.
+    pub fn build_then_teardown_n_at(keys: &[f64], n: usize, max_load: f64) -> u32 {
+        let mut s = HashSetOaF64::with_max_load(keys, n, max_load);
         s.teardown_all()
     }
 }
 
 impl HashSetOaF64 {
-    fn empty() -> HashSetOaF64 {
+    fn empty_at(max_load: f64) -> HashSetOaF64 {
         HashSetOaF64 {
+            max_load: checked_load(max_load),
             keys: vec![0.0; INITIAL_SLOTS],
             state: vec![EMPTY; INITIAL_SLOTS],
             len: 0,
@@ -399,12 +459,12 @@ impl HashSetOaF64 {
                 self.tombs -= 1;
                 t
             }
-            None => empty.expect("load invariant: live + tombstones <= 0.75 * cap leaves an empty slot"),
+            None => empty.expect("load invariant: live + tombstones <= max_load * cap leaves an empty slot"),
         };
         self.state[slot] = LIVE;
         self.keys[slot] = key;
         self.len += 1;
-        if (self.len + self.tombs) as f64 > MAX_LOAD * cap as f64 {
+        if (self.len + self.tombs) as f64 > self.max_load * cap as f64 {
             self.rehash();
         }
         true
@@ -452,7 +512,7 @@ impl HashSetOaF64 {
     /// order the TS twin mirrors, since it fixes the layout and so every probe count.
     fn rehash(&mut self) {
         let cap = self.state.len();
-        let new_cap = if self.len as f64 > MAX_LOAD * cap as f64 / 2.0 { cap * 2 } else { cap };
+        let new_cap = if self.len as f64 > self.max_load * cap as f64 / 2.0 { cap * 2 } else { cap };
         let old_keys = std::mem::replace(&mut self.keys, vec![0.0; new_cap]);
         let old_state = std::mem::replace(&mut self.state, vec![EMPTY; new_cap]);
         let mask = new_cap - 1;
@@ -865,6 +925,289 @@ mod tests {
         let c = corpus::cases().into_iter().find(|c| c.name == "cluster").unwrap();
         let s = HashSetOaF64::new(&c.keys, c.keys.len());
         assert!(s.max_cluster() >= 5, "max cluster {}", s.max_cluster());
+    }
+
+    // ── The load-factor control (module doc; docs/PLAN.md §13) ──
+    //
+    // Every rule above is stated in terms of the threshold `L`, so the other thresholds get
+    // the same pins at their own `L`. The TS twin (`src/structures/hashSetOa.test.ts`) holds
+    // the same literal lists, which is what ties the two twins at a load the corpus (0.75
+    // only) never sees.
+
+    /// The growth rule at threshold `l`: start at 4 slots, double whenever `len > l · slots`.
+    fn capacity_at(distinct: usize, l: f64) -> usize {
+        let mut slots = 4usize;
+        for len in 1..=distinct {
+            if len as f64 > l * slots as f64 {
+                slots *= 2;
+            }
+        }
+        slots
+    }
+
+    const GROWTH_NS: [usize; 15] = [0, 1, 2, 3, 4, 5, 7, 10, 20, 50, 100, 500, 1000, 4000, 5000];
+
+    #[test]
+    fn grows_at_each_thresholds_own_points() {
+        let keys: Vec<f64> = (0..5000).map(|i| i as f64).collect();
+        let literal: [(f64, [usize; 15]); 3] = [
+            (0.5, [4, 4, 4, 8, 8, 16, 16, 32, 64, 128, 256, 1024, 2048, 8192, 16384]),
+            (0.75, [4, 4, 4, 4, 8, 8, 16, 16, 32, 128, 256, 1024, 2048, 8192, 8192]),
+            (0.9, [4, 4, 4, 4, 8, 8, 8, 16, 32, 64, 128, 1024, 2048, 8192, 8192]),
+        ];
+        for (l, caps) in literal {
+            for (i, &n) in GROWTH_NS.iter().enumerate() {
+                let s = HashSetOaF64::with_max_load(&keys, n, l);
+                assert_eq!(s.capacity(), caps[i], "L={l} n={n}");
+                assert_eq!(s.capacity(), capacity_at(n, l), "L={l} n={n}: the restated rule");
+                assert!(s.len() as f64 <= l * s.capacity() as f64, "L={l} n={n}: over the threshold");
+            }
+        }
+        // 0.75 *is* the chaining set's rule, so the default pin above still holds through here.
+        for &n in &GROWTH_NS {
+            assert_eq!(capacity_at(n, 0.75), chaining_capacity(n));
+        }
+    }
+
+    /// Every constructor without a load is the 0.75 table, slot for slot and count for count —
+    /// so the default page measures exactly what it measured before the control existed.
+    #[test]
+    fn the_constructors_without_a_load_are_the_075_table() {
+        let keys = shuffled_keys(3000);
+        for n in [0usize, 7, 100, 1000, 3000] {
+            let (a, b) = (HashSetOaF64::new(&keys, n), HashSetOaF64::with_max_load(&keys, n, 0.75));
+            assert_eq!(a.slots(), b.slots(), "n={n}");
+            assert_eq!(a.max_load(), 0.75);
+            assert_eq!(
+                HashSetOaF64::build_insert_counted(&keys, n),
+                HashSetOaF64::build_insert_counted_at(&keys, n, 0.75)
+            );
+            assert_eq!(
+                HashSetOaF64::teardown_counted(&keys, n),
+                HashSetOaF64::teardown_counted_at(&keys, n, 0.75)
+            );
+            assert_eq!(HashSetOaF64::build_insert_n(&keys, n), HashSetOaF64::build_insert_n_at(&keys, n, 0.75));
+            assert_eq!(
+                HashSetOaF64::build_then_teardown_n(&keys, n),
+                HashSetOaF64::build_then_teardown_n_at(&keys, n, 0.75)
+            );
+        }
+    }
+
+    /// The four statics really take the load (the finite-difference runners build their own
+    /// sets, so a load reaching only the instance constructor would mix thresholds in one run).
+    #[test]
+    fn the_finite_difference_statics_build_at_the_requested_load() {
+        let keys = shuffled_keys(3000);
+        // n = 3000 sits at α ≈ 0.73 at 0.75 (4096 slots) and at α ≈ 0.37 at 0.5 (8192 slots).
+        let (lo, hi) = (
+            HashSetOaF64::build_insert_counted_at(&keys, 3000, 0.5),
+            HashSetOaF64::build_insert_counted_at(&keys, 3000, 0.75),
+        );
+        assert!(lo < hi, "a lower ceiling probes less on the way up: {lo} vs {hi}");
+        let (tlo, thi) = (
+            HashSetOaF64::teardown_counted_at(&keys, 3000, 0.5),
+            HashSetOaF64::teardown_counted_at(&keys, 3000, 0.75),
+        );
+        assert!(tlo < thi, "and on the way down: {tlo} vs {thi}");
+    }
+
+    /// Rule 2 at each threshold: tombstones count toward `L`, so a delete-heavy cycle stays
+    /// bounded and every miss terminates — 0.9 included, which leaves only a tenth of the
+    /// slots empty at the top of each sawtooth.
+    #[test]
+    fn tombstones_count_toward_every_threshold() {
+        for l in [0.5, 0.9] {
+            let mut s = HashSetOaF64::with_max_load(&(0..6).map(|i| i as f64).collect::<Vec<_>>(), 6, l);
+            for round in 0..200 {
+                let base = (round * 100) as f64;
+                for k in 0..6 {
+                    s.insert_one_counted(base + k as f64);
+                }
+                for k in 0..6 {
+                    s.delete_one_counted(base + k as f64);
+                }
+                assert!(
+                    (s.len() + s.tombstones()) as f64 <= l * s.capacity() as f64,
+                    "L={l} round {round}: live {} + tombs {} over {} slots",
+                    s.len(),
+                    s.tombstones(),
+                    s.capacity()
+                );
+                assert!(!s.search_one_counted(-1.0).0);
+            }
+            assert!(s.capacity() <= 32, "L={l}: purged rather than grown, got {}", s.capacity());
+        }
+    }
+
+    /// Rules 1, 3 and 4 at each threshold: priming still reaches a fixed point, so churn does
+    /// not drift with the repetition count at 0.5 or 0.9 either.
+    #[test]
+    fn churn_does_not_drift_at_any_threshold() {
+        let keys = shuffled_keys(3000);
+        for l in [0.5, 0.9] {
+            for n in [250usize, 1000, 3000] {
+                let mut s = HashSetOaF64::with_max_load(&keys, n, l);
+                s.set_churn_key(1e9);
+                let primed = s.slots();
+                let first = s.churn_counted();
+                for reps in [1u32, 7, 100, 100_000] {
+                    s.churn_n(reps);
+                    assert_eq!(s.churn_counted(), first, "L={l} n={n}: drift after {reps} reps");
+                }
+                assert_eq!(s.slots(), primed, "L={l} n={n}");
+                assert!((s.len() + s.tombstones()) as f64 <= l * s.capacity() as f64);
+            }
+        }
+    }
+
+    /// One slot of the table as the corpus writes it: `.` empty, `x` tombstone, else the key.
+    fn layout(s: &HashSetOaF64) -> String {
+        s.slots()
+            .iter()
+            .map(|sl| match sl {
+                None => ".".to_string(),
+                Some(None) => "x".to_string(),
+                Some(Some(k)) => format!("{k}"),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The purge branch at 0.5, slot for slot: four keys fill 8 slots to the threshold (4),
+    /// three deletes leave live 1 + tombs 3, and a fresh key homed on an empty slot tips
+    /// live + tombs to 5 > 4 with live 2 ≤ 2 — purge in place, not double. The TS twin's test
+    /// holds the same literal layouts; it is the mirror's one check of `L · cap / 2`.
+    #[test]
+    fn purges_in_place_at_half_the_lower_threshold() {
+        let keys = [0.0, 1.0, 2.0, 3.0];
+        let mut s = HashSetOaF64::with_max_load(&keys, 4, 0.5);
+        assert_eq!((s.capacity(), s.len()), (8, 4));
+        for d in [0.0, 1.0, 2.0] {
+            assert!(s.delete_one_counted(d).0);
+        }
+        assert_eq!(layout(&s), "x . . . . x x 3");
+        let slots = s.slots();
+        let fresh = (10u32..)
+            .map(f64::from)
+            .find(|&k| slots[(mix_f64(k) as usize) & 7].is_none())
+            .unwrap();
+        assert_eq!(fresh, 10.0, "the first key from 10 up homed on an empty slot");
+        assert!(s.insert_one_counted(fresh).0);
+        assert_eq!((s.capacity(), s.len(), s.tombstones()), (8, 2, 0), "purged in place");
+        assert_eq!(layout(&s), ". . 10 . . 3 . .");
+    }
+
+    #[test]
+    #[should_panic(expected = "outside [0.25, 1)")]
+    fn a_full_table_threshold_is_rejected() {
+        // At 1.0 a miss could find no empty slot to stop at — the insert's `expect` would trap.
+        let _ = HashSetOaF64::with_max_load(&[1.0], 1, 1.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "outside [0.25, 1)")]
+    fn a_threshold_one_doubling_cannot_restore_is_rejected() {
+        let _ = HashSetOaF64::build_insert_counted_at(&[1.0], 1, 0.2);
+    }
+
+    /// **What the threshold buys, clock-free**: Knuth's linear-probing costs at the top of each
+    /// threshold's sawtooth (the highest α a build reaches below 20 000 keys). The miss cost is
+    /// the curve the control moves: ½(1 + 1/(1−α)²) is 2.5 at 0.5, 8.5 at 0.75 and 50 at 0.9 —
+    /// against a chained miss of 1 + α ≤ 1.75 at the chaining set's fixed 0.75.
+    /// Measured: α 0.499 miss 2.54 (Knuth 2.49) hit 2.51 (2.50); α 0.899 miss 54.98 (49.44)
+    /// hit 6.60 (6.45).
+    #[test]
+    fn each_threshold_tops_out_where_knuth_says() {
+        let ks: Vec<f64> = shuffled_keys(100_000).iter().map(|k| k * 7.0 + 3.0).collect();
+        for (l, miss_tol) in [(0.5, 0.15), (0.9, 0.2)] {
+            let n = (1000..20_000)
+                .step_by(37)
+                .max_by(|&a, &b| {
+                    let fa = a as f64 / capacity_at(a, l) as f64;
+                    let fb = b as f64 / capacity_at(b, l) as f64;
+                    fa.partial_cmp(&fb).unwrap()
+                })
+                .unwrap();
+            let s = HashSetOaF64::with_max_load(&ks, n, l);
+            let a = n as f64 / s.capacity() as f64;
+            assert!(a > l - 0.01 && a <= l, "L={l}: top of the saw at α={a:.3}");
+            let miss =
+                (0..20_000).map(|i| s.search_one_counted(1e7 + i as f64).1).sum::<u64>() as f64 / 20_000.0;
+            let hit = ks[..n].iter().map(|&k| s.search_one_counted(k).1).sum::<u64>() as f64 / n as f64;
+            let knuth_miss = 0.5 * (1.0 + 1.0 / ((1.0 - a) * (1.0 - a)));
+            let knuth_hit = 1.0 + 0.5 * (1.0 + 1.0 / (1.0 - a));
+            assert!((miss - knuth_miss).abs() / knuth_miss < miss_tol, "L={l}: miss {miss:.2} vs {knuth_miss:.2}");
+            assert!((hit - knuth_hit).abs() / knuth_hit < 0.1, "L={l}: hit {hit:.2} vs {knuth_hit:.2}");
+        }
+    }
+
+    /// **What the browser's ladders can see of it — less than the label promises.** The search
+    /// sweep is a 1-2-5 ladder and the mutation sweep 500 … 4000; a capacity is a power of two,
+    /// so each ladder samples the sawtooth at a handful of fixed positions. On distinct keys:
+    /// at 0.9 the search ladder's highest α is 0.78 (n = 50, 100, 200), never near 0.9, and
+    /// 0.9 builds the *same* table as 0.875 at every point; and the mutation ladder's final
+    /// tables are the same size at all three thresholds, so the churn line moves only where
+    /// priming tips a table over. The page therefore reports the α each search point actually
+    /// sat at (`src/bench/oaLoad.ts`), rather than the threshold's name alone.
+    #[test]
+    fn the_browser_ladders_sample_the_sawtooth_at_fixed_points() {
+        let search = [10usize, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 20_000, 50_000, 100_000];
+        let top = |l: f64| search.iter().map(|&n| n as f64 / capacity_at(n, l) as f64).fold(0.0, f64::max);
+        assert!((top(0.9) - 0.78125).abs() < 1e-12, "0.9 tops out at {}", top(0.9));
+        assert!((top(0.75) - 0.625).abs() < 1e-12);
+        assert!((top(0.5) - 0.48828125).abs() < 1e-12);
+        for &n in &search {
+            assert_eq!(capacity_at(n, 0.9), capacity_at(n, 0.875), "n={n}");
+        }
+        for n in [500usize, 1000, 2000, 4000] {
+            assert_eq!(capacity_at(n, 0.5), capacity_at(n, 0.75), "n={n}");
+            assert_eq!(capacity_at(n, 0.9), capacity_at(n, 0.75), "n={n}");
+        }
+    }
+
+    /// **Same final size ⇒ same add/remove line, by construction.** Which slots a linearly
+    /// probed table has occupied depends only on its key set and its capacity, never on the
+    /// order the keys arrived in or the rehashes on the way — and a churn pair of absent keys,
+    /// like a full teardown's total, costs only what that occupied pattern dictates. So wherever
+    /// a threshold ends at the 0.75 table's size, its churn and teardown op-counts *equal* the
+    /// default's; only the cumulative build moves, because it climbs through every smaller
+    /// table. On the browser's mutation ladder that is every point at 0.9, and every point but
+    /// 500 at 0.5, where the churn block's priming tips a 1024-slot table (500 + 15 > 512) into
+    /// doubling. The page's churn note says exactly this rather than "the tables differ".
+    #[test]
+    fn a_threshold_that_ends_at_the_same_size_draws_the_same_churn_line() {
+        let keys = shuffled_keys(4000);
+        let churn = |n: usize, l: f64| {
+            let mut s = HashSetOaF64::with_max_load(&keys, n, l);
+            s.set_churn_key(1e9);
+            (s.capacity(), s.churn_counted())
+        };
+        for n in [500usize, 1000, 2000, 4000] {
+            assert_eq!(churn(n, 0.9), churn(n, 0.75), "n={n}: 0.9 churn");
+            assert_eq!(
+                HashSetOaF64::teardown_counted_at(&keys, n, 0.9),
+                HashSetOaF64::teardown_counted(&keys, n),
+                "n={n}: 0.9 teardown"
+            );
+            assert_ne!(
+                HashSetOaF64::build_insert_counted_at(&keys, n, 0.9),
+                HashSetOaF64::build_insert_counted(&keys, n),
+                "n={n}: the build history differs"
+            );
+            assert_eq!(
+                HashSetOaF64::teardown_counted_at(&keys, n, 0.5),
+                HashSetOaF64::teardown_counted(&keys, n),
+                "n={n}: 0.5 teardown"
+            );
+        }
+        for n in [1000usize, 2000, 4000] {
+            assert_eq!(churn(n, 0.5), churn(n, 0.75), "n={n}: 0.5 churn");
+        }
+        let (cap_lo, _) = churn(500, 0.5);
+        let (cap_def, _) = churn(500, 0.75);
+        assert_eq!((cap_lo, cap_def), (2048, 1024), "priming doubles the 0.5 table at n = 500");
+        assert_ne!(churn(500, 0.5).1, churn(500, 0.75).1);
     }
 
     /// A fixed-seed permutation of `0..n` (xorshift; no RNG dependency, no flake).
