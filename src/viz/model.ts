@@ -15,9 +15,10 @@
 
 import type {
   ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
-  TrieEvent, SkipListEvent, GraphEvent, GraphAlgo,
+  TrieEvent, SkipListEvent, GraphEvent, GraphAlgo, RbtEvent,
 } from './events';
 import type { BstShape } from '../structures/bst';
+import type { RbtShape } from '../structures/rbt';
 import type { DoublyShape } from '../structures/linkedList';
 import type { TrieShape } from '../structures/trie';
 
@@ -392,6 +393,13 @@ export interface BstDisplayNode {
   readonly right: BstDisplayNode | null;
 }
 
+/** Any drawn binary-tree node — the shape {@link editAtPath} and {@link rotateAtPath}
+ * work on, shared by the BST / AVL nodes and the red-black ones (which add a colour). */
+interface BinaryNode<N> {
+  readonly left: N | null;
+  readonly right: N | null;
+}
+
 /** The tree's display state: the root subtree plus the next free id. */
 export interface BstModel {
   readonly root: BstDisplayNode | null;
@@ -412,11 +420,11 @@ export function bstModel(shape: BstShape | null): BstModel {
  * spine so the result is a fresh immutable tree sharing untouched subtrees. A `[]`
  * path edits the root; descending the final step into a null slot lets an insert
  * materialize a new child there. */
-function editAtPath(
-  node: BstDisplayNode | null,
+function editAtPath<N extends BinaryNode<N>>(
+  node: N | null,
   path: readonly BstStep[],
-  edit: (target: BstDisplayNode | null) => BstDisplayNode | null,
-): BstDisplayNode | null {
+  edit: (target: N | null) => N | null,
+): N | null {
   if (path.length === 0) return edit(node);
   const [step, ...rest] = path;
   if (node === null) return node; // invalid path (never produced by a valid stream)
@@ -487,11 +495,11 @@ export const avlNodeAtPath = bstNodeAtPath;
  * pivot's left child into its place; a `left` rotation lifts the right child — exact
  * mirrors of the teaching impl's `rotateRight`/`rotateLeft`, so `foldAvl(before,
  * events)` reproduces the structure (model.test.ts). */
-function rotateAtPath(
-  node: BstDisplayNode | null,
+function rotateAtPath<N extends BinaryNode<N>>(
+  node: N | null,
   path: readonly BstStep[],
   dir: 'left' | 'right',
-): BstDisplayNode | null {
+): N | null {
   return editAtPath(node, path, (pivot) => {
     if (pivot === null) return null; // invalid path (never produced by a valid stream)
     if (dir === 'right') {
@@ -533,6 +541,94 @@ export function reduceAvl(m: AvlModel, e: AvlEvent): AvlModel {
 
 export function foldAvl(initial: AvlModel, events: readonly AvlEvent[]): AvlModel {
   return events.reduce(reduceAvl, initial);
+}
+
+// ── Red-black tree (docs/PLAN.md §8, "Trees / heaps", balanced; CLRS) ────────
+// The AVL's model plus a colour. Rotations reuse the generic id-preserving
+// `rotateAtPath`; `rbt.recolour` flips one node's colour in place. The fold is checked
+// against the twin's `snapshot()` (shape *and* colours) after every op in `model.test.ts`,
+// and — through the corpus's pre-order `r`/`b` shape lines — against Rust.
+
+/** A drawn red-black node: the binary-tree node plus its colour. */
+export interface RbtDisplayNode {
+  readonly id: number;
+  readonly value: number;
+  readonly red: boolean;
+  readonly left: RbtDisplayNode | null;
+  readonly right: RbtDisplayNode | null;
+}
+
+export interface RbtModel {
+  readonly root: RbtDisplayNode | null;
+  readonly nextId: number;
+}
+
+/** Build the model from the twin's shape snapshot (pre-order ids). */
+export function rbtModel(shape: RbtShape | null): RbtModel {
+  let id = 0;
+  const walk = (s: RbtShape | null): RbtDisplayNode | null =>
+    s === null ? null : { id: id++, value: s.value, red: s.red, left: walk(s.left), right: walk(s.right) };
+  const root = walk(shape);
+  return { root, nextId: id };
+}
+
+/** The model as the twin's {@link RbtShape} — what the fold is compared against. */
+export function rbtShapeOf(m: RbtModel): RbtShape | null {
+  const walk = (n: RbtDisplayNode | null): RbtShape | null =>
+    n === null ? null : { value: n.value, red: n.red, left: walk(n.left), right: walk(n.right) };
+  return walk(m.root);
+}
+
+/** Fold one red-black event. `insert` attaches a red leaf; `replaceValue` / `remove`
+ * mirror the AVL's; `rotate` restructures the pivot's subtree keeping ids; `recolour`
+ * sets one node's colour. Compares / descends / removeTarget / fix-case markers / result
+ * are highlight-only. */
+export function reduceRbt(m: RbtModel, e: RbtEvent): RbtModel {
+  switch (e.kind) {
+    case 'rbt.insert': {
+      const node: RbtDisplayNode = { id: m.nextId, value: e.value, red: true, left: null, right: null };
+      return { root: editAtPath(m.root, e.path, () => node), nextId: m.nextId + 1 };
+    }
+    case 'rbt.replaceValue':
+      return { root: editAtPath(m.root, e.path, (t) => (t === null ? null : { ...t, value: e.value })), nextId: m.nextId };
+    case 'rbt.remove':
+      return { root: editAtPath(m.root, e.path, (t) => (t === null ? null : t.left ?? t.right)), nextId: m.nextId };
+    case 'rbt.rotate':
+      return { root: rotateAtPath(m.root, e.path, e.dir), nextId: m.nextId };
+    case 'rbt.recolour':
+      return { root: editAtPath(m.root, e.path, (t) => (t === null ? null : { ...t, red: e.red })), nextId: m.nextId };
+    default:
+      return m;
+  }
+}
+
+export function foldRbt(initial: RbtModel, events: readonly RbtEvent[]): RbtModel {
+  return events.reduce(reduceRbt, initial);
+}
+
+/** Resolve a root path to the drawn red-black node there, or `undefined`. */
+export function rbtNodeAtPath(m: RbtModel, path: readonly BstStep[]): RbtDisplayNode | undefined {
+  let cur = m.root;
+  for (const step of path) {
+    if (cur === null) return undefined;
+    cur = step === 'L' ? cur.left : cur.right;
+  }
+  return cur ?? undefined;
+}
+
+/** Ids of red nodes whose parent is also red — the insert's violation, derived from the
+ * drawn shape (as the AVL view derives imbalance). A valid tree has none; mid-insert,
+ * the new red leaf under a red parent is one. */
+export function rbtRedRedIds(m: RbtModel): ReadonlySet<number> {
+  const out = new Set<number>();
+  const walk = (n: RbtDisplayNode | null, parentRed: boolean): void => {
+    if (n === null) return;
+    if (n.red && parentRed) out.add(n.id);
+    walk(n.left, n.red);
+    walk(n.right, n.red);
+  };
+  walk(m.root, false);
+  return out;
 }
 
 // ── Binary min-heap (docs/PLAN.md §8, "Trees / heaps") ───────────────────────

@@ -5,6 +5,7 @@ import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
 import { BstF64 } from '../structures/bst';
 import { AvlF64 } from '../structures/avl';
+import { RbtF64 } from '../structures/rbt';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
@@ -15,6 +16,7 @@ import { LinkedListView } from './LinkedListView';
 import { DoublyListView } from './DoublyListView';
 import { BstView } from './BstView';
 import { AvlView } from './AvlView';
+import { RbtView } from './RbtView';
 import { HeapView } from './HeapView';
 import { TrieView } from './TrieView';
 import { SkipListView } from './SkipListView';
@@ -22,13 +24,13 @@ import { OpenAddressingView } from './OpenAddressingView';
 import { GraphView } from './GraphView';
 import { GraphAdj } from '../structures/graph';
 import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
-import { SortedPanel, LinkedPanel, DoublyPanel, DOUBLY_INTRO, OpenAddressingPanel, OA_INTRO, BstPanel, AvlPanel, HeapPanel, TriePanel, SkipListPanel, GraphPanel, GRAPH_SEED } from './VizPanel';
+import { SortedPanel, LinkedPanel, DoublyPanel, DOUBLY_INTRO, OpenAddressingPanel, OA_INTRO, BstPanel, AvlPanel, RbtPanel, RBT_INTRO, HeapPanel, TriePanel, SkipListPanel, GraphPanel, GRAPH_SEED } from './VizPanel';
 import {
   arrayModel, foldSortedArray, linkedModel, foldLinkedList, doublyModel, foldDoublyList, bstModel, foldBst,
-  avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie, skipModel, foldSkip, oaModel, foldOa,
+  avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie, skipModel, foldSkip, oaModel, foldOa, rbtModel, foldRbt,
   graphModel, foldGraph,
 } from './model';
-import type { SortedArrayEvent, LinkedListEvent, DoublyListEvent, HashSetOaEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, Tracer } from './events';
+import type { SortedArrayEvent, LinkedListEvent, DoublyListEvent, HashSetOaEvent, BstEvent, AvlEvent, RbtEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, Tracer } from './events';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -209,6 +211,48 @@ describe('AvlView renders every frame without throwing', () => {
   it('renders the empty tree', () => {
     const html = renderToStaticMarkup(createElement(AvlView, { model: avlModel(null), active: undefined }));
     expect(html).toContain('(empty)');
+  });
+});
+
+describe('RbtView renders every frame without throwing', () => {
+  // Rotations move nodes mid-stream, recolours change fills, and a delete's fix-up can
+  // point at an empty (NIL) child that no drawn node sits on.
+  const SEED = [50, 30, 70, 20, 40, 60, 80];
+  const cases: [string, number[], (t: RbtF64, tr: Tracer<RbtEvent>) => void][] = [
+    ['search found', SEED, (t, tr) => t.search(60, tr)],
+    ['search absent', SEED, (t, tr) => t.search(65, tr)],
+    ['insert under a red uncle', SEED, (t, tr) => t.insert(90, tr)],
+    ['insert zig-zag (two rotations)', [10, 30], (t, tr) => t.insert(20, tr)],
+    ['insert into empty', [], (t, tr) => t.insert(7, tr)],
+    ['delete a red leaf', SEED, (t, tr) => t.delete(20, tr)],
+    ['delete the root (successor copy)', SEED, (t, tr) => t.delete(50, tr)],
+    ['delete a black leaf (NIL double black)', [50, 30, 70, 60, 80], (t, tr) => t.delete(30, tr)],
+    ['delete absent', SEED, (t, tr) => t.delete(99, tr)],
+    ['delete down to empty', [42], (t, tr) => t.delete(42, tr)],
+  ];
+  it.each(cases)('%s', (_label, build, op) => {
+    const t = RbtF64.fromKeys(build);
+    const before = rbtModel(t.snapshot());
+    const events: RbtEvent[] = [];
+    op(t, (e) => events.push(e));
+    renderEveryFrame(before, events, foldRbt, (model, active) =>
+      renderToStaticMarkup(createElement(RbtView, { model, active })),
+    );
+  });
+
+  it('draws a NIL box for the delete’s empty double-black child', () => {
+    const t = RbtF64.fromKeys([50, 30, 70, 60, 80]);
+    const before = rbtModel(t.snapshot());
+    const events: RbtEvent[] = [];
+    t.delete(30, (e) => events.push(e));
+    const i = events.findIndex((e) => e.kind === 'rbt.fixCase' && e.nil);
+    expect(i).toBeGreaterThanOrEqual(0);
+    const html = renderToStaticMarkup(createElement(RbtView, { model: foldRbt(before, events.slice(0, i + 1)), active: events[i] }));
+    expect(html).toContain('NIL');
+  });
+
+  it('renders the empty tree', () => {
+    expect(renderToStaticMarkup(createElement(RbtView, { model: rbtModel(null), active: undefined }))).toContain('(empty)');
   });
 });
 
@@ -468,6 +512,11 @@ describe('new panels mount without throwing', () => {
   });
   it('AvlPanel renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(AvlPanel))).toContain('<svg');
+  });
+  it('RbtPanel renders its seeded SVG and the per-operation-bound intro', () => {
+    const html = renderToStaticMarkup(createElement(RbtPanel));
+    expect(html).toContain('<svg');
+    expect(html).toContain(RBT_INTRO.slice(0, 30));
   });
   it('HeapPanel renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(HeapPanel))).toContain('<svg');

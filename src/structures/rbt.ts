@@ -17,9 +17,15 @@
  * node born red is not one; a node that goes red then back to black counts twice). The Rust
  * twin counts identically, or the corpus mismatches (risk R1).
  *
- * The animation (step events, a `Tracer`) is a later slice; this twin exists now so the
- * algorithm is fixed in both languages and the corpus holds them together.
+ * `insert` / `search` / `delete` accept an optional {@link Tracer} for the Explore
+ * animation (docs/PLAN.md §5). Each `rbt.compare` / `rbt.rotate` is emitted where the
+ * op-count ticks and each `rbt.recolour` where the recolour counter ticks, so both counts
+ * can be read off the stream (`src/viz/trace.rbt.test.ts` chains them to the corpus).
+ * Node paths are computed from the parent links at the moment of each event — a rotation
+ * moves nodes. The untraced path allocates nothing extra.
  */
+
+import type { Tracer, RbtEvent, RbtCase, BstStep } from '../viz/events';
 
 /** Result of a search: membership plus the cost-metric op-count (comparisons). */
 export interface SearchResult {
@@ -74,6 +80,8 @@ export class RbtF64 {
   private cmp = 0;
   private rot = 0;
   private recol = 0;
+  /** The active op's tracer, set for the length of one public op. */
+  private trace: Tracer<RbtEvent> | undefined;
 
   /** Build by inserting each key in order. */
   static fromKeys(keys: readonly number[]): RbtF64 {
@@ -107,8 +115,28 @@ export class RbtF64 {
    * (`null`) is always black and is never written. */
   private paint(n: Node | null, red: boolean): void {
     if (n === null) return;
-    if (n.red !== red) this.recol += 1;
+    if (n.red !== red) {
+      this.recol += 1;
+      this.trace?.({ kind: 'rbt.recolour', path: this.pathOf(n), value: n.value, red });
+    }
     n.red = red;
+  }
+
+  /** `n`'s root path, read from the parent links now (only called when tracing). */
+  private pathOf(n: Node): BstStep[] {
+    const steps: BstStep[] = [];
+    for (let c = n; c.parent !== null; c = c.parent) steps.push(c.parent.left === c ? 'L' : 'R');
+    return steps.reverse();
+  }
+
+  /** The path of `n`, or — when `n` is NIL — of the empty `side` child of `parent`. */
+  private addr(n: Node | null, parent: Node, side: BstStep): BstStep[] {
+    return n !== null ? this.pathOf(n) : [...this.pathOf(parent), side];
+  }
+
+  /** Emit a fix-up case marker (only called when tracing). */
+  private fix(op: 'insert' | 'delete', c: RbtCase, left: boolean, at: BstStep[], nil: boolean, other: BstStep[] | null): void {
+    this.trace?.({ kind: 'rbt.fixCase', op, case: c, side: left ? 'left' : 'right', at, nil, other });
   }
 
   /** Replace `old` with `next` in `old`'s parent (or at the root). */
@@ -121,6 +149,7 @@ export class RbtF64 {
   /** CLRS LEFT-ROTATE: lift `x.right` into `x`'s place. One op. */
   private rotateLeft(x: Node): void {
     this.rot += 1;
+    this.trace?.({ kind: 'rbt.rotate', path: this.pathOf(x), dir: 'left', value: x.value });
     const y = x.right!;
     x.right = y.left;
     if (y.left !== null) y.left.parent = x;
@@ -133,6 +162,7 @@ export class RbtF64 {
   /** CLRS RIGHT-ROTATE: lift `y.left` into `y`'s place. One op. */
   private rotateRight(y: Node): void {
     this.rot += 1;
+    this.trace?.({ kind: 'rbt.rotate', path: this.pathOf(y), dir: 'right', value: y.value });
     const x = y.left!;
     y.left = x.right;
     if (x.right !== null) x.right.parent = y;
@@ -147,8 +177,10 @@ export class RbtF64 {
    * red uncle ⇒ recolour and move up two levels; black uncle ⇒ one rotation (straight
    * line) or two (zig-zag), and stop. Returns the cost breakdown.
    */
-  insert(key: number): RbtCost {
+  insert(key: number, trace?: Tracer<RbtEvent>): RbtCost {
     this.reset();
+    this.trace = trace;
+    const path: BstStep[] | undefined = trace ? [] : undefined;
     let parent: Node | null = null;
     let cur = this.root;
     let goLeft = false;
@@ -156,6 +188,8 @@ export class RbtF64 {
       this.cmp += 1;
       parent = cur;
       goLeft = key < cur.value;
+      trace?.({ kind: 'rbt.compare', path: [...path!], value: cur.value, target: key, dir: goLeft ? 'left' : 'right' });
+      path?.push(goLeft ? 'L' : 'R');
       cur = goLeft ? cur.left : cur.right;
     }
     const z = new Node(key, parent);
@@ -163,7 +197,9 @@ export class RbtF64 {
     else if (goLeft) parent.left = z;
     else parent.right = z;
     this.count += 1;
+    trace?.({ kind: 'rbt.insert', path: path!, value: key });
     this.insertFixup(z);
+    this.trace = undefined;
     return this.cost();
   }
 
@@ -176,17 +212,20 @@ export class RbtF64 {
       if (p === g.left) {
         const u = g.right;
         if (isRed(u)) {
+          if (this.trace) this.fix('insert', 'redUncle', true, this.pathOf(z), false, this.pathOf(u!));
           this.paint(p, false);
           this.paint(u, false);
           this.paint(g, true);
           z = g;
         } else {
           if (z === p.right) {
+            if (this.trace) this.fix('insert', 'innerChild', true, this.pathOf(z), false, this.addr(u, g, 'R'));
             z = p;
             this.rotateLeft(z);
           }
           const p2 = z.parent!;
           const g2 = p2.parent!;
+          if (this.trace) this.fix('insert', 'outerChild', true, this.pathOf(z), false, this.addr(g2.right, g2, 'R'));
           this.paint(p2, false);
           this.paint(g2, true);
           this.rotateRight(g2);
@@ -194,17 +233,20 @@ export class RbtF64 {
       } else {
         const u = g.left;
         if (isRed(u)) {
+          if (this.trace) this.fix('insert', 'redUncle', false, this.pathOf(z), false, this.pathOf(u!));
           this.paint(p, false);
           this.paint(u, false);
           this.paint(g, true);
           z = g;
         } else {
           if (z === p.left) {
+            if (this.trace) this.fix('insert', 'innerChild', false, this.pathOf(z), false, this.addr(u, g, 'L'));
             z = p;
             this.rotateRight(z);
           }
           const p2 = z.parent!;
           const g2 = p2.parent!;
+          if (this.trace) this.fix('insert', 'outerChild', false, this.pathOf(z), false, this.addr(g2.left, g2, 'L'));
           this.paint(p2, false);
           this.paint(g2, true);
           this.rotateLeft(g2);
@@ -215,14 +257,23 @@ export class RbtF64 {
   }
 
   /** Search for `key`, comparing at each node until a match or a null child. */
-  search(key: number): SearchResult {
+  search(key: number, trace?: Tracer<RbtEvent>): SearchResult {
     this.reset();
+    const path: BstStep[] | undefined = trace ? [] : undefined;
     let cur = this.root;
     while (cur !== null) {
       this.cmp += 1;
-      if (key === cur.value) return { found: true, ops: this.cmp };
-      cur = key < cur.value ? cur.left : cur.right;
+      if (key === cur.value) {
+        trace?.({ kind: 'rbt.compare', path: [...path!], value: cur.value, target: key, dir: 'match' });
+        trace?.({ kind: 'rbt.result', found: true });
+        return { found: true, ops: this.cmp };
+      }
+      const goLeft = key < cur.value;
+      trace?.({ kind: 'rbt.compare', path: [...path!], value: cur.value, target: key, dir: goLeft ? 'left' : 'right' });
+      path?.push(goLeft ? 'L' : 'R');
+      cur = goLeft ? cur.left : cur.right;
     }
+    trace?.({ kind: 'rbt.result', found: false });
     return { found: false, ops: this.cmp };
   }
 
@@ -231,31 +282,52 @@ export class RbtF64 {
    * splice out the node that physically leaves, and — if it was black — run the CLRS
    * delete fix-up (at most three rotations). Returns membership and the cost breakdown.
    */
-  delete(key: number): DeleteResult {
+  delete(key: number, trace?: Tracer<RbtEvent>): DeleteResult {
     this.reset();
+    this.trace = trace;
+    const path: BstStep[] | undefined = trace ? [] : undefined;
     let z = this.root;
     while (z !== null) {
       this.cmp += 1;
-      if (key < z.value) z = z.left;
-      else if (key > z.value) z = z.right;
-      else break;
+      const dir = key < z.value ? 'left' : key > z.value ? 'right' : 'match';
+      trace?.({ kind: 'rbt.compare', path: [...path!], value: z.value, target: key, dir });
+      if (dir === 'left') {
+        path?.push('L');
+        z = z.left;
+      } else if (dir === 'right') {
+        path?.push('R');
+        z = z.right;
+      } else break;
     }
-    if (z === null) return { removed: false, ...this.cost() };
+    if (z === null) {
+      trace?.({ kind: 'rbt.result', found: false });
+      this.trace = undefined;
+      return { removed: false, ...this.cost() };
+    }
+    trace?.({ kind: 'rbt.removeTarget', path: path! });
     let y = z;
     if (z.left !== null && z.right !== null) {
       let s = z.right;
-      while (s.left !== null) s = s.left; // pointer walk — free
+      trace?.({ kind: 'rbt.descend', path: this.pathOf(s) });
+      while (s.left !== null) {
+        s = s.left; // pointer walk — free
+        trace?.({ kind: 'rbt.descend', path: this.pathOf(s) });
+      }
       z.value = s.value;
+      trace?.({ kind: 'rbt.replaceValue', path: this.pathOf(z), value: s.value });
       y = s;
     }
     // y has at most one child.
     const x = y.left ?? y.right;
     const xp = y.parent;
+    trace?.({ kind: 'rbt.remove', path: this.pathOf(y), value: y.value, black: !y.red });
     if (x !== null) x.parent = xp;
     const xIsLeft = xp !== null && xp.left === y;
     this.replaceChild(xp, y, x);
     this.count -= 1;
     if (!y.red) this.deleteFixup(x, xp, xIsLeft);
+    trace?.({ kind: 'rbt.result', found: true });
+    this.trace = undefined;
     return { removed: true, ...this.cost() };
   }
 
@@ -269,23 +341,27 @@ export class RbtF64 {
       if (xIsLeft) {
         let w = p.right!;
         if (isRed(w)) {
+          if (this.trace) this.fix('delete', 'redSibling', true, this.addr(x, p, xIsLeft ? 'L' : 'R'), x === null, this.pathOf(w));
           this.paint(w, false);
           this.paint(p, true);
           this.rotateLeft(p);
           w = p.right!;
         }
         if (!isRed(w.left) && !isRed(w.right)) {
+          if (this.trace) this.fix('delete', 'blackNephews', true, this.addr(x, p, xIsLeft ? 'L' : 'R'), x === null, this.pathOf(w));
           this.paint(w, true);
           x = p;
           xp = x.parent;
           xIsLeft = xp !== null && xp.left === x;
         } else {
           if (!isRed(w.right)) {
+            if (this.trace) this.fix('delete', 'nearNephewRed', true, this.addr(x, p, xIsLeft ? 'L' : 'R'), x === null, this.pathOf(w));
             this.paint(w.left, false);
             this.paint(w, true);
             this.rotateRight(w);
             w = p.right!;
           }
+          if (this.trace) this.fix('delete', 'farNephewRed', true, this.addr(x, p, xIsLeft ? 'L' : 'R'), x === null, this.pathOf(w));
           this.paint(w, p.red);
           this.paint(p, false);
           this.paint(w.right, false);
@@ -296,23 +372,27 @@ export class RbtF64 {
       } else {
         let w = p.left!;
         if (isRed(w)) {
+          if (this.trace) this.fix('delete', 'redSibling', false, this.addr(x, p, xIsLeft ? 'L' : 'R'), x === null, this.pathOf(w));
           this.paint(w, false);
           this.paint(p, true);
           this.rotateRight(p);
           w = p.left!;
         }
         if (!isRed(w.right) && !isRed(w.left)) {
+          if (this.trace) this.fix('delete', 'blackNephews', false, this.addr(x, p, xIsLeft ? 'L' : 'R'), x === null, this.pathOf(w));
           this.paint(w, true);
           x = p;
           xp = x.parent;
           xIsLeft = xp !== null && xp.left === x;
         } else {
           if (!isRed(w.left)) {
+            if (this.trace) this.fix('delete', 'nearNephewRed', false, this.addr(x, p, xIsLeft ? 'L' : 'R'), x === null, this.pathOf(w));
             this.paint(w.right, false);
             this.paint(w, true);
             this.rotateLeft(w);
             w = p.left!;
           }
+          if (this.trace) this.fix('delete', 'farNephewRed', false, this.addr(x, p, xIsLeft ? 'L' : 'R'), x === null, this.pathOf(w));
           this.paint(w, p.red);
           this.paint(p, false);
           this.paint(w.left, false);
@@ -321,6 +401,10 @@ export class RbtF64 {
           xp = null;
         }
       }
+    }
+    if (this.trace && x !== null && x.red) {
+      const up = x.parent;
+      this.fix('delete', 'redX', up === null || up.left === x, this.pathOf(x), false, null);
     }
     this.paint(x, false);
   }

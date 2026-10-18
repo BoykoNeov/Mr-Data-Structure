@@ -6,12 +6,13 @@ import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
 import { BstF64 } from '../structures/bst';
 import { AvlF64 } from '../structures/avl';
+import { RbtF64 } from '../structures/rbt';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import { browserSession } from '../persist/session';
-import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
+import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, RbtEvent, BstStep, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
   oaModel, foldOa, type OaModel,
@@ -19,6 +20,7 @@ import {
   doublyModel, foldDoublyList, type DoublyListModel,
   bstModel, foldBst, type BstModel,
   avlModel, foldAvl, type AvlModel,
+  rbtModel, foldRbt, rbtNodeAtPath, type RbtModel,
   heapModel, foldHeap, type HeapModel,
   trieModel, foldTrie, type TrieModel,
   skipModel, foldSkip, type SkipModel,
@@ -34,6 +36,7 @@ import { LinkedListView } from './LinkedListView';
 import { DoublyListView } from './DoublyListView';
 import { BstView } from './BstView';
 import { AvlView } from './AvlView';
+import { RbtView } from './RbtView';
 import { HeapView } from './HeapView';
 import { TrieView, byteLabel } from './TrieView';
 import { SkipListView } from './SkipListView';
@@ -52,7 +55,7 @@ import { Controls, type OpSpec } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'hashoa' | 'bst' | 'avl' | 'heap' | 'trie' | 'skiplist' | 'graph';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'hashoa' | 'bst' | 'avl' | 'rbt' | 'heap' | 'trie' | 'skiplist' | 'graph';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
@@ -76,6 +79,17 @@ const BST_SEED = [50, 30, 70, 20, 40, 60, 80];
 // Same keys as the BST — but the AVL stays balanced; inserting a sorted run keeps it
 // O(log n) (watch the rotations) where the BST tab degenerates to a chain.
 const AVL_SEED = [50, 30, 70, 20, 40, 60, 80];
+// The red-black tab reuses AVL_SEED so the two balanced trees compare key for key. Its
+// colours: 50, 30 and 70 black, the four leaves red — so any first insert meets a red
+// parent with a red uncle (three recolours, no rotation). The intro's numbers are computed
+// from the twins and pinned in `trace.rbt.test.ts`: the sorted run 90, 95, 99 costs both
+// trees 3, 5, 5 ops while this one also makes 10 recolours (free in the count); and
+// deleting 20, 40, then 30 removes a black leaf, so its path is one black short and the
+// fix-up runs on an empty (NIL) child. Nothing here claims fewer rotations than the AVL —
+// the scheme's promise is a per-operation bound (docs/METHODOLOGY.md §2.9).
+export const RBT_SEED: readonly number[] = AVL_SEED;
+export const RBT_INTRO =
+  'Red-black tree — the AVL tab’s ordering and keys, balanced by colour instead of height: no red node may have a red child, and every path down has the same number of black nodes. It pays the AVL’s metric, comparisons + rotations; colour changes are tallied on their own and are not in the ops. Its promise is a bound per operation — at most 2 rotations per insert and 3 per delete — not fewer rotations overall. Insert 90, 95, 99: both tabs pay 3, 5, 5 ops, and this tree also makes 10 recolours. To watch the delete fix-up, delete 20, 40 and then 30: removing a black leaf leaves its path one black short.';
 // Built by sifting each key up; the result is a valid min-heap (root = 10).
 const HEAP_SEED = [50, 30, 70, 20, 40, 60, 10];
 // Every key here is a teaching decision (docs/PLAN.md §5): `car`/`cart`/`cat` share
@@ -313,6 +327,75 @@ function describeAvl(e: AvlEvent | undefined): string {
     case 'avl.rotate': return `rotate ${e.dir} at ${e.value} — rebalance (this is the cost beyond a plain BST)`;
     case 'avl.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
+}
+
+const otherWay = (side: 'left' | 'right') => (side === 'left' ? 'right' : 'left');
+
+/**
+ * The red-black step caption (docs/METHODOLOGY.md §2.9). It reads the folded model to
+ * name the nodes a fix-up case talks about (and, for the delete's empty "double black"
+ * child, which node it hangs from). Every recolour is narrated as outside the ops, and no
+ * caption says the tree rotates less than the AVL — its promise is a per-operation bound.
+ * Exported for `VizPanel.test.ts`.
+ */
+export function describeRbt(e: RbtEvent | undefined, m: RbtModel): string {
+  if (!e) return '';
+  const val = (path: readonly BstStep[] | null) => (path === null ? '?' : (rbtNodeAtPath(m, path)?.value ?? null));
+  const name = (path: readonly BstStep[] | null) => {
+    const v = val(path);
+    return v === null ? 'an empty (NIL, black) child' : String(v);
+  };
+  switch (e.kind) {
+    case 'rbt.compare': {
+      const dir = e.dir === 'match' ? 'match ✓' : e.dir === 'left' ? 'smaller → go left' : '≥ → go right';
+      return `compare ${e.target} vs node ${e.value} → ${dir}`;
+    }
+    case 'rbt.insert':
+      return e.path.length === 0
+        ? `insert ${e.value} as the root — born red; the root is painted black at the end`
+        : `insert ${e.value} as a new red leaf — new nodes are born red, which is not a recolour`;
+    case 'rbt.removeTarget':
+      return 'found the node to delete';
+    case 'rbt.descend':
+      return 'walk to the in-order successor (smallest key in the right subtree) — pointer-following, free';
+    case 'rbt.replaceValue':
+      return `copy the successor (${e.value}) up into the deleted node — it keeps its colour; the successor’s node is the one that leaves`;
+    case 'rbt.remove':
+      return e.black
+        ? `unlink ${e.value} — it was black, so every path through here is now one black short: the delete fix-up repairs that`
+        : `unlink ${e.value} — it was red, so no path loses a black: nothing to fix`;
+    case 'rbt.rotate':
+      return `rotate ${e.dir} at ${e.value} — one rotation, counted in the ops as in the AVL`;
+    case 'rbt.recolour':
+      return `paint ${e.value} ${e.red ? 'red' : 'black'} — a recolour: tallied on its own, not in the ops (the AVL has no colour to pay for)`;
+    case 'rbt.fixCase': {
+      const x = e.nil ? `the empty (NIL) ${e.side} child of ${name(e.at.slice(0, -1))}` : name(e.at);
+      const o = name(e.other);
+      const blackUncle = val(e.other) === null ? 'the uncle is an empty (NIL) child, which counts as black' : `the uncle ${o} is black`;
+      switch (e.case) {
+        case 'redUncle':
+          return `fix-up: ${x} and its parent are both red, and the uncle ${o} is red too → paint the parent and uncle black and the grandparent red, then check two levels up`;
+        case 'innerChild':
+          return `fix-up: ${x} and its parent are both red, ${blackUncle}, and ${x} is the inner child → rotate the parent ${e.side} first, to straighten the line`;
+        case 'outerChild':
+          return `fix-up: ${x}, its red parent and its grandparent are in a straight line and ${blackUncle} → paint the parent black and the grandparent red, then rotate the grandparent ${otherWay(e.side)} — done`;
+        case 'redSibling':
+          return `fix-up: ${x} is one black short and its sibling ${o} is red → swap the sibling’s and the parent’s colours and rotate the parent ${e.side}, so ${x} gets a black sibling`;
+        case 'blackNephews':
+          return `fix-up: ${x} is one black short; its sibling ${o} and both of the sibling’s children are black → paint ${o} red, which takes a black off that side too, and move the shortfall up to the parent`;
+        case 'nearNephewRed':
+          return `fix-up: ${x} is one black short and only the sibling ${o}’s near child is red → rotate ${o} ${otherWay(e.side)} so the red child moves to the far side`;
+        case 'farNephewRed':
+          return `fix-up: ${x} is one black short and the sibling ${o}’s far child is red → the sibling takes the parent’s colour, the parent and that child go black, and the parent rotates ${e.side} — the missing black is restored; done`;
+        case 'redX':
+          return `fix-up: ${x} is red → paint it black, and the missing black is back`;
+      }
+      break;
+    }
+    case 'rbt.result':
+      return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+  return '';
 }
 
 function describeHeap(e: HeapEvent | undefined): string {
@@ -815,6 +898,45 @@ export function AvlPanel() {
   );
 }
 
+export function RbtPanel() {
+  const ref = useRef<RbtF64 | null>(null);
+  if (ref.current === null) ref.current = RbtF64.fromKeys(RBT_SEED);
+  const [base, setBase] = useState<RbtModel>(() => rbtModel(RbtF64.fromKeys(RBT_SEED).snapshot()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<RbtEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const t = ref.current!;
+    const snapshot = rbtModel(t.snapshot()); // before-state
+    const events: RbtEvent[] = [];
+    const push = (e: RbtEvent) => events.push(e);
+    const split = (r: { ops: number; comparisons: number; rotations: number; recolours: number }) =>
+      `${r.ops} ops (${r.comparisons} comparisons + ${r.rotations} rotation${r.rotations === 1 ? '' : 's'}) · ${r.recolours} recolour${r.recolours === 1 ? '' : 's'}, not in the ops`;
+    if (op === 'search') {
+      const r = t.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${r.ops} comparisons`);
+    } else if (op === 'insert') {
+      setSummary(`insert(${value}) → placed · ${split(t.insert(value, push))}`);
+    } else {
+      const r = t.delete(value, push);
+      setSummary(`delete(${value}) → ${r.removed ? 'removed' : 'absent'} · ${split(r)}`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldRbt(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || RBT_INTRO}</p>
+      <RbtView model={model} active={active} />
+      <Controls player={player} onOp={onOp} caption={describeRbt(active, model)} />
+    </>
+  );
+}
+
 export function HeapPanel() {
   const ref = useRef<MinHeapF64 | null>(null);
   if (ref.current === null) ref.current = MinHeapF64.fromKeys(HEAP_SEED);
@@ -1018,6 +1140,7 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'hashoa', label: 'hash set (open addressing)' },
   { kind: 'bst', label: 'binary search tree' },
   { kind: 'avl', label: 'AVL tree' },
+  { kind: 'rbt', label: 'red-black tree' },
   { kind: 'heap', label: 'min-heap' },
   { kind: 'trie', label: 'trie (text keys)' },
   { kind: 'skiplist', label: 'skip list' },
@@ -1034,6 +1157,7 @@ function panelFor(kind: Kind) {
     case 'hashoa': return <OpenAddressingPanel />;
     case 'bst': return <BstPanel />;
     case 'avl': return <AvlPanel />;
+    case 'rbt': return <RbtPanel />;
     case 'heap': return <HeapPanel />;
     case 'trie': return <TriePanel />;
     case 'skiplist': return <SkipListPanel />;

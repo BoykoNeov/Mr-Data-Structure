@@ -627,6 +627,13 @@ for search, so the red-black-vs-AVL search comparison is clock-free only), churn
 uniform and 0.16 reverse-sorted, all sub-linear. The gate asserts class only, never "below
 the AVL" or "above" — the op-counts say the order flips with input order.
 
+**Watching it (Explore).** The red-black tab animates the same convention: `rbt.compare` and
+`rbt.rotate` are the cost events, and `rbt.recolour` is emitted exactly where the separate
+recolour counter ticks, so a stream yields both numbers without folding one into the other.
+The tracer's counts, totals and the drawn pre-order shape with colours are checked against
+`corpus-rbt.txt` (`src/viz/trace.rbt.test.ts`), and a 3 000-op stream checks the
+per-operation bound — the scheme's real difference — rather than any total.
+
 ### 2.10 Equal work, fewer hops (the B-tree)
 
 The B-tree (`btree.rs`, `src/structures/btree.ts`, minimum degree **t = 16**, ≤ 31 keys a

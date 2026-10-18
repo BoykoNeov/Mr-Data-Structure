@@ -6,12 +6,13 @@ import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
 import { BstF64, type BstShape } from '../structures/bst';
 import { AvlF64, type AvlShape } from '../structures/avl';
+import { RbtF64 } from '../structures/rbt';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr, type TrieShape } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
-import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
+import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, RbtEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import { countCostEvents } from './events';
 import { GRAPH_SEED } from './VizPanel';
 import {
@@ -21,6 +22,7 @@ import {
   doublyModel, foldDoublyList, doublyShapeOf, doublyReachable,
   bstModel, foldBst, type BstDisplayNode,
   avlModel, foldAvl, type AvlDisplayNode,
+  rbtModel, foldRbt, rbtShapeOf, rbtRedRedIds, type RbtDisplayNode,
   heapModel, foldHeap,
   trieModel, foldTrie, type TrieModel, type TrieDisplayNode,
   skipModel, foldSkip, skipLevelKeys, type SkipModel,
@@ -532,6 +534,52 @@ describe('avl fold mirrors the structure (including rotations)', () => {
       const frameIds = ids(foldAvl(before, events.slice(0, f)).root);
       expect(new Set(frameIds).size).toBe(frameIds.length);
     }
+  });
+});
+
+describe('red-black fold reproduces the twin’s shape and colours', () => {
+  const ids = (n: RbtDisplayNode | null): number[] => (n === null ? [] : [n.id, ...ids(n.left), ...ids(n.right)]);
+
+  it('the starting model is the snapshot, round-trip', () => {
+    const t = RbtF64.fromKeys([50, 30, 70, 20, 40, 60, 80]);
+    expect(rbtShapeOf(rbtModel(t.snapshot()))).toEqual(t.snapshot());
+  });
+
+  it('a long random stream folds op by op to the twin — and no red-red pair survives an op', () => {
+    const t = new RbtF64();
+    let x = 3;
+    const rnd = () => (x = (x * 1103515245 + 12345) % 2147483648) / 2147483648;
+    let sawViolation = false;
+    for (let i = 0; i < 800; i++) {
+      const before = rbtModel(t.snapshot());
+      const k = Math.floor(rnd() * 60);
+      const events: RbtEvent[] = [];
+      const tr = (e: RbtEvent) => events.push(e);
+      const op = rnd();
+      if (op < 0.5) t.insert(k, tr);
+      else if (op < 0.85) t.delete(k, tr);
+      else t.search(k, tr);
+      for (let f = 0; f <= events.length; f++) {
+        const frame = foldRbt(before, events.slice(0, f));
+        const all = ids(frame.root);
+        expect(new Set(all).size).toBe(all.length); // every frame renderable
+        if (rbtRedRedIds(frame).size > 0) sawViolation = true;
+      }
+      const after = foldRbt(before, events);
+      expect(rbtShapeOf(after)).toEqual(t.snapshot());
+      expect(rbtRedRedIds(after).size).toBe(0);
+    }
+    // the insert lesson is actually on screen mid-op
+    expect(sawViolation).toBe(true);
+  });
+
+  it('a rotation keeps every node’s id', () => {
+    const t = RbtF64.fromKeys([10, 20]);
+    const before = rbtModel(t.snapshot());
+    const events: RbtEvent[] = [];
+    t.insert(30, (e) => events.push(e)); // straight line → one left rotation at 10
+    const after = foldRbt(before, events);
+    expect(new Set(ids(after.root))).toEqual(new Set([...ids(before.root), before.nextId]));
   });
 });
 

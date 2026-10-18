@@ -80,7 +80,9 @@ visited.
 Phase 6 also answers several "which variant?" questions on exact counts, each on the
 shared charts. A **red-black tree**, measured in the AVL's own unit, never rotates more
 than twice per insert or three times per delete — but saves rotations in total only on
-random inserts, and pays for its looser balance on sorted input. A **B-tree** makes the
+random inserts, and pays for its looser balance on sorted input. Its Explore tab shows each repair step
+by name — which node is being fixed and which neighbour's colour decided how — with colour
+changes counted apart from the comparisons and rotations it shares with the AVL. A **B-tree** makes the
 AVL's number of comparisons in a quarter of its node hops; whether that shows on the clock
 is printed for you to read, not claimed. An **open-addressing hash set**, held to the
 chaining set's exact table sizes, pays more probes per lookup (primary clustering, matching
@@ -100,8 +102,8 @@ calibrated 50/50, reproduced exactly), and a structure that keeps one copy of ea
 key says how many it actually held beside the input size — on the chart, in the exports
 and in the PNG. And your **session is remembered in this browser**: your last run's
 dataset — pasted data included — and chart settings come back on reload, while results are
-always re-measured, never restored. Still open: animations for the
-red-black tree and the B-tree, the
+always re-measured, never restored. Still open: an animation for the
+B-tree, the
 graph in the exports, and performance polish. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles

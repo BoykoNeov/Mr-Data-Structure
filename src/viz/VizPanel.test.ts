@@ -3,9 +3,10 @@ import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import { DoublyLinkedListF64 } from '../structures/linkedList';
 import { HashSetOaF64 } from '../structures/hashSetOa';
-import { describeSkip, describeGraph, summarizeGraph, describeDoubly, DOUBLY_INTRO, GRAPH_SEED, describeOa, OA_SEED } from './VizPanel';
-import { graphModel, reduceGraph, doublyModel, foldDoublyList, oaModel, foldOa, type GraphModel } from './model';
-import type { SkipListEvent, GraphEvent, DoublyListEvent, HashSetOaEvent } from './events';
+import { RbtF64 } from '../structures/rbt';
+import { describeSkip, describeGraph, summarizeGraph, describeDoubly, DOUBLY_INTRO, GRAPH_SEED, describeOa, OA_SEED, describeRbt, RBT_SEED, RBT_INTRO } from './VizPanel';
+import { graphModel, reduceGraph, doublyModel, foldDoublyList, oaModel, foldOa, rbtModel, foldRbt, type GraphModel } from './model';
+import type { SkipListEvent, GraphEvent, DoublyListEvent, HashSetOaEvent, RbtEvent } from './events';
 
 /**
  * The skip list's step caption reads the comparison direction from value-vs-target,
@@ -230,5 +231,54 @@ describe('open-addressing captions: a tombstone keeps the walk going, the empty 
       ...captions(s, (t) => s.delete(30, t)),
     ];
     for (const { text } of all) expect(text).not.toMatch(/insertion order|inserted (first|earlier|later)/);
+  });
+});
+
+describe('red-black captions: recolours are outside the ops, no claim of fewer rotations', () => {
+  const captions = (tree: RbtF64, op: (tr: (e: RbtEvent) => void) => void) => {
+    const before = rbtModel(tree.snapshot());
+    const events: RbtEvent[] = [];
+    op((e) => events.push(e));
+    // a caption reads the model as it stands when its event is the active one
+    return events.map((e, i) => ({ e, text: describeRbt(e, foldRbt(before, events.slice(0, i))) }));
+  };
+  const all = () => {
+    const t = RbtF64.fromKeys(RBT_SEED);
+    const out = [...captions(t, (tr) => t.insert(90, tr)), ...captions(t, (tr) => t.insert(95, tr))];
+    const d = RbtF64.fromKeys(RBT_SEED);
+    d.delete(20);
+    d.delete(40);
+    out.push(...captions(d, (tr) => d.delete(30, tr)));
+    const z = RbtF64.fromKeys([10, 30]);
+    out.push(...captions(z, (tr) => z.insert(20, tr)));
+    return out;
+  };
+
+  it('every recolour says it is not in the ops', () => {
+    const recols = all().filter(({ e }) => e.kind === 'rbt.recolour');
+    expect(recols.length).toBeGreaterThan(0);
+    for (const { text } of recols) expect(text).toContain('not in the ops');
+  });
+
+  it('each fix-up case names itself and the node that decided it', () => {
+    const texts = all().filter(({ e }) => e.kind === 'rbt.fixCase').map(({ text }) => text);
+    expect(texts.some((x) => x.includes('the uncle 60 is red'))).toBe(true); // insert(90): parent 80, uncle 60
+    expect(texts.some((x) => x.includes('the uncle is an empty (NIL) child, which counts as black'))).toBe(true);
+    expect(texts.some((x) => x.includes('inner child'))).toBe(true);
+    expect(texts.some((x) => x.includes('straight line'))).toBe(true);
+    expect(texts.some((x) => x.includes('the empty (NIL) left child of 50') && x.includes('far child is red'))).toBe(true);
+  });
+
+  it('the splice says whether the removed node was black', () => {
+    const removes = all().filter(({ e }) => e.kind === 'rbt.remove').map(({ text }) => text);
+    expect(removes.some((x) => x.includes('it was black'))).toBe(true);
+    const t = RbtF64.fromKeys(RBT_SEED);
+    const red = captions(t, (tr) => t.delete(20, tr)).find(({ e }) => e.kind === 'rbt.remove');
+    expect(red?.text).toContain('nothing to fix');
+  });
+
+  it('nothing says the red-black tree rotates less than the AVL', () => {
+    for (const { text } of all()) expect(text).not.toMatch(/fewer rotations|rotates less|less rotation/i);
+    expect(RBT_INTRO).toContain('not fewer rotations overall');
   });
 });

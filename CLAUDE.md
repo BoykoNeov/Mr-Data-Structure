@@ -210,6 +210,15 @@ tool call does not survive into the next (each call is a fresh process).
   AVL is a `Box` tree and the red-black tree an arena, so their wall-clock gap mixes scheme
   with storage; keep every comparative sentence qualified by signal. The NIL sentinel (slot
   0) is never written — don't restore CLRS's `nil.p` trick.
+- **The red-black animation: recolours are steps, never cost events, and fill is colour.**
+  `rbt.recolour` is emitted exactly where the twin's *separate* recolour counter ticks; adding
+  it to `COST_EVENT_KINDS` breaks the corpus chain in `trace.rbt.test.ts`. `RbtView` highlights
+  with **rings** only — a highlight fill would hide the node's colour on the very frame it is
+  compared or repainted. Paths are recomputed from parent links at each event (a rotation
+  moves nodes), and the delete's double black on an empty child is addressed by parent path
+  + side (`nil: true`) and drawn as a NIL box. No caption, intro or test may claim the tree
+  rotates less than the AVL (`VizPanel.test.ts` greps for it); the intro's 3, 5, 5 / 10
+  recolours figures are computed from both twins and pinned.
 - **The B-tree's delete is not CLRS's, on purpose.** Insert keeps the CLRS proactive split;
   delete repairs only *underflow* on the way back up. CLRS's single-pass pre-fill delete
   re-merges what the split just made, on every churn pair (every level on sorted input), so

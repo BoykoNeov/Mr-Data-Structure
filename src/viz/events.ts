@@ -584,6 +584,159 @@ export type AvlEvent =
   | AvlRotate
   | AvlResult;
 
+// ── Red-black tree (docs/PLAN.md §8, "Trees / heaps", balanced; CLRS) ────────
+//
+// The AVL's ordering (`key < node` ⇒ left, else right), root-path addressing and
+// value-copy delete, plus a **colour** per node. Paths are computed from the twin's
+// parent links *at the moment each event is emitted*, because a rotation moves nodes and
+// a path cached before it would address the wrong one.
+//
+// **Cost metric — comparisons + rotations, exactly the AVL's (docs/PLAN.md §8).** The
+// cost events are `rbt.compare` and `rbt.rotate`, so `countCostEvents(stream) === ops`
+// for search, insert AND delete, pinned against `conformance/corpus-rbt.txt` in
+// `src/viz/trace.rbt.test.ts`. **A recolour is not a cost event**: the twin counts it on
+// its own counter (a write that *changes* a colour — a node born red is not one), and an
+// `rbt.recolour` is emitted exactly where that counter ticks, so the recolour events
+// equal `recolours`. The successor walk (`rbt.descend`) and the fix-up case markers
+// (`rbt.fixCase`) are free.
+//
+// The scheme's real difference from the AVL is a **per-operation bound** — at most two
+// rotations per insert, three per delete — not a lower total (docs/METHODOLOGY.md §2.9):
+// no event or caption may imply the red-black tree rotates less overall.
+
+/** Compare `target` against the key `value` at the node reached by `path` (one key
+ * comparison — a cost event). `dir` is the branch taken next (or `match`). */
+export interface RbtCompare {
+  readonly kind: 'rbt.compare';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+  readonly target: number;
+  readonly dir: BstDir;
+}
+
+/** Attach a new **red** leaf carrying `value` at `path` (`[]` seeds the root). Born red,
+ * so not a recolour. No comparison. */
+export interface RbtInsert {
+  readonly kind: 'rbt.insert';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+}
+
+/** Mark the node at `path` (found by the search) as the delete target. Highlight only. */
+export interface RbtRemoveTarget {
+  readonly kind: 'rbt.removeTarget';
+  readonly path: readonly BstStep[];
+}
+
+/** Step onto the node at `path` on the walk to a two-child delete's in-order successor
+ * (right once, then left to the bottom). Pointer-following — free. */
+export interface RbtDescend {
+  readonly kind: 'rbt.descend';
+  readonly path: readonly BstStep[];
+}
+
+/** Copy the successor's `value` into the node at `path` (the two-child delete's value
+ * copy) — emitted *before* the splice, the twin's order. The node keeps its colour. */
+export interface RbtReplaceValue {
+  readonly kind: 'rbt.replaceValue';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+}
+
+/** Splice out the node at `path`, which has **at most one child** (the reducer lifts that
+ * child, or `null`, into its place). `black` is the removed node's colour — what decides
+ * whether the delete fix-up runs: a red node leaves every path's black count intact; a
+ * black one leaves its path one black short. */
+export interface RbtRemove {
+  readonly kind: 'rbt.remove';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+  readonly black: boolean;
+}
+
+/** Rotate the subtree rooted at `path` one step `dir` (one rotation — a cost event): a
+ * `left` rotation lifts the pivot's right child into its place, a `right` rotation its
+ * left child — the AVL's semantics. `value` is the pivot's key, for the caption. */
+export interface RbtRotate {
+  readonly kind: 'rbt.rotate';
+  readonly path: readonly BstStep[];
+  readonly dir: 'left' | 'right';
+  readonly value: number;
+}
+
+/** Paint the node at `path` (key `value`) `red` or black — a write that *changes* its
+ * colour. Counted on the twin's separate recolour counter, **never** in `ops`; not a
+ * cost event. Emitted only when the colour actually changes. */
+export interface RbtRecolour {
+  readonly kind: 'rbt.recolour';
+  readonly path: readonly BstStep[];
+  readonly value: number;
+  readonly red: boolean;
+}
+
+/**
+ * Which CLRS fix-up case the next writes carry out, named after the twin's own branches.
+ *
+ * Insert (`at` = z, the red node whose parent is red; `other` = its uncle):
+ *  - `redUncle` — recolour parent and uncle black, grandparent red, move z up two levels;
+ *  - `innerChild` — z is its parent's inner child: rotate the parent, which turns it into…
+ *  - `outerChild` — …the straight-line case: recolour, rotate the grandparent, done.
+ *
+ * Delete (`at` = x, the node one black short — possibly an empty child, `nil`; `other` =
+ * its sibling w):
+ *  - `redSibling` — recolour w and the parent, rotate the parent toward x: x gets a black
+ *    sibling, and one of the other three cases follows;
+ *  - `blackNephews` — w and both its children are black: paint w red and move the
+ *    shortfall up to the parent;
+ *  - `nearNephewRed` — only w's near child is red: rotate w so it becomes the far one…
+ *  - `farNephewRed` — w's far child is red: recolour, rotate the parent, done;
+ *  - `redX` — x itself is red: painting it black restores the missing black.
+ */
+export type RbtCase =
+  | 'redUncle'
+  | 'innerChild'
+  | 'outerChild'
+  | 'redSibling'
+  | 'blackNephews'
+  | 'nearNephewRed'
+  | 'farNephewRed'
+  | 'redX';
+
+/** A fix-up case is about to run (free — a marker, not a write). `at` addresses the node
+ * being repaired; when `nil` it is an **empty** child (the delete's "double black" NIL),
+ * addressed by its parent's path plus its side, so no drawn node sits there. `other` is
+ * the node whose colour decided the case — the uncle (insert) or the sibling (delete) —
+ * or `null` when the case consults none (`redX`). `side` is the mirror: which child of
+ * its parent `at` hangs from (for insert, which side the parent hangs from the
+ * grandparent), so the caption can say which way the rotations go. */
+export interface RbtFixCase {
+  readonly kind: 'rbt.fixCase';
+  readonly op: 'insert' | 'delete';
+  readonly case: RbtCase;
+  readonly side: 'left' | 'right';
+  readonly at: readonly BstStep[];
+  readonly nil: boolean;
+  readonly other: readonly BstStep[] | null;
+}
+
+/** Terminal marker for a search/delete: whether the key was present. Not a cost event. */
+export interface RbtResult {
+  readonly kind: 'rbt.result';
+  readonly found: boolean;
+}
+
+export type RbtEvent =
+  | RbtCompare
+  | RbtInsert
+  | RbtRemoveTarget
+  | RbtDescend
+  | RbtReplaceValue
+  | RbtRemove
+  | RbtRotate
+  | RbtRecolour
+  | RbtFixCase
+  | RbtResult;
+
 // ── Binary min-heap (docs/PLAN.md §8, "Trees / heaps") ──────────────────────
 //
 // Array-backed **complete binary tree**; the renderer draws BOTH the array and the
@@ -960,6 +1113,7 @@ export type VizEvent =
   | DoublyListEvent
   | BstEvent
   | AvlEvent
+  | RbtEvent
   | HeapEvent
   | TrieEvent
   | SkipListEvent
@@ -998,6 +1152,11 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   // walk carries no comparison, like the BST).
   'avl.compare',
   'avl.rotate',
+  // Red-black: the AVL's metric — comparisons + rotations. Recolours (`rbt.recolour`) are
+  // deliberately absent: the twin counts them on their own counter, never in `ops`, and
+  // the fix-up case markers and the successor walk are free.
+  'rbt.compare',
+  'rbt.rotate',
   // Min-heap: comparisons + swaps (docs/PLAN.md §8). Sift comparisons, search-scan
   // comparisons, and swaps are the cost events.
   'heap.compare',
