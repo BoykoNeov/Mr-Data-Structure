@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import { DoublyLinkedListF64 } from '../structures/linkedList';
-import { describeSkip, describeGraph, summarizeGraph, describeDoubly, DOUBLY_INTRO, GRAPH_SEED } from './VizPanel';
-import { graphModel, reduceGraph, doublyModel, foldDoublyList, type GraphModel } from './model';
-import type { SkipListEvent, GraphEvent, DoublyListEvent } from './events';
+import { HashSetOaF64 } from '../structures/hashSetOa';
+import { describeSkip, describeGraph, summarizeGraph, describeDoubly, DOUBLY_INTRO, GRAPH_SEED, describeOa, OA_SEED } from './VizPanel';
+import { graphModel, reduceGraph, doublyModel, foldDoublyList, oaModel, foldOa, type GraphModel } from './model';
+import type { SkipListEvent, GraphEvent, DoublyListEvent, HashSetOaEvent } from './events';
 
 /**
  * The skip list's step caption reads the comparison direction from value-vs-target,
@@ -167,5 +168,67 @@ describe('doubly-list captions: the back link is free and buys no visits', () =>
   it('the intro says the counts are equal and the back link costs writes', () => {
     expect(DOUBLY_INTRO).toContain('exactly the singly list’s node-visits');
     expect(DOUBLY_INTRO).toContain('extra pointer write on every insert and delete');
+  });
+});
+
+describe('open-addressing captions: a tombstone keeps the walk going, the empty stop is free', () => {
+  /** Each event of one op on `s`, captioned against the model folded up to and including it. */
+  const captions = (s: HashSetOaF64, op: (t: (e: HashSetOaEvent) => void) => void) => {
+    const before = oaModel(s.slots());
+    const events: HashSetOaEvent[] = [];
+    op((e) => events.push(e));
+    return events.map((e, i) => ({ e, text: describeOa(e, foldOa(before, events.slice(0, i + 1))) }));
+  };
+
+  it('stepping over a tombstone is "keep walking, still one probe"', () => {
+    const s = HashSetOaF64.fromKeys(OA_SEED);
+    s.delete(40); // tombstone at slot 5
+    const tomb = captions(s, (t) => s.search(60, t)).find(({ e }) => e.kind === 'hoa.probe' && e.state === 'tomb');
+    expect(tomb?.text).toContain('tombstone');
+    expect(tomb?.text).toContain('keep walking, still one probe');
+  });
+
+  it('the empty slot that ends a walk is called free, on a miss and on an insert', () => {
+    const s = HashSetOaF64.fromKeys(OA_SEED);
+    const miss = captions(s, (t) => s.search(55, t)).find(({ e }) => e.kind === 'hoa.stop');
+    expect(miss?.text).toContain('free');
+    expect(miss?.text).not.toContain('one probe');
+    // an insert homed at 40's tombstone: its stop proves absence (free) and sends it back
+    s.delete(40);
+    let k = 61;
+    while (s.search(k).ops !== 5 || s.slots().indexOf(k) !== -1) k++; // walks 5 (tomb), 6, 7, 0
+    const ins = captions(s, (t) => s.insert(k, t));
+    const stop = ins.find(({ e }) => e.kind === 'hoa.stop');
+    expect(stop?.text).toContain('free');
+    expect(stop?.text).toContain('remembered at [5]');
+    expect(ins.find(({ e }) => e.kind === 'hoa.place')?.text).toContain('reusing the tombstone');
+  });
+
+  it('a probe at the last slot says the walk wraps to slot 0', () => {
+    const s = HashSetOaF64.fromKeys(OA_SEED);
+    const atLast = captions(s, (t) => s.search(60, t)).find(({ e }) => e.kind === 'hoa.probe' && e.slot === 7);
+    expect(atLast?.text).toContain('wraps round to [0]');
+  });
+
+  it('a rebuild names doubling vs purging, and says re-placing is not counted', () => {
+    const grow = HashSetOaF64.fromKeys(OA_SEED);
+    const doubled = captions(grow, (t) => grow.insert(70, t)).find(({ e }) => e.kind === 'hoa.rehash');
+    expect(doubled?.text).toContain('double to 16 slots');
+    expect(doubled?.text).toContain('not counted');
+    const purge = HashSetOaF64.fromKeys(OA_SEED);
+    for (const d of [10, 20, 30, 40]) purge.delete(d);
+    const purged = captions(purge, (t) => purge.insert(80, t)).find(({ e }) => e.kind === 'hoa.rehash');
+    expect(purged?.text).toContain('same size');
+    expect(purged?.text).toContain('not counted');
+  });
+
+  it('no caption claims a run holds keys in insertion order', () => {
+    const s = HashSetOaF64.fromKeys(OA_SEED);
+    const all = [
+      ...captions(s, (t) => s.search(60, t)),
+      ...captions(s, (t) => s.insert(70, t)),
+      ...captions(s, (t) => s.delete(30, t)),
+    ];
+    for (const { text } of all) expect(text).not.toMatch(/insertion order|inserted (first|earlier|later)/);
   });
 });

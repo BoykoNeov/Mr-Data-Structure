@@ -25,10 +25,16 @@
  *     insert+delete pair, repeating whole passes until one changes nothing;
  *  4. churn cycles a block of `clamp(⌊len / 32⌋, 1, 16)` consecutive keys, not one.
  *
- * No step-event tracer yet — the animation is a later slice (docs/PLAN.md §5).
+ * `insert` / `search` / `delete` accept an optional {@link Tracer} that yields the
+ * animation step-events (docs/PLAN.md §5): each cost event is emitted exactly where the
+ * op-count ticks, so a stream's cost-event count equals its op-count for all three ops
+ * (`src/viz/trace.hoa.test.ts`, chained to the corpus). The empty slot that ends a walk
+ * (`hoa.stop`) and the rehash's re-placement are traced but free, as they are uncounted.
+ * The churn helpers stay untraced; the untraced path allocates nothing.
  */
 
 import { mixF64 } from './mix';
+import type { Tracer, HashSetOaEvent, HoaMove } from '../viz/events';
 
 const INITIAL_SLOTS = 4;
 /** Rehash when `(live + tombstones) / slots` would exceed this — the chaining set's 0.75. */
@@ -99,18 +105,46 @@ export class HashSetOaF64 {
   }
 
   /** Walk from the home slot until the key (hit) or an empty slot (miss). */
-  search(target: number): SearchResult {
+  search(target: number, trace?: Tracer<HashSetOaEvent>): SearchResult {
     let ops = 1; // the hash
     const cap = this.state.length;
-    let i = this.home(target);
+    const home = this.home(target);
+    trace?.({ kind: 'hoa.hash', key: target, home });
+    let i = home;
     for (let step = 0; step < cap; step++) {
       const st = this.state[i];
-      if (st === EMPTY) return { found: false, ops };
+      if (st === EMPTY) {
+        trace?.({ kind: 'hoa.stop', home, slot: i, reuse: null });
+        trace?.({ kind: 'hoa.result', found: false });
+        return { found: false, ops };
+      }
       ops += 1; // slot probe: a live key compared, or a tombstone stepped over
-      if (st === LIVE && this.keys[i] === target) return { found: true, ops };
+      const matched = st === LIVE && this.keys[i] === target;
+      trace?.(this.probeEvent(home, i, target, matched));
+      if (matched) {
+        trace?.({ kind: 'hoa.result', found: true });
+        return { found: true, ops };
+      }
       i = (i + 1) & (cap - 1);
     }
+    trace?.({ kind: 'hoa.result', found: false });
     return { found: false, ops };
+  }
+
+  /** The `hoa.probe` event for occupied slot `i` (only built when tracing). `reuse` is an
+   * insert's first tombstone so far (`-1` = none, and always for search / delete). */
+  private probeEvent(home: number, i: number, target: number, matched: boolean, reuse = -1): HashSetOaEvent {
+    const live = this.state[i] === LIVE;
+    return {
+      kind: 'hoa.probe',
+      home,
+      slot: i,
+      state: live ? 'live' : 'tomb',
+      value: live ? this.keys[i] : null,
+      target,
+      matched,
+      reuse: reuse < 0 ? null : reuse,
+    };
   }
 
   /**
@@ -118,23 +152,32 @@ export class HashSetOaF64 {
    * the key there (or in the empty slot if none), then rehash if live + tombstones exceed
    * the threshold. Identical to the Rust `insert_generic::<_, true>`.
    */
-  insert(key: number): InsertResult {
+  insert(key: number, trace?: Tracer<HashSetOaEvent>): InsertResult {
     let ops = 1; // the hash
     const cap = this.state.length;
-    let i = this.home(key);
+    const home = this.home(key);
+    trace?.({ kind: 'hoa.hash', key, home });
+    let i = home;
     let firstTomb = -1;
     let empty = -1;
     for (let step = 0; step < cap; step++) {
       const st = this.state[i];
       if (st === EMPTY) {
         empty = i;
+        trace?.({ kind: 'hoa.stop', home, slot: i, reuse: firstTomb < 0 ? null : firstTomb });
         break;
       }
       ops += 1; // slot probe
       if (st === LIVE) {
-        if (this.keys[i] === key) return { inserted: false, ops };
-      } else if (firstTomb < 0) {
-        firstTomb = i;
+        const matched = this.keys[i] === key;
+        trace?.(this.probeEvent(home, i, key, matched, firstTomb));
+        if (matched) {
+          trace?.({ kind: 'hoa.duplicate', slot: i });
+          return { inserted: false, ops };
+        }
+      } else {
+        if (firstTomb < 0) firstTomb = i;
+        trace?.(this.probeEvent(home, i, key, false, firstTomb));
       }
       i = (i + 1) & (cap - 1);
     }
@@ -150,27 +193,39 @@ export class HashSetOaF64 {
     this.state[slot] = LIVE;
     this.keys[slot] = key;
     this.count += 1;
-    if (this.count + this.tombs > MAX_LOAD * cap) this.rehash();
+    trace?.({ kind: 'hoa.place', slot, value: key, reused: slot === firstTomb });
+    if (this.count + this.tombs > MAX_LOAD * cap) this.rehash(trace);
     return { inserted: true, ops };
   }
 
   /** Walk as search does; on a hit, leave a tombstone. */
-  delete(target: number): DeleteResult {
+  delete(target: number, trace?: Tracer<HashSetOaEvent>): DeleteResult {
     let ops = 1; // the hash
     const cap = this.state.length;
-    let i = this.home(target);
+    const home = this.home(target);
+    trace?.({ kind: 'hoa.hash', key: target, home });
+    let i = home;
     for (let step = 0; step < cap; step++) {
       const st = this.state[i];
-      if (st === EMPTY) return { removed: false, ops };
+      if (st === EMPTY) {
+        trace?.({ kind: 'hoa.stop', home, slot: i, reuse: null });
+        trace?.({ kind: 'hoa.result', found: false });
+        return { removed: false, ops };
+      }
       ops += 1; // slot probe
-      if (st === LIVE && this.keys[i] === target) {
+      const matched = st === LIVE && this.keys[i] === target;
+      trace?.(this.probeEvent(home, i, target, matched));
+      if (matched) {
         this.state[i] = TOMB;
         this.count -= 1;
         this.tombs += 1;
+        trace?.({ kind: 'hoa.tombstone', slot: i });
+        trace?.({ kind: 'hoa.result', found: true });
         return { removed: true, ops };
       }
       i = (i + 1) & (cap - 1);
     }
+    trace?.({ kind: 'hoa.result', found: false });
     return { removed: false, ops };
   }
 
@@ -178,14 +233,18 @@ export class HashSetOaF64 {
    * Rebuild without tombstones: purge in place when the live keys are at most half the
    * threshold, otherwise double. Live keys are re-placed in old-slot order, each into the
    * first empty slot from its new home — the order Rust uses, which fixes the layout.
+   * When tracing, each key's new slot is captured in `moves` (old-slot order) so the
+   * rebuild can animate; none of it is counted.
    */
-  private rehash(): void {
+  private rehash(trace?: Tracer<HashSetOaEvent>): void {
     const cap = this.state.length;
     const newCap = this.count > (MAX_LOAD * cap) / 2 ? cap * 2 : cap;
+    const tombs = this.tombs;
     const oldKeys = this.keys;
     const oldState = this.state;
     this.keys = new Float64Array(newCap);
     this.state = new Uint8Array(newCap);
+    const moves: HoaMove[] | undefined = trace ? [] : undefined;
     for (let i = 0; i < cap; i++) {
       if (oldState[i] !== LIVE) continue;
       const k = oldKeys[i];
@@ -193,9 +252,11 @@ export class HashSetOaF64 {
       while (this.state[j] !== EMPTY) j = (j + 1) & (newCap - 1);
       this.state[j] = LIVE;
       this.keys[j] = k;
+      moves?.push({ value: k, toSlot: j });
     }
     this.tombs = 0;
     this.rehashes += 1;
+    trace?.({ kind: 'hoa.rehash', oldCap: cap, newCap, live: this.count, tombs, moves: moves ?? [] });
   }
 
   /**

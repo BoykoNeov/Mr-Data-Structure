@@ -14,7 +14,7 @@
  */
 
 import type {
-  ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
+  ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
   TrieEvent, SkipListEvent, GraphEvent, GraphAlgo,
 } from './events';
 import type { BstShape } from '../structures/bst';
@@ -143,6 +143,69 @@ export function foldArray(initial: ArrayModel, events: readonly ArrayEvent[]): A
 
 export function foldHash(initial: HashModel, events: readonly HashSetEvent[]): HashModel {
   return events.reduce(reduceHash, initial);
+}
+
+// ── Open-addressing hash set ────────────────────────────────────────────────
+// One flat slot array. A live slot holds a {@link Chip} (stable id, so a rebuild can
+// fly each key to its new slot); a deleted key's marker is the distinct `'tomb'` — it
+// must never be drawn as empty, because the whole lesson is that a walk does not stop
+// there. `oaSlotsOf` turns the model back into the twin's `slots()` notation, and
+// `model.test.ts` pins the two equal after every op — and, through the corpus lines, to
+// the Rust layout.
+
+/** One drawn slot: a live key, a tombstone, or empty (`null`). */
+export type OaSlot = Chip | 'tomb' | null;
+
+/** The open-addressing set's display state: its slots in index order, plus the next free id. */
+export interface OaModel {
+  readonly slots: readonly OaSlot[];
+  readonly nextId: number;
+}
+
+/** Build the model from the twin's `slots()` (`'.'` empty, `'x'` tombstone, else a key). */
+export function oaModel(slots: readonly (number | '.' | 'x')[]): OaModel {
+  let id = 0;
+  const out = slots.map((s): OaSlot => (s === '.' ? null : s === 'x' ? 'tomb' : { id: id++, value: s }));
+  return { slots: out, nextId: id };
+}
+
+/** The model in the twin's `slots()` notation — what the fold is checked against. */
+export function oaSlotsOf(m: OaModel): (number | '.' | 'x')[] {
+  return m.slots.map((s) => (s === null ? '.' : s === 'tomb' ? 'x' : s.value));
+}
+
+/** Fold one open-addressing event. `place` fills a slot (an empty one, or the tombstone
+ * it reuses); `tombstone` marks a deleted slot; `rehash` rebuilds the table by zipping
+ * the live chips, **in slot order**, with the event's moves — tombstones vanish. The walk
+ * events (hash / probe / stop / duplicate / result) are highlight-only. */
+export function reduceOa(m: OaModel, e: HashSetOaEvent): OaModel {
+  switch (e.kind) {
+    case 'hoa.place': {
+      const slots = m.slots.slice();
+      slots[e.slot] = { id: m.nextId, value: e.value };
+      return { slots, nextId: m.nextId + 1 };
+    }
+    case 'hoa.tombstone': {
+      const slots = m.slots.slice();
+      slots[e.slot] = 'tomb';
+      return { slots, nextId: m.nextId };
+    }
+    case 'hoa.rehash': {
+      const slots: OaSlot[] = Array.from({ length: e.newCap }, () => null);
+      let i = 0;
+      for (const s of m.slots) {
+        if (s === null || s === 'tomb') continue;
+        slots[e.moves[i++].toSlot] = s;
+      }
+      return { slots, nextId: m.nextId };
+    }
+    default:
+      return m;
+  }
+}
+
+export function foldOa(initial: OaModel, events: readonly HashSetOaEvent[]): OaModel {
+  return events.reduce(reduceOa, initial);
 }
 
 // ── Sorted array ────────────────────────────────────────────────────────────

@@ -529,6 +529,13 @@ that breaks a naive tombstone policy. Four rules, each pinned:
    load (`a_single_churn_key_samples_one_cluster`). This is the one place the two hash sets'
    recipes deliberately differ.
 
+**Watching it (Explore).** The open-addressing tab animates the counting convention
+literally: `hoa.hash` and `hoa.probe` are the only cost events, the empty slot that ends a
+walk is drawn as its own step and captioned free, and a rebuild's re-placement walks are
+drawn but never counted (`insert` has finished counting before the rebuild runs). All three
+ops' streams are checked against `corpus-hoa.txt`'s Rust op-counts, and the folded drawing
+against its slot layouts (`src/viz/trace.hoa.test.ts`).
+
 **Regime 12 — churn overshoots the FD sum, and the overshoot is the tombstone.** Churn's
 insert is a miss walk and its delete a hit — the same two walks the build and teardown
 average — so on a fresh table they agree (unprimed pair 5.81 vs FD sum 6.06). After

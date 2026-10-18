@@ -8,6 +8,8 @@ import { AvlF64 } from '../structures/avl';
 import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
+import { HashSetOaF64 } from '../structures/hashSetOa';
+import { mixF64 } from '../structures/mix';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
 import { DoublyListView } from './DoublyListView';
@@ -16,16 +18,17 @@ import { AvlView } from './AvlView';
 import { HeapView } from './HeapView';
 import { TrieView } from './TrieView';
 import { SkipListView } from './SkipListView';
+import { OpenAddressingView } from './OpenAddressingView';
 import { GraphView } from './GraphView';
 import { GraphAdj } from '../structures/graph';
 import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
-import { SortedPanel, LinkedPanel, DoublyPanel, DOUBLY_INTRO, BstPanel, AvlPanel, HeapPanel, TriePanel, SkipListPanel, GraphPanel, GRAPH_SEED } from './VizPanel';
+import { SortedPanel, LinkedPanel, DoublyPanel, DOUBLY_INTRO, OpenAddressingPanel, OA_INTRO, BstPanel, AvlPanel, HeapPanel, TriePanel, SkipListPanel, GraphPanel, GRAPH_SEED } from './VizPanel';
 import {
   arrayModel, foldSortedArray, linkedModel, foldLinkedList, doublyModel, foldDoublyList, bstModel, foldBst,
-  avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie, skipModel, foldSkip,
+  avlModel, foldAvl, heapModel, foldHeap, trieModel, foldTrie, skipModel, foldSkip, oaModel, foldOa,
   graphModel, foldGraph,
 } from './model';
-import type { SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, Tracer } from './events';
+import type { SortedArrayEvent, LinkedListEvent, DoublyListEvent, HashSetOaEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, Tracer } from './events';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -330,6 +333,49 @@ describe('SkipListView renders every frame without throwing', () => {
   });
 });
 
+describe('OpenAddressingView renders every frame without throwing', () => {
+  // Its highlight is a walk that wraps the end of the table, an insert's remembered
+  // tombstone, and a rebuild that changes the slot count mid-stream; each would crash on
+  // a stale index here rather than at the final frame.
+  const SEED = [10, 20, 30, 40, 50, 60];
+  const withTomb = (s: HashSetOaF64) => (s.delete(40), s);
+  // a key whose home is slot 5 — 40's, now a tombstone — so the insert reuses it
+  let homedAt5 = 61;
+  while ((mixF64(homedAt5) & 7n) !== 5n) homedAt5++;
+  const cases: [string, (s: HashSetOaF64, tr: Tracer<HashSetOaEvent>) => void][] = [
+    ['search a hit that wraps to slot 0', (s, tr) => s.search(60, tr)],
+    ['search a miss caught in the cluster', (s, tr) => s.search(55, tr)],
+    ['search over a tombstone', (s, tr) => withTomb(s).search(60, tr)],
+    ['insert reusing a tombstone', (s, tr) => withTomb(s).insert(homedAt5, tr)],
+    ['insert that doubles the table', (s, tr) => s.insert(70, tr)],
+    ['insert that purges in place', (s, tr) => { for (const d of [10, 20, 30, 40]) s.delete(d); s.insert(80, tr); }],
+    ['insert a duplicate', (s, tr) => s.insert(50, tr)],
+    ['delete leaves a tombstone', (s, tr) => s.delete(30, tr)],
+    ['delete absent', (s, tr) => s.delete(99, tr)],
+  ];
+  it.each(cases)('%s', (_label, op) => {
+    const s = HashSetOaF64.fromKeys(SEED);
+    // Some cases run untraced setup first, so snapshot at the traced op's first event —
+    // its hash, emitted before the op changes anything.
+    const events: HashSetOaEvent[] = [];
+    let before = oaModel(s.slots());
+    op(s, (e) => {
+      if (events.length === 0) before = oaModel(s.slots());
+      events.push(e);
+    });
+    renderEveryFrame(before, events, foldOa, (model, active) =>
+      renderToStaticMarkup(createElement(OpenAddressingView, { model, active })),
+    );
+  });
+
+  it('renders a fresh 4-slot table and draws a tombstone as a tombstone', () => {
+    expect(renderToStaticMarkup(createElement(OpenAddressingView, { model: oaModel(new HashSetOaF64().slots()), active: undefined }))).toContain('0 of 4 slots');
+    const s = HashSetOaF64.fromKeys(SEED);
+    s.delete(40);
+    expect(renderToStaticMarkup(createElement(OpenAddressingView, { model: oaModel(s.slots()), active: undefined }))).toContain('tomb');
+  });
+});
+
 describe('GraphView renders every frame without throwing', () => {
   // The graph is the only view with three linked panels (drawing, adjacency lists,
   // frontier) driven by one fold, and the only one drawing parallel edges and
@@ -411,6 +457,11 @@ describe('new panels mount without throwing', () => {
     const html = renderToStaticMarkup(createElement(DoublyPanel));
     expect(html).toContain('<svg');
     expect(html).toContain(DOUBLY_INTRO.slice(0, 40));
+  });
+  it('OpenAddressingPanel renders its seeded SVG and the clustering intro', () => {
+    const html = renderToStaticMarkup(createElement(OpenAddressingPanel));
+    expect(html).toContain('<svg');
+    expect(html).toContain(OA_INTRO.slice(0, 40));
   });
   it('BstPanel renders its seeded SVG', () => {
     expect(renderToStaticMarkup(createElement(BstPanel))).toContain('<svg');

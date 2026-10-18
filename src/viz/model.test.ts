@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { DynArrayF64 } from '../structures/dynArray';
 import { HashSetF64 } from '../structures/hashSet';
+import { HashSetOaF64 } from '../structures/hashSetOa';
 import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
 import { BstF64, type BstShape } from '../structures/bst';
@@ -10,11 +11,12 @@ import { TrieStr, type TrieShape } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
+import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import { countCostEvents } from './events';
 import { GRAPH_SEED } from './VizPanel';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
+  oaModel, foldOa, oaSlotsOf,
   foldSortedArray, linkedModel, foldLinkedList,
   doublyModel, foldDoublyList, doublyShapeOf, doublyReachable,
   bstModel, foldBst, type BstDisplayNode,
@@ -121,6 +123,70 @@ describe('hash-set fold mirrors the structure', () => {
     s.insert(6, (e) => events.push(e)); // already present
     expect(events.some((e) => e.kind === 'hs.duplicate')).toBe(true);
     expect(hashValues(foldHash(before, events))).toEqual(s.snapshotBuckets());
+  });
+});
+
+describe('open-addressing fold reproduces the twin’s slots (tombstones included)', () => {
+  it('the starting model is the twin’s slots, round-trip', () => {
+    const s = HashSetOaF64.fromKeys([10, 20, 30, 40, 50, 60]);
+    s.delete(40);
+    expect(oaSlotsOf(oaModel(s.slots()))).toEqual(s.slots());
+  });
+
+  it('a long random stream folds op by op to the twin’s slots — through purges and doublings', () => {
+    // Alternating grow / shrink phases, so the stream hits doublings while it grows, and
+    // tombstone reuse and purges in place (newCap === oldCap) once deletes have left the
+    // live keys few and the tombstones many — not just the happy path.
+    const s = new HashSetOaF64();
+    let x = 7;
+    const rnd = () => (x = (x * 1103515245 + 12345) % 2147483648) / 2147483648;
+    let purges = 0;
+    let doublings = 0;
+    let reuses = 0;
+    // A purge needs few live keys and many tombstones when an insert finally lands on an
+    // empty slot, so shrink phases delete keys that are actually stored, and grow phases
+    // insert fresh keys from a wide range (whose walks often meet an empty slot first).
+    // The phases are short (12 ops) so the table stays small: long grow phases double it
+    // far past the live count, and then no tombstone count can reach the threshold.
+    for (let i = 0; i < 1200; i++) {
+      const before = oaModel(s.slots());
+      const events: HashSetOaEvent[] = [];
+      const t = (e: HashSetOaEvent) => events.push(e);
+      const op = rnd();
+      const growing = Math.floor(i / 12) % 2 === 0;
+      const stored = s.keysInOrder();
+      const fresh = Math.floor(rnd() * 5000);
+      if (op < (growing ? 0.85 : 0.1)) s.insert(fresh, t);
+      else if (op < 0.92 && stored.length > 0) s.delete(stored[Math.floor(rnd() * stored.length)], t);
+      else s.search(fresh, t);
+      for (const e of events) {
+        if (e.kind === 'hoa.rehash') {
+          if (e.newCap === e.oldCap) purges++;
+          else doublings++;
+        }
+        if (e.kind === 'hoa.place' && e.reused) reuses++;
+      }
+      expect(oaSlotsOf(foldOa(before, events))).toEqual(s.slots());
+      // every frame is renderable: live chip ids stay unique
+      for (let f = 0; f <= events.length; f++) {
+        const ids = foldOa(before, events.slice(0, f)).slots.flatMap((c) => (c === null || c === 'tomb' ? [] : [c.id]));
+        expect(new Set(ids).size).toBe(ids.length);
+      }
+    }
+    expect(purges).toBeGreaterThan(0);
+    expect(doublings).toBeGreaterThan(0);
+    expect(reuses).toBeGreaterThan(0);
+  });
+
+  it('a rebuild keeps every live key’s id as it moves', () => {
+    const s = HashSetOaF64.fromKeys([10, 20, 30, 40, 50, 60]);
+    const before = oaModel(s.slots());
+    const idOf = (m: ReturnType<typeof oaModel>, v: number) =>
+      m.slots.find((c) => c !== null && c !== 'tomb' && c.value === v);
+    const events: HashSetOaEvent[] = [];
+    s.insert(70, (e) => events.push(e)); // doubles to 16
+    const after = foldOa(before, events);
+    for (const v of [10, 20, 30, 40, 50, 60]) expect(idOf(after, v)).toEqual(idOf(before, v));
   });
 });
 

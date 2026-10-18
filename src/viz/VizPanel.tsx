@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { DynArrayF64 } from '../structures/dynArray';
 import { HashSetF64 } from '../structures/hashSet';
+import { HashSetOaF64 } from '../structures/hashSetOa';
 import { SortedArrayF64 } from '../structures/sortedArray';
 import { SinglyLinkedListF64, DoublyLinkedListF64 } from '../structures/linkedList';
 import { BstF64 } from '../structures/bst';
@@ -10,9 +11,10 @@ import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
 import { browserSession } from '../persist/session';
-import type { ArrayEvent, HashSetEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
+import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import {
   arrayModel, foldArray, hashModel, foldHash, isHole, type ArrayModel, type HashModel,
+  oaModel, foldOa, type OaModel,
   foldSortedArray, linkedModel, foldLinkedList, type LinkedListModel,
   doublyModel, foldDoublyList, type DoublyListModel,
   bstModel, foldBst, type BstModel,
@@ -26,6 +28,7 @@ import * as P from './player';
 import { usePlayer } from './usePlayer';
 import { ArrayView } from './ArrayView';
 import { HashSetView } from './HashSetView';
+import { OpenAddressingView } from './OpenAddressingView';
 import { SortedArrayView } from './SortedArrayView';
 import { LinkedListView } from './LinkedListView';
 import { DoublyListView } from './DoublyListView';
@@ -49,13 +52,24 @@ import { Controls, type OpSpec } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'bst' | 'avl' | 'heap' | 'trie' | 'skiplist' | 'graph';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'hashoa' | 'bst' | 'avl' | 'heap' | 'trie' | 'skiplist' | 'graph';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
 const LIST_SEED = [10, 20, 30, 40];
 // Six keys → 8 buckets; one more distinct insert (e.g. 70) trips a rehash → 16.
 const HASH_SEED = [10, 20, 30, 40, 50, 60];
+// The open-addressing tab reuses HASH_SEED on purpose: the same hash, start size and 0.75
+// threshold give the same 8 slots and the same rehash point (a 7th distinct key → 16), so
+// the two tabs compare key for key (docs/METHODOLOGY.md §2.8). With these keys 30, 40, 50
+// and 60 all hash to slot 5, so linear probing spills them into 6, 7 and round to 0 — one
+// run that wraps the end of the table, where chaining keeps one bucket of four. A miss
+// homed at 6 (55) is caught in that run and pays 4 to chaining's 1 — primary clustering;
+// and deleting 40 leaves a tombstone that search(60) must step over, still paying 5.
+// `trace.hoa.test.ts` pins each of those numbers by computing them from the twin.
+export const OA_SEED: readonly number[] = HASH_SEED;
+export const OA_INTRO =
+  'Open-addressing hash set (linear probing) — the same keys, hash and 8 slots as the hash set tab, but one flat array: a key whose home slot is taken goes to the next free slot, wrapping from the end to slot 0. Here 30, 40, 50 and 60 all hash to slot 5, so they fill 5, 6, 7 and wrap round to 0. Try search(55): its home is slot 6, so it is caught in that run and pays 4, where the chaining table pays 1. Then delete(40) and search(60) again: it still pays 5, because the deleted slot became a tombstone the walk must step over — emptying it would cut 60 off. Cost is hashes + slot probes; the empty slot that ends a walk is free.';
 // Root-first insertion order yields a balanced 3-level tree; inserting a sorted
 // run (e.g. 90, 95, 99) then visibly degenerates it to a right-leaning chain.
 const BST_SEED = [50, 30, 70, 20, 40, 60, 80];
@@ -219,6 +233,52 @@ function describeHash(e: HashSetEvent | undefined): string {
     case 'hs.rehash':
       return `rehash: ${e.oldCap} → ${e.newCap} buckets, redistribute ${e.moves.length} keys`;
     case 'hs.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+/**
+ * The open-addressing step caption (docs/METHODOLOGY.md §2.8). It reads the folded model
+ * for the capacity, so a probe at the last slot can say the walk wraps to slot 0. Two
+ * wordings are the point and are pinned in `VizPanel.test.ts`: stepping over a tombstone
+ * keeps walking and is still one probe, and the empty slot that stops a walk is free.
+ * Nothing here says where in a run a key sits relative to when it was inserted — a
+ * rebuild re-places keys in old-slot order, so a run's order is not insertion order.
+ */
+export function describeOa(e: HashSetOaEvent | undefined, m: OaModel): string {
+  if (!e) return '';
+  const cap = m.slots.length;
+  const next = (s: number) => (s + 1 === cap ? `wraps round to [0]` : `[${s + 1}]`);
+  switch (e.kind) {
+    case 'hoa.hash':
+      return `hash(${e.key}) → home slot [${e.home}] (one op: the hash)`;
+    case 'hoa.probe':
+      if (e.state === 'tomb') {
+        const remember = e.reuse === e.slot ? ` — and remember it: if ${e.target} turns out to be absent, the insert reuses this slot` : '';
+        return `slot [${e.slot}] is a tombstone (a deleted key’s marker) — it cannot match, but the walk must not stop here or a key stored past it would be lost; keep walking, still one probe${remember}`;
+      }
+      return e.matched
+        ? `slot [${e.slot}] holds ${e.value} = ${e.target} → match ✓ (one probe)`
+        : `slot [${e.slot}] holds ${e.value} ≠ ${e.target} → taken, keep walking: next ${next(e.slot)} (one probe)`;
+    case 'hoa.stop':
+      return e.reuse === null
+        ? `slot [${e.slot}] is empty → the walk stops: the key is absent (free — an empty slot costs nothing, like the end of a chain)`
+        : `slot [${e.slot}] is empty → the key is absent (free), so it goes back to the tombstone it remembered at [${e.reuse}]`;
+    case 'hoa.place':
+      return e.reused
+        ? `store ${e.value} in slot [${e.slot}], reusing the tombstone — no tombstone is left behind for later walks to step over`
+        : `store ${e.value} in the empty slot [${e.slot}]`;
+    case 'hoa.duplicate':
+      return 'already present → the set keeps one copy (no insert)';
+    case 'hoa.tombstone':
+      return `leave a tombstone in slot [${e.slot}] — emptying it would cut off every key stored past it in this run`;
+    case 'hoa.rehash': {
+      const used = `${e.live} live + ${e.tombs} tombstone${e.tombs === 1 ? '' : 's'} passed ${(e.oldCap * 3) / 4} of ${e.oldCap} slots`;
+      return e.newCap === e.oldCap
+        ? `${used} → rebuild at the same size, clearing every tombstone (the live keys fit in half the limit, so no doubling). Re-placing the keys is not counted`
+        : `${used} → double to ${e.newCap} slots and re-place every live key; tombstones are dropped. Re-placing the keys is not counted`;
+    }
+    case 'hoa.result':
+      return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
 
@@ -496,6 +556,57 @@ function HashPanel() {
       <p style={{ color: '#666', margin: '4px 0' }}>{summary || 'Separate-chaining hash set — hash to a bucket, walk the chain; load factor 0.75 triggers a rehash.'}</p>
       <HashSetView model={model} active={active} />
       <Controls player={player} onOp={onOp} caption={describeHash(active)} />
+    </>
+  );
+}
+
+export function OpenAddressingPanel() {
+  const ref = useRef<HashSetOaF64 | null>(null);
+  if (ref.current === null) ref.current = HashSetOaF64.fromKeys(OA_SEED);
+  const [base, setBase] = useState<OaModel>(() => oaModel(HashSetOaF64.fromKeys(OA_SEED).slots()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<HashSetOaEvent>();
+
+  const onOp = (op: Op, value: number) => {
+    const s = ref.current!;
+    const snapshot = oaModel(s.slots()); // before-state
+    const events: HashSetOaEvent[] = [];
+    const push = (e: HashSetOaEvent) => events.push(e);
+    const probes = (ops: number) => `${ops} ops (the hash + ${ops - 1} slot probe${ops === 2 ? '' : 's'})`;
+    if (op === 'search') {
+      const r = s.search(value, push);
+      setSummary(`search(${value}) → ${r.found ? 'found' : 'not found'} · ${probes(r.ops)}`);
+    } else if (op === 'insert') {
+      const r = s.insert(value, push);
+      const place = events.find((e) => e.kind === 'hoa.place');
+      const rehash = events.find((e) => e.kind === 'hoa.rehash');
+      const where =
+        place && place.kind === 'hoa.place'
+          ? `stored in slot [${place.slot}]${place.reused ? ', reusing a tombstone' : ''}`
+          : 'already present (set semantics)';
+      const rebuilt =
+        rehash && rehash.kind === 'hoa.rehash'
+          ? rehash.newCap === rehash.oldCap
+            ? ' → then rebuilt at the same size to clear the tombstones'
+            : ` → then doubled to ${rehash.newCap} slots`
+          : '';
+      setSummary(`insert(${value}) → ${where}${rebuilt} · ${probes(r.ops)}`);
+    } else {
+      const r = s.delete(value, push);
+      setSummary(`delete(${value}) → ${r.removed ? 'removed, its slot is now a tombstone' : 'absent'} · ${probes(r.ops)}`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldOa(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || OA_INTRO}</p>
+      <OpenAddressingView model={model} active={active} />
+      <Controls player={player} onOp={onOp} caption={describeOa(active, model)} />
     </>
   );
 }
@@ -904,6 +1015,7 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'singly', label: 'singly linked list' },
   { kind: 'doubly', label: 'doubly linked list' },
   { kind: 'hashset', label: 'hash set' },
+  { kind: 'hashoa', label: 'hash set (open addressing)' },
   { kind: 'bst', label: 'binary search tree' },
   { kind: 'avl', label: 'AVL tree' },
   { kind: 'heap', label: 'min-heap' },
@@ -919,6 +1031,7 @@ function panelFor(kind: Kind) {
     case 'singly': return <LinkedPanel />;
     case 'doubly': return <DoublyPanel />;
     case 'hashset': return <HashPanel />;
+    case 'hashoa': return <OpenAddressingPanel />;
     case 'bst': return <BstPanel />;
     case 'avl': return <AvlPanel />;
     case 'heap': return <HeapPanel />;

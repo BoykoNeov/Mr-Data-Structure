@@ -147,6 +147,126 @@ export type HashSetEvent =
   | HsRehash
   | HsResult;
 
+// ── Open-addressing hash set (docs/PLAN.md §8 "Hashing", linear probing) ────
+//
+// One flat array of slots, each **empty**, a **tombstone** (a deleted key's marker)
+// or **live**. Slots are addressed by index; a walk starts at the key's `home` slot
+// and steps `+1`, wrapping from the last slot to slot 0. `home` rides on every walk
+// event so the renderer can shade the stretch walked so far from the active event
+// alone (the walk is contiguous, mod the capacity).
+//
+// **Cost metric — hashes + slot probes (docs/METHODOLOGY.md §2.8):** one for the hash
+// and one per *occupied* slot examined — a live key compared, or a tombstone stepped
+// over. So the cost events are `hoa.hash` and `hoa.probe`, and `countCostEvents(stream)
+// === op-count` holds for **search, insert, AND delete**, pinned against the Rust corpus
+// (`conformance/corpus-hoa.txt`, which has an insert column) in `src/viz/trace.hoa.test.ts`.
+// Two steps are drawn but deliberately free, exactly as both twins count them:
+//  - `hoa.stop`, the **empty slot that ends a walk** — the chaining set's "end of the
+//    chain", a header read that says stop. Counting it would put the two hash sets'
+//    op-counts one unit apart (Knuth's probe counts include it; this metric does not);
+//  - the **rehash's re-placement walks** — `insert` has finished counting before the
+//    rebuild runs, so a key's walk to its new slot is never an op.
+
+/** Hash `key` to its `home` slot (one hash — a cost event; every op's count starts here). */
+export interface HoaHash {
+  readonly kind: 'hoa.hash';
+  readonly key: number;
+  readonly home: number;
+}
+
+/** Examine the occupied slot `slot` on the walk from `home` — one slot probe, a cost
+ * event. `state: 'live'` compares the stored `value` against `target` (`matched` ends a
+ * search/delete, or flags an insert's duplicate); `state: 'tomb'` steps over a deleted
+ * key's marker, which can never match but must not stop the walk.
+ *
+ * `reuse` is an insert's remembered slot as of this step: the **first** tombstone on the
+ * path so far, which the key will take once the walk reaches an empty slot and so proves
+ * it absent (`reuse === slot` on the probe that first finds it). Always `null` on a
+ * search or delete, and on an insert that has passed no tombstone yet. Carrying it on
+ * every later step lets the view keep that slot marked from the active event alone. */
+export interface HoaProbe {
+  readonly kind: 'hoa.probe';
+  readonly home: number;
+  readonly slot: number;
+  readonly state: 'live' | 'tomb';
+  readonly value: number | null;
+  readonly target: number;
+  readonly matched: boolean;
+  readonly reuse: number | null;
+}
+
+/** The walk reached the empty slot `slot` and stops: the key is absent. **Free** — not a
+ * cost event (see the section note). On an insert this is the proof of absence that lets
+ * the key be stored — in `reuse` if the walk passed a tombstone, else here. */
+export interface HoaStop {
+  readonly kind: 'hoa.stop';
+  readonly home: number;
+  readonly slot: number;
+  readonly reuse: number | null;
+}
+
+/** Store `value` in `slot` (insert). `reused` is true when `slot` is the first tombstone
+ * the walk passed — the reuse rule that keeps churn from stranding tombstones
+ * (docs/METHODOLOGY.md §2.8 rule 1) — and false when it is the empty slot that ended the
+ * walk. No probe: the walk that chose the slot was already counted. */
+export interface HoaPlace {
+  readonly kind: 'hoa.place';
+  readonly slot: number;
+  readonly value: number;
+  readonly reused: boolean;
+}
+
+/** Insert found the key already live at `slot` — nothing stored (set semantics). */
+export interface HoaDuplicate {
+  readonly kind: 'hoa.duplicate';
+  readonly slot: number;
+}
+
+/** Turn the live slot `slot` into a tombstone (delete). Emptying it instead would cut
+ * the walk of every key stored past it in the same run. */
+export interface HoaTombstone {
+  readonly kind: 'hoa.tombstone';
+  readonly slot: number;
+}
+
+/** One live key's new slot during a rebuild, in **old-slot order** (the order Rust
+ * re-places them, which fixes the layout). The renderer zips these with its live cells
+ * so each keeps its identity as it moves. */
+export interface HoaMove {
+  readonly value: number;
+  readonly toSlot: number;
+}
+
+/** Rebuild the table without tombstones, because live + tombstones passed 0.75 of the
+ * slots (docs/METHODOLOGY.md §2.8 rule 2): **purge** in place (`newCap === oldCap`) when
+ * the live keys are at most half that threshold, otherwise **double**. `live` and
+ * `tombs` are the counts that tripped it. Not a cost event — the re-placement walks
+ * are uncounted (see the section note). */
+export interface HoaRehash {
+  readonly kind: 'hoa.rehash';
+  readonly oldCap: number;
+  readonly newCap: number;
+  readonly live: number;
+  readonly tombs: number;
+  readonly moves: readonly HoaMove[];
+}
+
+/** Terminal marker for a search/delete: whether the key was present. Not a cost event. */
+export interface HoaResult {
+  readonly kind: 'hoa.result';
+  readonly found: boolean;
+}
+
+export type HashSetOaEvent =
+  | HoaHash
+  | HoaProbe
+  | HoaStop
+  | HoaPlace
+  | HoaDuplicate
+  | HoaTombstone
+  | HoaRehash
+  | HoaResult;
+
 // ── Sorted array (docs/PLAN.md §8, "Linear", binary search) ─────────────────
 
 /** Compare the midpoint cell at `index` against `target` within the live binary-
@@ -835,6 +955,7 @@ export type GraphEvent = GraphStart | GraphVisit | GraphExamine | GraphMark | Gr
 export type VizEvent =
   | ArrayEvent
   | HashSetEvent
+  | HashSetOaEvent
   | SortedArrayEvent
   | DoublyListEvent
   | BstEvent
@@ -858,6 +979,12 @@ export const COST_EVENT_KINDS: ReadonlySet<VizEventKind> = new Set<VizEventKind>
   'arr.compare',
   'hs.hash',
   'hs.probe',
+  // Open addressing: hashes + slot probes (docs/METHODOLOGY.md §2.8). `hoa.stop` — the
+  // empty slot that ends a walk — is drawn but free, like the end of a chain, and the
+  // rehash's re-placement walks are uncounted; so the gate holds for search, insert,
+  // AND delete.
+  'hoa.hash',
+  'hoa.probe',
   'sarr.compare',
   'll.visit',
   // Doubly list: `dll.relink` is deliberately absent — a pointer write is not a

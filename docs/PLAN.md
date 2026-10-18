@@ -15,7 +15,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
-| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The **graph** is complete end to end: an own-op-set adjacency-list multigraph whose BFS and DFS cost the same `V + 2E` in different orders, pinned clock-free (METHODOLOGY §2.7), **measured** in its own Compare section on a V-sweep and a degree-sweep (synthetic graphs or the user's own edge list, plotted against the reached component's `V′ + 2E′`), and **animated** in Explore (BFS and DFS beside their adjacency lists, DFS shown mark-on-push). Four more numeric structures are measured end to end: an **open-addressing hash set** held to the chaining set's table sizes, a **red-black tree** on the AVL's metric, a **B-tree** (those three not yet animated) and a **doubly linked list** (METHODOLOGY §2.8–§2.11), whose teaching twin now holds real back links that Explore draws, each pointer write a free step. The search workload's **hits-vs-misses mix** is a user choice, de-duplicating structures report **stored size** beside input size, and a **session is remembered** in this browser (never its results). Open: the other three animations, graph exports, and performance polish |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The **graph** is complete end to end: an own-op-set adjacency-list multigraph whose BFS and DFS cost the same `V + 2E` in different orders, pinned clock-free (METHODOLOGY §2.7), **measured** in its own Compare section on a V-sweep and a degree-sweep (synthetic graphs or the user's own edge list, plotted against the reached component's `V′ + 2E′`), and **animated** in Explore (BFS and DFS beside their adjacency lists, DFS shown mark-on-push). Four more numeric structures are measured end to end: an **open-addressing hash set** held to the chaining set's table sizes — now **animated** too (slot strip with tombstones, the probe walk, purge vs double) — a **red-black tree** on the AVL's metric, a **B-tree** (those two not yet animated) and a **doubly linked list** (METHODOLOGY §2.8–§2.11), whose teaching twin now holds real back links that Explore draws, each pointer write a free step. The search workload's **hits-vs-misses mix** is a user choice, de-duplicating structures report **stored size** beside input size, and a **session is remembered** in this browser (never its results). Open: the red-black and B-tree animations, graph exports, and performance polish |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
@@ -1367,8 +1367,22 @@ insert/search/delete group on a shared key type.
     position** (duplicates rule out values), which is stable because the display order changes
     only on the prepend and the final drop; the singly tab draws no relink steps (its twin has no
     links to show). **No new deps.**
-  - **Open:** step-animations for the three other new numeric structures (open addressing: slot
-    strip with tombstones, probe walk, purge/double; red-black: colours, insert and delete fix-up
+  - **Done (open addressing, watchable):** `HashSetOaF64`'s insert / search / delete take an
+    optional tracer, and Explore gets a **hash set (open addressing)** tab: one slot strip
+    (wrapped into rows of 8) drawing live keys, **tombstones** and empty slots as three
+    different things, the walk from the home slot shaded as it goes, an insert's remembered
+    first tombstone tagged `reuse`, and every rebuild captioned as **double** or **purge in
+    place**. Cost events are `hoa.hash` and `hoa.probe` (a live key compared or a tombstone
+    stepped over), so the gate holds for all three ops — and, because `corpus-hoa.txt` has an
+    insert column, all three are **chained to Rust**, and the folded drawing is checked against
+    the corpus's slot layouts after build, deletes and re-inserts. The seed is the chaining
+    tab's (same 8 slots, same rehash point), which puts four keys on home slot 5 in one run that
+    wraps to slot 0: a miss homed at 6 pays 4 to chaining's 1, and `search(60)` still pays 5
+    after `delete(40)` because it steps over the tombstone — pinned in `trace.hoa.test.ts`.
+    Judgement calls: the empty slot that ends a walk is drawn as its own step (`hoa.stop`) but
+    **free**, and the rebuild's re-placement walks are drawn but uncounted — both exactly as the
+    twins count them (METHODOLOGY §2.8). **No new deps.**
+  - **Open:** step-animations for the two other new numeric structures (red-black: colours, insert and delete fix-up
     cases as distinct events, recolours as non-cost events; B-tree: per-probe compares,
     split/borrow/merge events, the deferred equality test explained). The graph's charts are
     **not yet in the PNG / CSV / JSON exports**, and the PNG would need the V-sweep's memory
@@ -1488,7 +1502,9 @@ insert/search/delete group on a shared key type.
 9. Phase 6 remainder, in rough order:
    - ~~the doubly list's real back links and step-animation~~ **done** — the TS twin holds real
      `prev` links and Explore draws them, pointer writes as free steps (METHODOLOGY §2.11);
-   - step-animations for open addressing, red-black and B-tree;
+   - ~~step-animation for open addressing~~ **done** — tombstones, the probe walk, purge vs double,
+     every op's count chained to the Rust corpus;
+   - step-animations for red-black and B-tree;
    - the graph section in the **PNG / CSV / JSON exports**, with the V-sweep's memory
      caveat as a PNG caption line; the **B-tree's** locality caveat in the PNG too;
    - persist the graph section's controls (a small `run`-style section in

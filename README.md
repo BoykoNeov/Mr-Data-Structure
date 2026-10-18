@@ -85,7 +85,10 @@ AVL's number of comparisons in a quarter of its node hops; whether that shows on
 is printed for you to read, not claimed. An **open-addressing hash set**, held to the
 chaining set's exact table sizes, pays more probes per lookup (primary clustering, matching
 Knuth's formulas) while staying flat, behind a tombstone policy that keeps its add/remove
-from drifting with the timer's repetition count. And a **doubly linked list** draws the
+from drifting with the timer's repetition count. Its Explore tab shows why: the same keys
+as the chaining tab land in one run that wraps round the end of the table, a miss caught in
+that run pays four probes where chaining pays one, and a deleted key leaves a tombstone the
+next walk has to step over. And a **doubly linked list** draws the
 same curves as the singly one — the same steps, counted exactly — because a back pointer
 only helps remove a node you already hold, while each node takes half again the memory.
 Its Explore tab now shows that with **real links**: the teaching twin keeps genuine forward
@@ -97,7 +100,7 @@ calibrated 50/50, reproduced exactly), and a structure that keeps one copy of ea
 key says how many it actually held beside the input size — on the chart, in the exports
 and in the PNG. And your **session is remembered in this browser**: your last run's
 dataset — pasted data included — and chart settings come back on reload, while results are
-always re-measured, never restored. Still open: animations for the open-addressing set, the
+always re-measured, never restored. Still open: animations for the
 red-black tree and the B-tree, the
 graph in the exports, and performance polish. The
 phase table is at the top of

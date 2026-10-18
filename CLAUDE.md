@@ -229,6 +229,15 @@ tool call does not survive into the next (each call is a fresh process).
   — tuning it to 0.5 ends the comparison — and count on the chaining convention (the empty
   slot ending a walk is free), not Knuth's. A finite difference across a table doubling reads
   a *negative* marginal delete; difference between equal load factors.
+- **The open-addressing animation draws two steps it does not count, on purpose.** The empty
+  slot that ends a walk is its own frame (`hoa.stop`) and is **free** — the chaining set's "end
+  of the chain"; and a rebuild's re-placement walks are drawn (`hoa.rehash` moves) but
+  uncounted, because `insert` has returned its `ops` before `rehash()` runs. Adding either to
+  `COST_EVENT_KINDS` breaks the corpus chain in `trace.hoa.test.ts`. A **tombstone is never
+  drawn as empty** (the model keeps `'tomb'` distinct from `null`) — a walk does not stop there,
+  which is the whole lesson. The seed is the chaining tab's on purpose (same 8 slots, same
+  rehash point); its teaching numbers (55 → 4 vs chaining's 1, `search(60)` = 5 before and after
+  `delete(40)`) are computed and pinned, so changing a key changes the intro's claims.
 - **The graph's x-axis is the reached component's `V′ + 2E′`, computed by the page and
   *checked* against the engine** (`countsMatchComponent`). Using the op-count as x makes the
   check a tautology; using nominal `V + E` plots a 3-vertex walk of a disconnected file at
