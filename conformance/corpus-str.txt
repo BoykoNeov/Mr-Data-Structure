@@ -7,8 +7,14 @@ keys
 probes a b
 array_order 
 array_search 0:0 0:0
+array_delete 0:0 0:0
+array_after_delete 
 hashset_order 
 hashset_search 0:1 0:1
+hashset_insert 1:1 1:1
+hashset_after_insert a b
+hashset_delete 0:1 0:1
+hashset_after_delete 
 trie_order 
 trie_search 0:2 0:2
 trie_delete 0:2 0:2
@@ -19,8 +25,14 @@ keys hello
 probes hello world
 array_order hello
 array_search 1:1 0:1
+array_delete 1:1 0:0
+array_after_delete 
 hashset_order hello
 hashset_search 1:2 0:1
+hashset_insert 0:2 1:1
+hashset_after_insert world hello
+hashset_delete 1:2 0:1
+hashset_after_delete 
 trie_order hello
 trie_search 1:6 0:2
 trie_delete 1:6 0:2
@@ -31,8 +43,14 @@ keys apple banana cherry
 probes apple banana cherry durian
 array_order apple banana cherry
 array_search 1:1 1:2 1:3 0:3
+array_delete 1:3 1:2 1:1 0:0
+array_after_delete 
 hashset_order cherry apple banana
 hashset_search 1:2 1:2 1:2 0:2
+hashset_insert 0:2 0:2 0:2 1:2
+hashset_after_insert cherry apple durian banana
+hashset_delete 1:2 1:2 1:2 0:1
+hashset_after_delete 
 trie_order apple banana cherry
 trie_search 1:6 1:7 1:7 0:2
 trie_delete 1:6 1:7 1:7 0:2
@@ -43,8 +61,14 @@ keys a a b a c
 probes a b c z
 array_order a a b a c
 array_search 1:1 1:3 1:5 0:5
+array_delete 1:5 1:4 1:3 0:2
+array_after_delete a a
 hashset_order a b c
 hashset_search 1:2 1:2 1:2 0:2
+hashset_insert 0:2 0:2 0:2 1:2
+hashset_after_insert a c z b
+hashset_delete 1:2 1:2 1:2 0:1
+hashset_after_delete 
 trie_order a b c
 trie_search 1:2 1:2 1:2 0:2
 trie_delete 1:2 1:2 1:2 0:2
@@ -55,8 +79,14 @@ keys k0 k1 k2 k3 k4 k5 k6 k7 k8 k9 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k20 k
 probes k0 k15 k30 k31 zzz
 array_order k0 k1 k2 k3 k4 k5 k6 k7 k8 k9 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k20 k21 k22 k23 k24 k25 k26 k27 k28 k29 k30
 array_search 1:1 1:16 1:31 0:31 0:31
+array_delete 1:31 1:30 1:29 0:28 0:28
+array_after_delete k1 k2 k3 k4 k5 k6 k7 k8 k9 k10 k11 k12 k13 k14 k16 k17 k18 k19 k20 k21 k22 k23 k24 k25 k26 k27 k28 k29
 hashset_order k11 k28 k1 k10 k20 k24 k0 k12 k5 k7 k16 k6 k17 k22 k15 k25 k26 k23 k13 k21 k29 k4 k27 k14 k18 k3 k9 k8 k19 k30 k2
 hashset_search 1:2 1:2 1:2 0:1 0:2
+hashset_insert 0:2 0:2 0:2 1:1 1:2
+hashset_after_insert k11 k28 k1 k10 k20 k24 k0 k12 k5 k7 k16 k6 k17 k22 k15 k25 k26 k23 k13 k21 k31 k29 k4 zzz k27 k14 k18 k3 k9 k8 k19 k30 k2
+hashset_delete 1:2 1:2 1:2 0:1 0:2
+hashset_after_delete k11 k28 k1 k10 k20 k24 k12 k5 k7 k16 k6 k17 k22 k25 k26 k23 k13 k21 k29 k4 k27 k14 k18 k3 k9 k8 k19 k2
 trie_order k0 k1 k10 k11 k12 k13 k14 k15 k16 k17 k18 k19 k2 k20 k21 k22 k23 k24 k25 k26 k27 k28 k29 k3 k30 k4 k5 k6 k7 k8 k9
 trie_search 1:3 1:4 1:4 0:4 0:2
 trie_delete 1:3 1:4 1:4 0:4 0:2
@@ -67,8 +97,14 @@ keys car cart cat dog
 probes car cart ca carts dog do
 array_order car cart cat dog
 array_search 1:1 1:2 0:4 0:4 1:4 0:4
+array_delete 1:4 1:3 0:2 0:2 1:2 0:1
+array_after_delete cat
 hashset_order cat cart car dog
 hashset_search 1:2 1:2 0:1 0:2 1:2 0:1
+hashset_insert 0:2 0:2 1:1 1:2 0:2 1:1
+hashset_after_insert cat cart car ca carts do dog
+hashset_delete 1:2 1:2 0:1 0:2 1:2 0:1
+hashset_after_delete cat
 trie_order car cart cat dog
 trie_search 1:4 1:5 0:3 0:6 1:4 0:3
 trie_delete 1:4 1:5 0:3 0:4 1:4 0:2
@@ -79,9 +115,33 @@ keys café naïve 日本 🍎 Москва
 probes café 日本 🍎 cafe
 array_order café naïve 日本 🍎 Москва
 array_search 1:1 1:3 1:4 0:5
+array_delete 1:5 1:4 1:3 0:2
+array_after_delete naïve Москва
 hashset_order naïve 🍎 日本 Москва café
 hashset_search 1:2 1:2 1:2 0:1
+hashset_insert 0:2 0:2 0:2 1:1
+hashset_after_insert naïve 🍎 cafe 日本 Москва café
+hashset_delete 1:2 1:2 1:2 0:1
+hashset_after_delete naïve Москва
 trie_order café naïve Москва 日本 🍎
 trie_search 1:6 1:7 1:5 0:5
 trie_delete 1:6 1:7 1:5 0:2
 trie_after_delete naïve Москва
+
+case explore
+keys car cart cat café dog ant
+probes owl cart dog ant cafe ca café
+array_order car cart cat café dog ant
+array_search 0:6 1:2 1:5 1:6 0:6 0:6 1:4
+array_delete 0:6 1:6 1:5 1:4 0:3 0:3 1:3
+array_after_delete car cat
+hashset_order cat cart car ant café dog
+hashset_search 0:3 1:2 1:3 1:3 0:2 0:1 1:2
+hashset_insert 1:3 0:2 0:3 0:2 1:1 1:1 0:2
+hashset_after_insert cat cart car owl ca cafe ant café dog
+hashset_delete 0:3 1:2 1:3 1:3 0:2 0:1 1:2
+hashset_after_delete cat car
+trie_order ant café car cart cat dog
+trie_search 0:2 1:5 1:4 1:4 0:5 0:3 1:6
+trie_delete 0:2 1:5 1:4 1:4 0:5 0:3 1:6
+trie_after_delete car cat

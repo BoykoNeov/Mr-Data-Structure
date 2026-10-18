@@ -26,4 +26,19 @@ describe('DynArrayStr — teaching twin of the Rust ArrayStr', () => {
     expect(a.search('café').found).toBe(true);
     expect(a.search('cafe').found).toBe(false); // "cafe" ≠ "café"
   });
+
+  it('delete counts comparisons + shifts (the Rust remove_first)', () => {
+    const a = DynArrayStr.fromKeys(['ten', 'twenty', 'thirty']);
+    expect(a.delete('ten')).toEqual({ removed: true, ops: 3 }); // 1 comparison + 2 shifts
+    expect(a.keysInOrder()).toEqual(['twenty', 'thirty']);
+    expect(a.delete('thirty')).toEqual({ removed: true, ops: 2 }); // full scan, no shift
+    expect(a.delete('nope')).toEqual({ removed: false, ops: 1 });
+    expect(a.keysInOrder()).toEqual(['twenty']);
+  });
+
+  it('delete removes only the first occurrence', () => {
+    const a = DynArrayStr.fromKeys(['x', 'x', 'y']);
+    expect(a.delete('x').removed).toBe(true);
+    expect(a.keysInOrder()).toEqual(['x', 'y']);
+  });
 });

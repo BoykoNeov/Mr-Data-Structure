@@ -1,5 +1,6 @@
-import type { HashSetEvent } from './events';
+import type { HashSetEvent, VizKey } from './events';
 import type { HashModel } from './model';
+import { keyLabel, cellWidthFor } from './keyLabel';
 
 /**
  * Hash-set renderer (docs/PLAN.md §5, "hash tables as bucket arrays with chains
@@ -8,6 +9,10 @@ import type { HashModel } from './model';
  * transform transition — the redistribution animates rather than snapping. The
  * active event highlights the hashed bucket, the probed chip (green on a match),
  * or the whole table during a rehash.
+ *
+ * Generic over the key type: the text-key hash set (docs/PLAN.md §8) draws through
+ * the same view, with chips widened to fit the longest label ({@link cellWidthFor});
+ * a short key — every numeric seed — keeps the original 46 px chip.
  */
 
 const ROW_H = 34;
@@ -16,18 +21,18 @@ const CHIP_H = 26;
 const GAP = 8;
 const LABEL_W = 64;
 const PAD = 10;
-const STRIDE = CHIP_W + GAP;
+const FONT = 13;
 
-interface ChipPos {
+interface ChipPos<K extends VizKey> {
   readonly id: number;
-  readonly value: number;
+  readonly value: K;
   readonly bucket: number;
   readonly pos: number;
 }
 
 /** Flatten the model into positioned chips (bucket + index within the chain). */
-function placeChips(model: HashModel): ChipPos[] {
-  const out: ChipPos[] = [];
+function placeChips<K extends VizKey>(model: HashModel<K>): ChipPos<K>[] {
+  const out: ChipPos<K>[] = [];
   model.buckets.forEach((chain, bucket) => {
     chain.forEach((chip, pos) => out.push({ id: chip.id, value: chip.value, bucket, pos }));
   });
@@ -45,7 +50,7 @@ const TONE: Record<Exclude<Tone, 'none'>, { fill: string; stroke: string }> = {
 
 /** Tone for a chip given the active event. `tailPos` is the index of the last
  * chip in the active insert's bucket, so only the freshly appended chip lights. */
-function chipTone(active: HashSetEvent | undefined, c: ChipPos, tailPos: number): Tone {
+function chipTone<K extends VizKey>(active: HashSetEvent<K> | undefined, c: ChipPos<K>, tailPos: number): Tone {
   if (!active) return 'none';
   switch (active.kind) {
     case 'hs.probe':
@@ -64,23 +69,25 @@ function chipTone(active: HashSetEvent | undefined, c: ChipPos, tailPos: number)
 }
 
 /** Bucket row highlighted by an active hash (or every row during a rehash). */
-function rowTone(active: HashSetEvent | undefined, bucket: number): boolean {
+function rowTone<K extends VizKey>(active: HashSetEvent<K> | undefined, bucket: number): boolean {
   if (!active) return false;
   if (active.kind === 'hs.hash') return active.bucket === bucket;
   if (active.kind === 'hs.rehash') return true;
   return false;
 }
 
-interface HashSetViewProps {
-  readonly model: HashModel;
-  readonly active: HashSetEvent | undefined;
+interface HashSetViewProps<K extends VizKey> {
+  readonly model: HashModel<K>;
+  readonly active: HashSetEvent<K> | undefined;
 }
 
-export function HashSetView({ model, active }: HashSetViewProps) {
+export function HashSetView<K extends VizKey = number>({ model, active }: HashSetViewProps<K>) {
   const cap = model.buckets.length;
   const chips = placeChips(model);
+  const chipW = cellWidthFor(chips.map((c) => c.value), FONT, CHIP_W, 9);
+  const stride = chipW + GAP;
   const longest = model.buckets.reduce((m, b) => Math.max(m, b.length), 0);
-  const width = LABEL_W + PAD * 2 + Math.max(1, longest) * STRIDE;
+  const width = LABEL_W + PAD * 2 + Math.max(1, longest) * stride;
   const height = PAD * 2 + cap * ROW_H;
 
   return (
@@ -121,7 +128,7 @@ export function HashSetView({ model, active }: HashSetViewProps) {
         const tailPos = model.buckets[c.bucket].length - 1;
         const tone = chipTone(active, c, tailPos);
         const style = tone === 'none' ? { fill: '#fff', stroke: '#bbb' } : TONE[tone];
-        const x = LABEL_W + PAD + c.pos * STRIDE;
+        const x = LABEL_W + PAD + c.pos * stride;
         const y = PAD + c.bucket * ROW_H + (ROW_H - 4 - CHIP_H) / 2;
         return (
           <g
@@ -130,7 +137,7 @@ export function HashSetView({ model, active }: HashSetViewProps) {
             style={{ transition: 'transform 220ms ease' }}
           >
             <rect
-              width={CHIP_W}
+              width={chipW}
               height={CHIP_H}
               rx={13}
               fill={style.fill}
@@ -138,15 +145,15 @@ export function HashSetView({ model, active }: HashSetViewProps) {
               strokeWidth={2}
             />
             <text
-              x={CHIP_W / 2}
+              x={chipW / 2}
               y={CHIP_H / 2}
               textAnchor="middle"
               dominantBaseline="central"
-              fontSize={13}
+              fontSize={FONT}
               fontFamily="system-ui, sans-serif"
               fill="#222"
             >
-              {c.value}
+              {keyLabel(c.value)}
             </text>
           </g>
         );

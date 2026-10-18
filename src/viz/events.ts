@@ -21,21 +21,31 @@
  *     later Phase 3 batches without touching what's here.
  */
 
+/**
+ * A key the generic array / hash-set events carry: a number, or a string for the
+ * text-key twins (`DynArrayStr`, `HashSetStr` — docs/PLAN.md §8). The string twins
+ * run the numeric algorithms on text, so they emit the **same** event kinds — and the
+ * same cost events — with a string key; the default `K = number` keeps every numeric
+ * call site as it was.
+ */
+export type VizKey = number | string;
+
 // ── Dynamic array (docs/PLAN.md §8, "Linear") ──────────────────────────────
 
 /** Compare the scanned cell at `index` against `target` (one comparison — a
- * cost event). `matched` short-circuits the scan. */
-export interface ArrCompare {
+ * cost event). `matched` short-circuits the scan. For a string key it is one
+ * *whole-key* comparison, never one per byte. */
+export interface ArrCompare<K extends VizKey = number> {
   readonly kind: 'arr.compare';
   readonly index: number;
-  readonly target: number;
+  readonly target: K;
   readonly matched: boolean;
 }
 
 /** Append `value` at the tail (insert — O(1), no comparisons). */
-export interface ArrAppend {
+export interface ArrAppend<K extends VizKey = number> {
   readonly kind: 'arr.append';
-  readonly value: number;
+  readonly value: K;
 }
 
 /** Mark the cell at `index` as the delete target (highlight only — the shifts
@@ -65,9 +75,9 @@ export interface ArrResult {
   readonly found: boolean;
 }
 
-export type ArrayEvent =
-  | ArrCompare
-  | ArrAppend
+export type ArrayEvent<K extends VizKey = number> =
+  | ArrCompare<K>
+  | ArrAppend<K>
   | ArrRemoveTarget
   | ArrShift
   | ArrPop
@@ -77,27 +87,27 @@ export type ArrayEvent =
 
 /** Hash `key` to `bucket` (one hash — a cost event; the search/insert/delete
  * op-count starts here). */
-export interface HsHash {
+export interface HsHash<K extends VizKey = number> {
   readonly kind: 'hs.hash';
-  readonly key: number;
+  readonly key: K;
   readonly bucket: number;
 }
 
 /** Walk one step along `bucket`'s chain, comparing the chain entry at `pos`
  * against `target` (one chain-step — a cost event). */
-export interface HsProbe {
+export interface HsProbe<K extends VizKey = number> {
   readonly kind: 'hs.probe';
   readonly bucket: number;
   readonly pos: number;
-  readonly target: number;
+  readonly target: K;
   readonly matched: boolean;
 }
 
 /** Append `value` to the chain at `bucket` (insert miss → new entry). */
-export interface HsInsert {
+export interface HsInsert<K extends VizKey = number> {
   readonly kind: 'hs.insert';
   readonly bucket: number;
-  readonly value: number;
+  readonly value: K;
 }
 
 /** Insert found the key already present at `bucket`/`pos` — nothing stored (set
@@ -118,18 +128,18 @@ export interface HsChainRemove {
 /** One key's relocation during a rehash, in old-iteration order (buckets by
  * index, each chain front-to-back). The renderer zips these with its current
  * chips so each keeps its identity as it flies to the new bucket. */
-export interface RehashMove {
-  readonly value: number;
+export interface RehashMove<K extends VizKey = number> {
+  readonly value: K;
   readonly toBucket: number;
 }
 
 /** Double the table and redistribute (docs/PLAN.md §8, load-factor rehash). The
  * `moves` carry the full per-key redistribution so the relocation can animate. */
-export interface HsRehash {
+export interface HsRehash<K extends VizKey = number> {
   readonly kind: 'hs.rehash';
   readonly oldCap: number;
   readonly newCap: number;
-  readonly moves: readonly RehashMove[];
+  readonly moves: readonly RehashMove<K>[];
 }
 
 /** Terminal marker: whether the key was present (search/delete). Not a cost event. */
@@ -138,13 +148,13 @@ export interface HsResult {
   readonly found: boolean;
 }
 
-export type HashSetEvent =
-  | HsHash
-  | HsProbe
-  | HsInsert
+export type HashSetEvent<K extends VizKey = number> =
+  | HsHash<K>
+  | HsProbe<K>
+  | HsInsert<K>
   | HsDuplicate
   | HsChainRemove
-  | HsRehash
+  | HsRehash<K>
   | HsResult;
 
 // ── Open-addressing hash set (docs/PLAN.md §8 "Hashing", linear probing) ────
@@ -1281,7 +1291,9 @@ export type GraphEvent = GraphStart | GraphVisit | GraphExamine | GraphMark | Gr
 
 export type VizEvent =
   | ArrayEvent
+  | ArrayEvent<string>
   | HashSetEvent
+  | HashSetEvent<string>
   | HashSetOaEvent
   | SortedArrayEvent
   | DoublyListEvent
