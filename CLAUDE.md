@@ -83,7 +83,13 @@ tool call does not survive into the next (each call is a fresh process).
   globals, so a numeric assert placed after it would silently re-read the reverse-sorted
   pass. A **fourth pass**, the graph, clicks `measure the graph` (the graph section never
   runs on page load; the button's name must not match `/run the sweeps/`) and reads only
-  `__graphProof`. Keep all four passes, in that order. Every pass also relies on the gate's
+  `__graphProof`. A **fifth pass**, after the graph, drives reverse-sorted + misses only +
+  `between stored keys` and asserts the BST O(n) / AVL sub-linear pair under mid-range misses
+  (bands reused from the reverse pass, uncalibrated). Keep all five passes, in that order.
+  Every run-completion `page.waitForFunction(fn, null, { timeout })` needs that `null`: without
+  it the options object is the page-function *argument*, the timeout is ignored and
+  Playwright's 30 s default applies — which hid for months because every pass happened to
+  finish inside 30 s. Every pass also relies on the gate's
   **fresh, empty browser context** — see the session-persistence gotcha below.
 - **The min-heap is deliberately kept off the shared Compare charts** (PLAN §8,
   risk R6): its op set is insert / peek / extract-min, not insert / search /
@@ -191,7 +197,9 @@ tool call does not survive into the next (each call is a fresh process).
   METHODOLOGY §4 hurdle 15). Don't give the BST its own probes (it ends the comparison);
   `BstSearchNote` / `bstSheetNote` (`src/ui/BstNotes.tsx`) carry the warning on screen and on
   the PNG. The BST and AVL are measured **after** the ten older search series so those keep
-  their calibrated conditions — keep them last. The full 100 k ladder is the user's choice: a
+  their calibrated conditions; only the backward-shift hash set follows them — keep that
+  order (a new series goes after it). The opt-in mid-range miss form fixes the blind spot,
+  and under it the caveat must *not* show; under the default it stays byte-identical. The full 100 k ladder is the user's choice: a
   sorted run builds a 100 k-key chain (Θ(n²), untimed) before the BST's first point; don't
   shorten the BST's ladder without asking. The gate's reverse-sorted pass clears and re-reads
   `__sweepProof` for the BST-O(n) / AVL-sub-linear check — keep the clear.
@@ -282,6 +290,28 @@ tool call does not survive into the next (each call is a fresh process).
   wording). Entries are addressed `(from, slot)` through `GraphModel.incident`, never by
   vertex pair (parallel edges collide). The seed is computed: changing an edge changes four
   pinned facts in `trace.graph.test.ts`.
+- **The backward-shift hash set is the tombstone set with the policy removed, and its tests
+  say so literally:** a delete-free build is the tombstone table slot for slot
+  (`methodology_hbs`), so its tests read `HashSetOaF64`'s layout, rehash order and block rule —
+  change the tombstone set and they may break, on purpose. Its shift scan costs a probe *and* a
+  hash per slot (no stored hashes); `set_churn_key` runs a one-pass *capacity settle* (not
+  priming — there is no tombstone to prime). It is last on search and runs after the heap on
+  mutation (`runHashBsMutationSweep`, `CompareResult.hashbs`), so `mutation.length` stays 18.
+  It stays at 0.75 whatever the load control says, so every "the indigo line is the same
+  table" sentence is conditional on the default load — keep them so.
+- **The open-addressing load control keys every caveat on `result.oaMaxLoad`, never on the
+  radio**, keeps the worker passing the bare wasm class at 0.75, and threads the load through
+  all four `*_at` statics (a load on the constructor alone would measure churn and the split
+  at different thresholds). It is not persisted: a restored 0.9 would make the mount-time run
+  a non-default one. `stampMaxLoad` must tag every hash set (a new one included).
+- **The worst-single-operation view is clock-free and on demand.** `MAX_OP_STRUCTURES` is
+  mirrored in `maxop.rs` and `src/bench/maxOp.ts`, and `maxOp.test.ts` pins it equal to the
+  canonical numeric structures — a new canonical structure fails that test until it gets a
+  `maxop.rs` adapter. Each counter's maximum is taken on its own; recolours never join ops.
+- **The text-key tabs draw one cost event per whole-key comparison**, as the Rust string twins
+  count it; byte-length captions use UTF-8 length (`TextEncoder`), never `.length` (café and
+  cafe are both 4 by `.length`). `TEXT_SEED` must equal the `explore` case in
+  `corpus-str.txt`, and `owl` must stay its first probe (the insert/delete lines run in order).
 - **The probe mix's default is a calibrated workload, not a starting value.** At 50 % the
   builders must return *exactly* the 64 + 64 keys the gate's bands were tuned on —
   `probeMix.test.ts` pins it against **frozen copies** of the old builders; don't "simplify"
@@ -289,6 +319,10 @@ tool call does not survive into the next (each call is a fresh process).
   factory so a new structure without it fails to compile. The control is radio buttons
   *after* the dataset panel because the gate drives the generator with
   `page.locator('select').first()`.
+- **The stored-n x-axis is a view, not a measurement.** It refits in the UI layer
+  (`src/ui/storedAxis.ts`); the `window.__*Proof` mirrors stay on input n, and the gate checks
+  the toggle leaves them unchanged. Series without a stored count fall back to input n
+  *tagged*, never silently.
 - **`n` on every chart is input keys; `storedN` is what the structure holds**, read back from
   its own `len()` — so every bench twin must keep exporting `len()`. The hash set holding
   ~63 % of its input on the *default* page is a finding (draws with replacement), not a bug.
@@ -317,7 +351,9 @@ tool call does not survive into the next (each call is a fresh process).
 
 - `bench-engine/` — Rust crate → WASM, the "production" benchmark impls; its
   `structures/mod.rs` `mod methodology` pins the churn-vs-finite-difference regimes
-  clock-free (twelve; the B-tree's in `structures/methodology_btree.rs`).
+  clock-free (thirteen; the B-tree's in `structures/methodology_btree.rs`, the backward-shift
+  set's in `structures/methodology_hbs.rs`); `structures/maxop.rs` is the worst-single-operation
+  profiler.
 - `src/bench/` — `BenchEngine` interface, Comlink Web Worker, WASM-backed engine;
   `measure.ts` (batching, adaptive reps, spread), `fit.ts` (classes, slope ± SE,
   local slopes, trend), `sweep.ts`; `probeMix.ts` (the hits/misses workload builders),
@@ -339,8 +375,10 @@ tool call does not survive into the next (each call is a fresh process).
   Player, SVG views (one per Explore tab), `VizPanel`.
 - `src/ui/` — `CompareSection`, `DatasetPicker`, `ProbeMixControl`, `SweepChart` (error
   bars + theory overlay, stored-size note), `SlopeChart`, `export.ts`, `png.ts`, `Explain`
-  (honesty copy), per-structure notes (`DoublyListNotes`, `BTreeNotes`, `BstNotes`), and the graph's
-  own `GraphCompareSection` / `GraphChart` / `graphPicker`.
+  (honesty copy), per-structure notes (`DoublyListNotes`, `BTreeNotes`, `BstNotes`, `HashOaNotes`),
+  the opt-in controls (`MissFormControl`, `NAxisControl` + `storedAxis.ts`, the load radios in
+  `HashOaNotes`), `MaxOpSection`, and the graph's own `GraphCompareSection` / `GraphChart` /
+  `graphPicker`.
 - `src/App.tsx` — layout only.
 - `docs/METHODOLOGY.md` — the measurement science, its open hurdles, and the
   proof map. Update it whenever a measurement claim or a gate changes.

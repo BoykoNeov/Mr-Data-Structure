@@ -18,7 +18,7 @@ corpus. See [`docs/PLAN.md`](docs/PLAN.md) for the full design, the measurement
 methodology, and the phased roadmap.
 
 **Status:** Phases 0–5 complete, Phase 6 well along — every Rust bench twin (the Linear
-family including the **doubly linked list**, both hash sets, the BST/AVL and
+family including the **doubly linked list**, all three hash sets, the BST/AVL and
 **red-black** trees and the **B-tree**, the **min-heap**, the **skip list**, and the
 **string-key** array, hash set and **trie**) is
 wired into the browser sweep for **both** search and add/remove, and the
@@ -110,9 +110,28 @@ on reverse-sorted keys the BST's search climbs in a straight line (O(n)) while t
 stays low. One case is flagged rather than hidden: with *misses only* selected, every
 missing key sits above the largest stored one, which a reverse-sorted BST answers in one
 step — so its line would read flat, and the page says so beside the chart and on the PNG.
-The last three missing animations are done (only the string-key array and hash set, the
-number-key versions' algorithms run on text, have no tab of their own). Still open: the
-graph in the exports, and performance polish. The
+**Every measured structure now animates**: the text-key array and hash set have their own
+Explore tabs, each drawn comparison one whole-key test, as the benchmark counts it.
+
+Six opt-in extras answer the plan's open "which variant?" questions, each leaving the
+default page measuring exactly what it did:
+
+- a **third hash set** that deletes by sliding the following keys back instead of leaving a
+  tombstone — the tombstone turns out to cause all of the old set's add/remove-vs-cross-check
+  disagreement and almost none of its cost, because sliding back walks the very stretch of
+  table a tombstone would have made the next insert walk;
+- a **load-factor control** for the open-addressing set (0.5 / 0.75 / 0.9), which reports how
+  full each table actually got on the size ladder (less than the setting suggests) and flags
+  the chart, PNG and exports "not like for like" whenever it differs from the chaining set's;
+- a clock-free **worst single operation** view, on request: the red-black tree's ≤ 2 / ≤ 3
+  rotations per operation against the AVL's worst delete growing with height, and the
+  grow-and-copy hidden inside an array's or hash set's amortised O(1) insert;
+- **misses between stored keys** as an alternative to misses past the largest key, which
+  closes both the skip list's cheap-miss gap and the BST's misses-only blind spot;
+- a **stored-size x-axis**, refitting every chart on how many keys each structure kept;
+- and the text-key animations above.
+
+Still open: the graph in the exports, and performance polish. The
 phase table is at the top of
 [`docs/PLAN.md`](docs/PLAN.md); the measurement science and its open hurdles
 are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).

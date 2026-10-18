@@ -15,7 +15,7 @@ science and its open hurdles in [`METHODOLOGY.md`](METHODOLOGY.md).
 | 3 | animation engine + teaching twins/viz for the Linear family, BST, AVL, min-heap | ✅ done |
 | 4 | Rust bench twins: BST, AVL, sorted array, linked list (Linear family complete), min-heap (Trees/heaps complete); churn-vs-FD regimes pinned clock-free | ✅ done — every bench twin, **numeric and string**, is wired into the browser sweep, search *and* mutation |
 | 5 | comparison/analysis: **one user-chosen dataset drives every sweep** (generators incl. sorted/reverse/near-sorted/zipfian/string corpus, or pasted CSV/JSON); structure registry; theoretical overlay; rep-spread error bars; slope ± stderr/CI, local-slope panel, tail slope + trend; adaptive reps; one-click presets; CSV/JSON/PNG export | ✅ done — the interleaving experiment (§13) stays an open question, not a dropped feature |
-| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The **graph** is complete end to end: an own-op-set adjacency-list multigraph whose BFS and DFS cost the same `V + 2E` in different orders, pinned clock-free (METHODOLOGY §2.7), **measured** in its own Compare section on a V-sweep and a degree-sweep (synthetic graphs or the user's own edge list, plotted against the reached component's `V′ + 2E′`), and **animated** in Explore (BFS and DFS beside their adjacency lists, DFS shown mark-on-push). Four more numeric structures are measured end to end: an **open-addressing hash set** held to the chaining set's table sizes — now **animated** too (slot strip with tombstones, the probe walk, purge vs double) — a **red-black tree** on the AVL's metric, also **animated** (colours, each CLRS fix-up case as its own step, recolours outside the count), a **B-tree**, also **animated** (in-node binary search, the deferred equality test, splits / borrows / merges, nodes visited shown beside the count) and a **doubly linked list** (METHODOLOGY §2.8–§2.11), whose teaching twin now holds real back links that Explore draws, each pointer write a free step. The search workload's **hits-vs-misses mix** is a user choice, de-duplicating structures report **stored size** beside input size, and a **session is remembered** in this browser (never its results). The **BST and the AVL now share the search chart** with the other trees, so sorted data visibly turns the BST's search O(n) while the AVL's holds (one labelled blind spot: a misses-only run on reverse-sorted data reads the BST flat, METHODOLOGY §4 hurdle 15). The last three missing step-animations are done; only the string-key array and hash set — the number-key structures' algorithms on text — have no Explore tab of their own. Open: graph exports, and performance polish |
+| 6 | trie, skip list, graph; presets/demos; persistence; polish | 🟡 in progress — the **trie** is complete end to end (Rust bench twin + TS teaching twin + conformance + the string Compare run + the browser gate) and has its **own step-animation** in Explore, the first animated structure with string keys and the first drawn one node per UTF-8 *byte*. The **skip list** is now measured end to end too: O(log n) with no rebalancing at all, its node heights derived from each key's hash rather than a coin, so the structure is a pure function of its key *set* — and it now has **its own step-animation** in Explore, drawing the express lanes as the real skips they are and highlighting the walk's stand-point and its compared node separately (so a hit's level-0 double comparison is visible). The **graph** is complete end to end: an own-op-set adjacency-list multigraph whose BFS and DFS cost the same `V + 2E` in different orders, pinned clock-free (METHODOLOGY §2.7), **measured** in its own Compare section on a V-sweep and a degree-sweep (synthetic graphs or the user's own edge list, plotted against the reached component's `V′ + 2E′`), and **animated** in Explore (BFS and DFS beside their adjacency lists, DFS shown mark-on-push). Four more numeric structures are measured end to end: an **open-addressing hash set** held to the chaining set's table sizes — now **animated** too (slot strip with tombstones, the probe walk, purge vs double) — a **red-black tree** on the AVL's metric, also **animated** (colours, each CLRS fix-up case as its own step, recolours outside the count), a **B-tree**, also **animated** (in-node binary search, the deferred equality test, splits / borrows / merges, nodes visited shown beside the count) and a **doubly linked list** (METHODOLOGY §2.8–§2.11), whose teaching twin now holds real back links that Explore draws, each pointer write a free step. The search workload's **hits-vs-misses mix** is a user choice, de-duplicating structures report **stored size** beside input size, and a **session is remembered** in this browser (never its results). The **BST and the AVL now share the search chart** with the other trees, so sorted data visibly turns the BST's search O(n) while the AVL's holds (one labelled blind spot: a misses-only run on reverse-sorted data reads the BST flat, METHODOLOGY §4 hurdle 15). **Every measured structure now animates**: the text-key array and hash set have their own Explore tabs, running the number tabs' algorithms on the trie's keys plus `ant`, each drawn comparison one whole-key test, length-first in UTF-8 bytes as Rust's `==` runs it. Six opt-in extras from §13 landed as one parallel batch, each leaving the mount-time run unchanged: a **backward-shift hash set** (no tombstones; the tombstone was all of regime 12's overshoot and almost none of its cost), an **open-addressing load-factor control**, a clock-free **worst-single-operation** view, **mid-range misses**, a **stored-n x-axis**, and the text-key animations. Open: graph exports, and performance polish |
 
 Headline results, all on the real browser clock unless noted: array search O(n)
 vs hash-set search O(1) (the Phase 2 criterion); sorted-array search sub-linear
@@ -1433,6 +1433,43 @@ insert/search/delete group on a shared key type.
     the pair under the chart and turns loud on a misses-only run; `bstSheetNote` carries the warning
     onto the PNG. Gate 126/126 (twelve search series; uniform bands for both trees; the reverse pass
     now clears and re-reads `__sweepProof` and asserts BST > 0.6, AVL < 0.4). **No new deps.**
+  - **Done (the §13 extras, six parallel slices merged in one batch):** every one opt-in or
+    measured after every existing series, so the mount-time auto-run measures what it did.
+    - *A backward-shift hash set* (`hash_set_bs.rs`, `hashSetBs.ts`, `corpus-hbs.txt`): linear
+      probing with Knuth's Algorithm R delete, no tombstones, held to the chaining set's hash,
+      start size, 0.75 and doubling. A delete-free build is the tombstone set's table slot for slot
+      (`methodology_hbs`), so the search lines coincide; on churn the tombstone turns out to be all
+      of regime 12's overshoot (+27 % → +0.7 %) and almost none of its cost (churn 7.69 → 7.39): the
+      shift scan walks the run a tombstone defers to the next insert. Measured last on search and
+      after the heap on mutation (its own `runHashBsMutationSweep`, `CompareResult.hashbs`).
+      METHODOLOGY §2.8, regime 13.
+    - *A load-factor control for the open-addressing set* (0.5 / 0.75 / 0.9, radios after the
+      probe mix, never persisted): threaded through all four `*_at` statics so churn and the
+      split share a threshold. The fixed size ladder samples the sawtooth at the same points, so
+      0.9 reaches α ≤ 0.78 and churn equals the 0.75 line wherever the final table matches; the
+      page reports the α reached and how many sizes' tables differed, and every chart, PNG
+      caption and export (`max_load`) says "not like for like" off the default. METHODOLOGY §2.8.
+    - *A clock-free worst-single-operation view* (`maxop.rs`, `MaxOpSection`), on its own button:
+      one fixed build-then-delete replay per structure, each counter's maximum taken on its own.
+      Red-black ≤ 2 / ≤ 3 rotations per op on every input order; the AVL's insert ≤ 2 too, its
+      worst delete reaching 10 at n = 4000 on shuffled keys but 2 on sorted ones; the array's
+      append op-count 0 beside a 2048-key grow. METHODOLOGY §4 hurdle 13.
+    - *Mid-range misses* (`midRangeAbsent`, radios after the probe mix): absent keys strictly
+      between adjacent stored keys, rank-spread, half-integers on dense integers. Closes hurdle 9's
+      skip-list gap and hurdle 15's BST blind spot; the caveats stay byte-identical under the
+      default. A fifth gate pass (reverse-sorted, misses only, mid-range) asserts BST > 0.6 and
+      AVL < 0.4; its bands reuse the reverse pass's, not yet calibrated on their own.
+    - *A stored-n x-axis* (`storedAxis.ts`): every fit, slope, local slope, tail, trend and the
+      theory overlay recomputed on stored n in the UI layer; the gate's proofs stay on input n.
+      METHODOLOGY §4 hurdle 8.
+    - *Text-key animations*: Explore tabs for the string array and string hash set, the numeric
+      twins' events made generic over the key type, chained to new mutation lines in
+      `corpus-str.txt`.
+    Merge-time integration: the backward-shift set joined the worst-op view (12 structures) and
+    the `max_load` stamping, and its two "same table" sentences turned conditional on the default
+    load. The gate's run-completion waits had passed their `{ timeout }` as the page-function
+    argument since they were written, so Playwright's 30 s default applied; the slower
+    reverse-sorted pass exposed it, now fixed. Gate 145/145 across five passes. **No new deps.**
   - **Open:** The graph's charts are
     **not yet in the PNG / CSV / JSON exports**, and the PNG would need the V-sweep's memory
     caveat as a caption line; the B-tree's locality caveat is likewise page-only. The graph
@@ -1480,20 +1517,18 @@ insert/search/delete group on a shared key type.
 
 - ~~Hash table: stay with separate chaining, or add open-addressing as a *second*
   selectable variant?~~ **Done** (Phase 6) — both are measured on the same charts,
-  held to the same hash and table sizes (METHODOLOGY §2.8). Remaining: (a) a
-  **backward-shift-delete** variant (no tombstones; a churn pair would restore the
-  table by construction, with no priming and no overshoot) as a third line — the
-  cleanest test of how much of regime 12 is the tombstone; (b) a **load-factor
-  control** (0.5 is the usual linear-probing ceiling; 0.75 was kept to match
-  chaining, which makes OA's miss cost ~4.5× chaining's near the top of each
-  sawtooth); (c) a churn *block* for the chaining set too, for symmetry (its
-  single key has the same one-bucket sampling problem, milder).
+  held to the same hash and table sizes (METHODOLOGY §2.8). ~~(a) a
+  **backward-shift-delete** variant as a third line~~ **Done** — the overshoot was all
+  tombstone; the churn line barely moves (regime 13). ~~(b) a **load-factor
+  control**~~ **Done** (opt-in 0.5 / 0.75 / 0.9; the page reports the α actually reached).
+  Remaining: (c) a churn *block* for the chaining set too, for symmetry (its
+  single key has the same one-bucket sampling problem, milder); an Explore tab for the
+  backward-shift set.
 - ~~Balanced tree: AVL chosen; offer red-black as an alternative later for a
   balancing-scheme comparison?~~ **Done** (Phase 6, METHODOLOGY §2.9) — measured,
-  not yet animated. Remaining: the per-operation rotation bound is the scheme's real
-  difference, and no per-op *average* on a chart can show a worst case — should
-  Compare grow a "max cost of one operation" view so it is visible on the clock and
-  not only in Rust (METHODOLOGY §4 hurdle 13)?
+  since animated. ~~Should Compare grow a "max cost of one operation" view?~~ **Done**
+  (Phase 6): an on-request, clock-free view — a single op is too short for the browser's
+  clock, so it shows counted maxima, not timed ones (METHODOLOGY §4 hurdle 13).
 - ~~Session persistence: local-only (IndexedDB) vs shareable URLs/exported files?~~
   **Decided: local only** (Phase 6, `src/persist/`). Settings in `localStorage`,
   the user's pasted data in IndexedDB, nothing uploaded, nothing in the URL.
@@ -1512,14 +1547,12 @@ insert/search/delete group on a shared key type.
   between sequential sweeps (METHODOLOGY §4.5)?
 - ~~Configurable present/absent probe mix (§6.3), and reporting *stored* size next
   to *input* size for de-duplicating structures (METHODOLOGY §4.8–4.9).~~ **Done**
-  (Phase 6). Two narrower questions remain: (a) should the numeric absent block
-  offer a **mid-range** form (keys between stored keys) as well as `max + 1 …`? It
-  is the skip list's dearer miss and would close the hurdle-9 gap — and the BST's
-  misses-only blind spot (hurdle 15), where `max + 1` is a one-node right spine — but it is a
-  different workload whose slope bands would need their own calibration; (b) should
-  the charts offer an explicit **stored-n x-axis** for the de-duplicating
-  structures? Today the axis is input n everywhere, with the stored count reported
-  beside it.
+  (Phase 6). ~~(a) a **mid-range** absent form~~ **Done** (opt-in; closes hurdles 9 and
+  15). Remaining: calibrate slope bands for the mid-range workload on its own, and decide
+  whether the miss form persists. ~~(b) a **stored-n x-axis**~~ **Done** (opt-in radio;
+  fits refitted on stored n in the UI layer, gate proofs untouched — METHODOLOGY §4
+  hurdle 8). Remaining: whether the axis choice persists (it is a view setting, so it
+  could sit beside `signal`).
 
 ---
 
@@ -1566,5 +1599,10 @@ insert/search/delete group on a shared key type.
      both trees on the full ladder; the BST's misses-only blind spot labelled (METHODOLOGY §4
      hurdle 15);
    - the persistence reload pass in the gate;
+   - ~~the §13 extras: backward-shift hash set, load-factor control, worst-single-operation view,
+     mid-range misses, stored-n axis, text-key animations~~ **done** — one parallel batch, gate
+     145/145;
+   - persistence decisions for the new controls (miss form, stored-n axis; the load factor
+     deliberately not persisted) and the mid-range workload's own slope-band calibration;
    - performance polish.
 10. The interleaving experiment (§13), as its own slice.

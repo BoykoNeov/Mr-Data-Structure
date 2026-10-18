@@ -114,6 +114,7 @@ position. Every regime is pinned clock-free on exact op-counts in
 | 10 | red-black tree | **close-ish** (~18 %: churn 27 vs sum 22.2), churn ≥ sum | the AVL's direction: churn's keys ride the spines while the build inserts at average depth — wider than the AVL's ~10 % because the looser height bound lets a red-black tree's spines run further past its average path (§2.9) | yes, O(log n) |
 | 11 | B-tree (t = 16) | **tight** (~2 % shuffled: churn 25.0 vs sum 24.5; 24.5 vs 24.7 ascending, 26.0 vs 27.5 descending) | every leaf is at one depth, so the two churn keys walk the same height as any stored key — no cheap spine — and a settled churn pair is exactly one insert descent plus one delete descent (§2.10) | yes, O(log n) |
 | 12 | open-addressing hash set | **churn overshoots sum** (~27 %: 7.69 vs 6.06) | churn's own tombstones bridge runs; an unprimed pair (5.81) matches the FD sum (§2.8) | yes, O(1) |
+| 13 | backward-shift hash set | **tight** (~0.7 %: churn 7.39 vs sum 7.34) | no tombstone: the walk a tombstone defers to the next insert is paid inside the delete's shift scan, which the teardown sees too (`delete_fd` 3.80 vs 2.52); pair = the tombstone set's unprimed pair + the shift scan, exactly (§2.8) | yes, O(1) |
 
 Both BST rows moved with the two-key change (they were "tight" and
 "overshoot"): alternating the ends is what fixes the *class* on reverse-sorted
@@ -132,15 +133,17 @@ the cross-check, and both are read for **shape** (PLAN §2.3). Where the churn
 key's position biases the constant (trees, sorted array) or even the class
 (linked list), the bias is stated next to the chart and in §4 below.
 
-Twelve regimes. The skip list's is the balanced BST's story told by a structure
+Thirteen regimes. The skip list's is the balanced BST's story told by a structure
 with no tree in it: both probe the cheap edges of a shape whose average is
 dearer. What differs is *why* the shape is safe — the tree rebalances, the skip
 list was never unbalanced (§2.6). The B-tree's is the first tree whose churn and
 FD sum agree tightly, because it is the first whose spines are not special. And
 the open-addressing set's is the one regime set by a **deletion policy** rather
-than a key position: the overshoot is the churn keys' own tombstones (§2.8).
+than a key position: the overshoot is the churn keys' own tombstones (§2.8) — and the
+backward-shift set's is the same table with that policy removed: its churn agrees with
+the FD sum, and its churn line barely moves.
 
-All six flat structures (both arrays, both hash sets, both lists) run this pair
+All seven flat structures (both arrays, all three hash sets, both lists) run this pair
 of methods **on the browser clock**, not only on op-counts, and regimes 6 and 7
 are where that matters most:
 
@@ -459,7 +462,7 @@ a mechanism for that; Chromium did not reproduce it, so no mechanism is claimed.
 V-sweep band ever flakes, read the ns-per-visit column first — a rising column argues
 for widening the band, not for re-tuning the graphs.
 
-### 2.8 Two hash sets, one hash (open addressing vs chaining)
+### 2.8 Three hash sets, one hash (open addressing vs chaining, and a delete with no tombstone)
 
 The open-addressing set (`hash_set_oa.rs`, linear probing, set semantics) is held to
 the chaining set's hash (`mix_f64`), 4-slot start, 0.75 threshold and doubling
@@ -556,6 +559,53 @@ equal α (for distinct keys — a de-duplicated prefix can shift it, hurdle 8).
 flat, both flatter than the array's. Which hash set is faster on the clock is a machine
 fact (one flat array against chain pointers) and deliberately not asserted; the UI says
 only that the order can flip.
+
+**A third hash set: backward shift, no tombstones (regime 13).** `hash_set_bs.rs` /
+`hashSetBs.ts` is the same linear-probing table with Knuth's Algorithm R delete: the hole a
+removed key leaves is filled by sliding back each later key of its run whose home does not
+lie strictly between the hole and itself (moved when `(j − home) mod cap ≥ (j − hole) mod
+cap`), so nothing is left behind and every churn pair restores the table bit for bit. The
+control is exact: **a delete-free build is the tombstone table slot for slot**
+(`methodology_hbs::a_delete_free_build_is_the_tombstone_sets_table_slot_for_slot`), so the
+two search lines are one on the op-count signal. Each slot the shift scan examines costs a
+probe *and* a hash — no hashes are stored, so every candidate's home is recomputed;
+counting the probe alone would halve that term, so comparisons are stated term by term,
+never as "cheaper". Churn uses the tombstone set's block (`clamp(⌊len/32⌋, 1, 16)` keys from
+`max + 1`) with **no priming**; `set_churn_key` runs one untimed capacity settle, which
+matters only when the set sits exactly at its load threshold (6 keys in 8 slots), where the
+first churn insert would otherwise double the table inside the first counted pair.
+
+| clock-free, 64 tables at n = 4 000 | insert_fd | delete_fd | FD sum | churn |
+|---|---|---|---|---|
+| tombstones (regime 12) | 3.54 | 2.52 | 6.06 | 7.69 (+27 %) |
+| backward shift (regime 13) | 3.54 | 3.80 | 7.34 | 7.39 (+0.7 %) |
+
+The answer to "how much of regime 12 is the tombstone?" is **all of the overshoot and almost
+none of the cost**: the shift scan walks the very run a tombstone would have made the next
+insert walk, so the work moves from the next insert into the delete
+(`backward_shift_churn_is_the_unprimed_pair_plus_its_shift_scan`: 5.81 + 1.50 = 7.31, table by
+table). A finite difference across a doubling reads −38.75 against the tombstone set's
+−10.77, the same trap as above. It is measured after every existing series — last on search,
+after the heap on mutation — so it moved no calibrated condition; it has no Explore tab yet.
+
+**The load-factor control.** The open-addressing set's rehash threshold L is an opt-in
+control (0.5 / 0.75 / 0.9); the chaining and backward-shift sets stay at 0.75. Every
+tombstone rule reads L where it read 0.75 (rehash when live + tombs > L·cap, purge in place
+when live ≤ L·cap/2, else double), threaded through all four build/teardown statics
+(`*_at`) so churn and the split share a threshold. L is restricted to [0.25, 1): below 0.25
+one doubling cannot restore the limit, and at 1 a miss could find no empty slot to stop at.
+At the top of each sawtooth the counts follow Knuth — at α 0.499 a miss costs 2.54 (Knuth
+2.49) and a hit 2.51 (2.50); at α 0.899, 54.98 (49.44) and 6.60 (6.45). Two cautions.
+First, the browser's ladders sample the sawtooth at fixed points: on distinct keys 0.9
+reaches α ≤ 0.78 on the search ladder and builds the same tables as 0.875 would, so the page
+reports the α reached and how many sizes' tables differed, never the setting alone. Second,
+a linear-probing table's occupied pattern depends only on its keys and capacity, so wherever
+the final table is the 0.75 size, churn and teardown op-counts *equal* the default's exactly
+(every mutation-ladder point at 0.9; all but n = 500 at 0.5, where priming doubles the table;
+`a_threshold_that_ends_at_the_same_size_draws_the_same_churn_line`). Only the cumulative-build
+insert half always moves. At any L ≠ 0.75 the pair is not like for like, and the page, the
+PNG caption, the CSV (`max_load`) and the JSON say so; the two "same table at every n"
+sentences are shown only at the default.
 
 ### 2.9 Two balancing schemes, one metric (the red-black tree)
 
@@ -952,7 +1002,17 @@ Ordered by how much they can mislead a reader today.
    the PNG caption the sentence. The finite-difference halves have no built
    instance, so they carry no stored count (and a hash set's FD "insert" of a
    repeated key is a lookup that finds it — read that curve with this hurdle in
-   mind). Whether to offer a stored-n x-axis is open (PLAN §13).
+   mind). A **stored-n x-axis** is offered as an opt-in view (`src/ui/storedAxis.ts`). It
+   refits every reading on stored n — class scores, slope ± SE, local slopes, tail, trend,
+   note and the theory twin — in the UI layer only; the gate's proofs stay on input n. Rules:
+   (1) a series without a stored count at every point (the finite-difference halves) stays on
+   input n, tagged so in its fit row, legend and PNG legend; (2) where `storedN === n`
+   throughout, the input-n fit is kept exactly; (3) once a prefix holds every distinct key,
+   stored sizes repeat — nested prefixes mean the same set and table — and those points stay
+   in the fit as repeat measurements; a local slope is read only across a ≥ 10 % stored step,
+   the tail is taken over the upper half of the *distinct* sizes (a point-count tail across a
+   plateau has no x spread and reads a false slope 0), and a series at one stored size
+   throughout gets no slope, tagged "one stored size — no slope".
 9. **The probe mix is a choice, and it moves constants — classes only for the BST
    (hurdle 15).** The
    default is 64 present + 64 absent; the UI also offers 0 / 25 / 75 / 100 %
@@ -983,9 +1043,19 @@ Ordered by how much they can mislead a reader today.
      low end vs 17 at the high). So the absent share of the skip list's workload
      (half, by default) is its best case, and raising it lowers the skip list's
      constant against the sorted array it shares a class with. The **slope is
-     unaffected** — a fixed per-level saving, not a function of n. A mid-range
-     absent mode would close the gap; it is a different workload with its own
-     calibration, and open (PLAN §13).
+     unaffected** — a fixed per-level saving, not a function of n. The opt-in
+     **mid-range** miss form (below) closes the gap: a between-keys miss costs the skip
+     list about what a hit does (0.8–1.25×, `probeMix.midRange.test.ts`). No gate band is
+     calibrated on it.
+
+   **The mid-range miss form** (`midRangeAbsent`, opt-in, numeric keys only) places each
+   absent key strictly between two adjacent distinct stored keys: spread evenly by rank over
+   the interior gaps (Knuth's unsuccessful-search model), at the gap's midpoint, or evenly
+   inside it when gaps are scarce (half-integers on dense integer keys); absent by
+   construction; shuffled with a fixed seed; the same count at every mix; falling back to
+   `max + 1 …` only when the prefix has no interior gap. The default stays `max + 1`, and the
+   form is recorded wherever the run goes (the provenance caption, JSON `probeMix.missForm`,
+   CSV `search_misses`). Text probes ignore it (they are already derived, §2.5).
 
    The probes stay shared regardless, for the reason hurdle 11 gives for the trie:
    a chart where each line gets a workload tuned to suit it stops being a
@@ -1015,8 +1085,22 @@ Ordered by how much they can mislead a reader today.
    favours the AVL on sorted data, which read alone undersells the scheme. And
    that holds for the **op-count** signal only: on wall-clock the AVL pays an
    allocation per insert that the red-black tree's slot-reusing arena does not,
-   so the timed gap mixes the scheme with storage (§2.9). A "worst single
-   operation" view is open (PLAN §13).
+   so the timed gap mixes the scheme with storage (§2.9). **Answered by a separate
+   view, clock-free:** Compare's *worst single operation* section (`maxop.rs`,
+   `src/ui/MaxOpSection.tsx`, on its own button, never on page load) replays one
+   workload one operation at a time — build from the n-key prefix in dataset order, then
+   delete largest-then-smallest, identical for every structure — and keeps, per pass, each
+   counter's maximum on its own: the structure's op-count, rotations (AVL, red-black),
+   recolours (red-black, never in ops) and keys re-placed by a grow-and-copy (arrays, hash
+   sets — work outside every op-count metric, seen from outside via capacity changes;
+   arena growth in the linked twins is a storage detail and is not reported). A single op
+   is far too short for the browser's clock, so nothing there is timed. What it shows: the
+   red-black tree's ≤ 2 / ≤ 3 holds per operation on every input order; the AVL's insert is
+   also ≤ 2; the AVL's worst delete reaches 10 at n = 4 000 on shuffled and duplicate-heavy
+   keys (≤ 2·height) but stays at 2 on sorted input, where its tree is near-perfect and the
+   red-black tree's worst op-count is the higher one (height 21 vs 12). Totals are
+   unchanged (§2.9). A maximum is a property of one key sequence, so the tests assert
+   bands, not growth curves.
 14. **Open addressing's curves are samples of clusters.** Its search op-count saws
    with the load factor (§2.8), and its churn — even averaged over a 16-key block —
    is a mean over a handful of runs, so both its lines are bumpier than the
@@ -1037,10 +1121,19 @@ Ordered by how much they can mislead a reader today.
    set for every line is what makes the chart a comparison (hurdles 9, 11) — but
    labelled: a caveat box under the search chart turns loud on any misses-only run with
    the BST on it, and the same warning travels as a PNG caption line
-   (`src/ui/BstNotes.tsx`). A mid-range absent mode (PLAN §13) would close this as well
-   as the skip list's gap. The cost of the line itself: on sorted input the BST's
+   (`src/ui/BstNotes.tsx`). The opt-in mid-range miss form (hurdle 9) closes it: on the
+   left chain a miss between j and j + 1 costs n − j comparisons, about n/2 on average, so
+   a misses-only run keeps the O(n) class
+   (`bst::tests::mid_range_misses_walk_the_whole_left_chain`); under that form the caveat
+   box and PNG caption are not shown. The cost of the line itself: on sorted input the BST's
    search sweep builds a chain up to 100 k keys, Θ(n²) comparisons, untimed but
    seconds of wall time before the first point is measured.
+
+16. **A threshold's name overstates what a fixed size ladder shows.** The
+   open-addressing load-factor control (§2.8) names a ceiling the table may reach, but the
+   1-2-5 ladder samples each fill-and-double cycle at the same few points, so "0.9" reached
+   α ≤ 0.78 on the default search sweep. Report the α reached per point, never the setting
+   alone — which is what the page does.
 
 ## 5. Proof map — which test pins which claim
 
@@ -1051,7 +1144,7 @@ Ordered by how much they can mislead a reader today.
 | two-key churn recovers the O(n) class on a reverse-sorted BST (a one-keyed churn read O(1)) | `structures::methodology::bst_reverse_sorted_two_key_churn_recovers_the_linear_class` | none (op-counts) |
 | delete-min never takes the two-child path, so the alternating teardown is safe | `structures::bst::tests::delete_min_never_hits_the_two_child_path` | none (op-counts) |
 | the churn unit stays *one* pair — the two keys are averaged, not summed | `structures::bst::tests::churn_holds_size_and_averages_the_two_spine_round_trips` | none (op-counts) |
-| the twelve churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` (regime 11, the B-tree's, in `structures/methodology_btree.rs`) | none (exact op-counts) |
+| the thirteen churn-vs-FD regimes on the *real* structures (§2.3 table) | `bench-engine/src/structures/mod.rs` `mod methodology` (regime 11, the B-tree's, in `structures/methodology_btree.rs`; regime 13, the backward-shift set's, in `structures/methodology_hbs.rs`) | none (exact op-counts) |
 | AVL stays O(log n) on the sorted input that makes the BST an O(n) chain | same | none |
 | sorted array: O(log n) search vs O(n) mutation on the same structure | same | none |
 | min-heap: O(n) search vs Θ(log n) extract-min on the same structure (the sorted array's split inverted) | `structures::methodology::heap_search_is_linear_while_extract_min_is_log_n` | none |
@@ -1143,4 +1236,16 @@ Ordered by how much they can mislead a reader today.
 | a restored paste measures exactly the keys the original text built (leading zeros, duplicates, ids past 2^53, astral and combining characters, CRLF), checked on the way back by length + hash | `src/persist/session.test.ts` | none |
 | nothing measured is persisted; a restored load says it re-measured | `src/persist/session.ts` (no results field, by construction); `src/persist/SessionNote.test.ts` | none |
 | **the browser gate after the Phase 6 parallel batch:** 118/118 checks across four passes, on its third run on a quiet machine | `scripts/verify-browser.mjs` | real |
+| a delete-free backward-shift build is the tombstone set's table slot for slot; its churn pair = the tombstone set's unprimed pair + its shift scan, exactly; churn ≈ FD sum within ~1 %; the shared churn block is steady across the ladder | `structures::methodology_hbs::{a_delete_free_build_is_the_tombstone_sets_table_slot_for_slot, backward_shift_churn_is_the_unprimed_pair_plus_its_shift_scan, backward_shift_churn_agrees_with_finite_differences_tightly, the_shared_churn_block_is_steady_across_the_ladder}` | none (op-counts) |
+| the backward-shift set grows at the chaining set's points; its first churn pair is already the steady state; a threshold-straddling pair settles before counting; Algorithm R's move test (a key homed past the hole stays put; a whole run shifts) | `structures::hash_set_bs::tests::{grows_at_exactly_the_chaining_sets_points, the_first_pair_is_already_the_steady_state, a_churn_pair_at_the_threshold_settles_before_anything_is_counted, a_key_homed_past_the_hole_stays_put, a_corpus_delete_shifts_a_whole_run}` + `bench-engine/tests/proptest_hash_bs.rs` | none |
+| TS backward-shift twin ≡ Rust, including wrap-around and at-threshold cases | `conformance/corpus-hbs.txt` + `src/structures/conformance-hbs.test.ts` | none |
+| **the backward-shift set on the real clock:** search flat and flatter than the array; churn flat and flatter than the array's; its clock ratio against the tombstone set is printed, never asserted | `scripts/verify-browser.mjs`, first pass | real |
+| the open-addressing load control: growth points at 0.5 and 0.9 in both twins; a threshold whose final table matches the 0.75 size draws the same churn line; the default run is at 0.75 with no caveat | `structures::hash_set_oa::tests::a_threshold_that_ends_at_the_same_size_draws_the_same_churn_line`, `src/structures/hashSetOa.test.ts`, `src/bench/oaLoad.test.ts`, `src/ui/HashOaNotes.test.ts`; gate first pass | none / real |
+| per-operation maxima: red-black ≤ 2 rotations per insert, ≤ 3 per delete on every order; the AVL's insert ≤ 2 even with repeats, its worst delete past the red-black bound on uneven trees; a resize re-places a large fraction of n the op-count never sees; de-duplicating structures report their delete misses | `structures::maxop::tests::{rbt_rotates_at_most_twice_per_insert_and_three_times_per_delete, avl_inserts_rotate_at_most_twice_too_even_with_repeated_keys, avl_worst_delete_grows_with_height_past_the_red_black_bound_on_uneven_trees, a_resize_moves_a_large_fraction_of_n_that_the_op_count_never_sees, de_duplicating_structures_report_their_delete_misses, the_insert_maximum_never_falls_along_the_ladder}`; `src/compare/maxOp.test.ts`, `src/ui/MaxOpSection.test.ts` | none |
+| a mid-range miss on a reverse-sorted BST costs n − j comparisons (≈ n/2), against 1 for `max + 1` | `structures::bst::tests::mid_range_misses_walk_the_whole_left_chain`, `src/bench/probeMix.midRange.test.ts` | none |
+| mid-range misses are absent, interior, rank-spread, deterministic and count-equal to the default at every mix; fair to both hash sets; B-tree within one comparison of a hit; skip list dearer than above-max | `src/bench/probeMix.midRange.test.ts` | none |
+| **mid-range misses on the real clock** (reverse-sorted, misses only): BST search > 0.6, AVL < 0.4 — bands reused from the reverse pass, not yet calibrated on this workload | `scripts/verify-browser.mjs`, fifth pass | real |
+| a stored-n fit matches a hand-computed slope; toggle-off is byte-identical; FD rows stay on input n, tagged; the gate's proofs are unchanged by the toggle | `src/ui/storedAxis.test.ts`; gate first pass | none / real |
+| text-key animations: counted events == ops for array search and hash-set search / insert / delete, counted events + `arr.shift` == ops for the array delete, chained to `corpus-str.txt` | `src/viz/trace.str.test.ts` | none |
+| **the browser gate after the §13-extras batch:** 145/145 across five passes on a quiet machine. Its run-completion waits had passed `{ timeout }` as the page-function argument, so Playwright's 30 s default applied; fixed when the slower reverse-sorted pass first exceeded it | `scripts/verify-browser.mjs` | real |
 | **label checks are the flaky kind.** The two runs before that each failed one pre-existing class-*label* check whose slope band held — run 1 the string array (labelled O(n²) at slope 1.04), run 2 the string hash set (labelled O(log n) at slope 0.07) — and the doubly list's new label check failed too on its first real run (O(n log n) at slope 1.01, since loosened to accept either neighbour). The bands and rise limits are the claims; a single failing label with its band green is the fitter's soft band (§3), not a regression — re-run before chasing it | `scripts/verify-browser.mjs` | real |
