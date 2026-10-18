@@ -14,7 +14,7 @@
  */
 
 import type {
-  ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
+  VizKey, ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, BstStep, AvlEvent, HeapEvent,
   TrieEvent, SkipListEvent, GraphEvent, GraphAlgo, RbtEvent, BTreeEvent,
 } from './events';
 import type { BstShape } from '../structures/bst';
@@ -23,10 +23,11 @@ import type { BTreeShape } from '../structures/btree';
 import type { DoublyShape } from '../structures/linkedList';
 import type { TrieShape } from '../structures/trie';
 
-/** A stored array cell with a stable identity for animation. */
-export interface Cell {
+/** A stored array cell with a stable identity for animation. `K` is the key type —
+ * a string for the text-key array (docs/PLAN.md §8); numeric everywhere else. */
+export interface Cell<K extends VizKey = number> {
   readonly id: number;
-  readonly value: number;
+  readonly value: K;
 }
 
 /** The vacated slot during a shift-compact delete. It carries its own id and
@@ -39,23 +40,23 @@ export interface Hole {
 }
 
 /** A slot in the array view: a real cell or the transient delete hole. */
-export type Slot = Cell | Hole;
+export type Slot<K extends VizKey = number> = Cell<K> | Hole;
 
-export const isHole = (s: Slot): s is Hole => 'hole' in s;
+export const isHole = <K extends VizKey>(s: Slot<K>): s is Hole => 'hole' in s;
 
 /** The array's display state: ordered slots plus the next free id. */
-export interface ArrayModel {
-  readonly cells: readonly Slot[];
+export interface ArrayModel<K extends VizKey = number> {
+  readonly cells: readonly Slot<K>[];
   readonly nextId: number;
 }
 
 /** Build the initial array model from the structure's current keys. */
-export function arrayModel(values: readonly number[]): ArrayModel {
+export function arrayModel<K extends VizKey = number>(values: readonly K[]): ArrayModel<K> {
   return { cells: values.map((value, id) => ({ id, value })), nextId: values.length };
 }
 
 /** Fold one array event into the model (docs/PLAN.md §8 shift-compact delete). */
-export function reduceArray(m: ArrayModel, e: ArrayEvent): ArrayModel {
+export function reduceArray<K extends VizKey>(m: ArrayModel<K>, e: ArrayEvent<K>): ArrayModel<K> {
   switch (e.kind) {
     case 'arr.append':
       return { cells: [...m.cells, { id: m.nextId, value: e.value }], nextId: m.nextId + 1 };
@@ -84,27 +85,27 @@ export function reduceArray(m: ArrayModel, e: ArrayEvent): ArrayModel {
   }
 }
 
-/** A stored hash-set chip with a stable identity for animation. */
-export interface Chip {
+/** A stored hash-set chip with a stable identity for animation (`K` as for {@link Cell}). */
+export interface Chip<K extends VizKey = number> {
   readonly id: number;
-  readonly value: number;
+  readonly value: K;
 }
 
 /** The hash set's display state: buckets of chains, plus the next free id. */
-export interface HashModel {
-  readonly buckets: readonly (readonly Chip[])[];
+export interface HashModel<K extends VizKey = number> {
+  readonly buckets: readonly (readonly Chip<K>[])[];
   readonly nextId: number;
 }
 
 /** Build the initial hash model from the structure's bucket snapshot. */
-export function hashModel(buckets: readonly (readonly number[])[]): HashModel {
+export function hashModel<K extends VizKey = number>(buckets: readonly (readonly K[])[]): HashModel<K> {
   let id = 0;
   const out = buckets.map((b) => b.map((value) => ({ id: id++, value })));
   return { buckets: out, nextId: id };
 }
 
 /** Fold one hash-set event into the model (insert / chain-remove / rehash). */
-export function reduceHash(m: HashModel, e: HashSetEvent): HashModel {
+export function reduceHash<K extends VizKey>(m: HashModel<K>, e: HashSetEvent<K>): HashModel<K> {
   switch (e.kind) {
     case 'hs.insert': {
       const buckets = m.buckets.map((b, i) =>
@@ -122,7 +123,7 @@ export function reduceHash(m: HashModel, e: HashSetEvent): HashModel {
       // Redistribute by zipping current chips (old-iteration order: buckets by
       // index, chains front-to-back) with the event's per-key moves, so each
       // chip keeps its id as it relocates.
-      const next: Chip[][] = Array.from({ length: e.newCap }, () => []);
+      const next: Chip<K>[][] = Array.from({ length: e.newCap }, () => []);
       let i = 0;
       for (const bucket of m.buckets) {
         for (const chip of bucket) {
@@ -139,12 +140,12 @@ export function reduceHash(m: HashModel, e: HashSetEvent): HashModel {
 }
 
 /** Fold a whole event prefix into the model — the renderer's per-frame state. */
-export function foldArray(initial: ArrayModel, events: readonly ArrayEvent[]): ArrayModel {
-  return events.reduce(reduceArray, initial);
+export function foldArray<K extends VizKey>(initial: ArrayModel<K>, events: readonly ArrayEvent<K>[]): ArrayModel<K> {
+  return events.reduce<ArrayModel<K>>(reduceArray, initial);
 }
 
-export function foldHash(initial: HashModel, events: readonly HashSetEvent[]): HashModel {
-  return events.reduce(reduceHash, initial);
+export function foldHash<K extends VizKey>(initial: HashModel<K>, events: readonly HashSetEvent<K>[]): HashModel<K> {
+  return events.reduce<HashModel<K>>(reduceHash, initial);
 }
 
 // ── Open-addressing hash set ────────────────────────────────────────────────

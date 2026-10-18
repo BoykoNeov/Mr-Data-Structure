@@ -33,6 +33,13 @@ import {
   graphModel, foldGraph,
 } from './model';
 import type { SortedArrayEvent, LinkedListEvent, DoublyListEvent, HashSetOaEvent, BstEvent, AvlEvent, RbtEvent, BTreeEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, Tracer } from './events';
+import type { ArrayEvent, HashSetEvent } from './events';
+import { DynArrayStr } from '../structures/dynArrayStr';
+import { HashSetStr } from '../structures/hashSetStr';
+import { ArrayView } from './ArrayView';
+import { HashSetView } from './HashSetView';
+import { foldArray, hashModel, foldHash } from './model';
+import { ArrayStrPanel, HashStrPanel, ARRAY_STR_INTRO, HASH_STR_INTRO, TEXT_SEED } from './VizPanel';
 
 /**
  * Render smoke for the Phase-3-breadth views. `verify:browser` only drives the
@@ -522,7 +529,84 @@ describe('GraphView renders every frame without throwing', () => {
   });
 });
 
+describe('ArrayView with text keys renders every frame without throwing', () => {
+  const cases: [string, (a: DynArrayStr, t: Tracer<ArrayEvent<string>>) => void][] = [
+    ['search found', (a, t) => void a.search('dog', t)],
+    ['search absent (café vs cafe)', (a, t) => void a.search('cafe', t)],
+    ['insert a long key', (a, t) => a.insert('Москва-日本-🍎', t)],
+    ['delete mid', (a, t) => void a.delete('cart', t)],
+    ['delete the multi-byte key', (a, t) => void a.delete('café', t)],
+    ['delete absent', (a, t) => void a.delete('owl', t)],
+  ];
+  it.each(cases)('%s', (_label, op) => {
+    const a = DynArrayStr.fromKeys(TEXT_SEED);
+    const before = arrayModel(a.keysInOrder());
+    const events: ArrayEvent<string>[] = [];
+    op(a, (e) => events.push(e));
+    renderEveryFrame(before, events, foldArray, (model, active) =>
+      renderToStaticMarkup(createElement(ArrayView<string>, { model, active })),
+    );
+  });
+
+  it('draws every key verbatim, multi-byte included', () => {
+    const html = renderToStaticMarkup(createElement(ArrayView<string>, { model: arrayModel([...TEXT_SEED]), active: undefined }));
+    for (const k of TEXT_SEED) expect(html).toContain(`>${k}<`);
+  });
+
+  it('a space reads ␣, so " a" is not drawn as "a"', () => {
+    const html = renderToStaticMarkup(createElement(ArrayView<string>, { model: arrayModel([' a', 'a']), active: undefined }));
+    expect(html).toContain('>␣a<');
+    expect(html).toContain('>a<');
+  });
+
+  it('widens cells for a long key, and keeps the 46 px cell for short ones (numbers included)', () => {
+    const short = renderToStaticMarkup(createElement(ArrayView, { model: arrayModel([42, 7, 88]), active: undefined }));
+    expect(short).toContain('width="46"');
+    const long = renderToStaticMarkup(createElement(ArrayView<string>, { model: arrayModel(['a-much-longer-key']), active: undefined }));
+    expect(long).not.toContain('width="46"');
+  });
+});
+
+describe('HashSetView with text keys renders every frame without throwing', () => {
+  const cases: [string, (s: HashSetStr, t: Tracer<HashSetEvent<string>>) => void][] = [
+    ['search in a shared bucket', (s, t) => void s.search('dog', t)],
+    ['search an empty bucket', (s, t) => void s.search('ca', t)],
+    ['insert that doubles the table', (s, t) => void s.insert('owl', t)],
+    ['duplicate insert', (s, t) => void s.insert('café', t)],
+    ['delete from a shared bucket', (s, t) => void s.delete('café', t)],
+    ['delete absent', (s, t) => void s.delete('cafe', t)],
+  ];
+  it.each(cases)('%s', (_label, op) => {
+    const s = HashSetStr.fromKeys(TEXT_SEED);
+    const before = hashModel(s.snapshotBuckets());
+    const events: HashSetEvent<string>[] = [];
+    op(s, (e) => events.push(e));
+    renderEveryFrame(before, events, foldHash, (model, active) =>
+      renderToStaticMarkup(createElement(HashSetView<string>, { model, active })),
+    );
+  });
+
+  it('draws the seed’s 8 buckets with every key', () => {
+    const html = renderToStaticMarkup(createElement(HashSetView<string>, { model: hashModel(HashSetStr.fromKeys(TEXT_SEED).snapshotBuckets()), active: undefined }));
+    expect(html).toContain('[7]');
+    expect(html).not.toContain('[8]');
+    for (const k of TEXT_SEED) expect(html).toContain(`>${k}<`);
+  });
+});
+
 describe('new panels mount without throwing', () => {
+  it('ArrayStrPanel renders its seeded SVG, its intro and a text key box', () => {
+    const html = renderToStaticMarkup(createElement(ArrayStrPanel));
+    expect(html).toContain('<svg');
+    expect(html).toContain(ARRAY_STR_INTRO.slice(0, 40));
+    expect(html).toContain('type="text"');
+  });
+  it('HashStrPanel renders its seeded SVG, its intro and a text key box', () => {
+    const html = renderToStaticMarkup(createElement(HashStrPanel));
+    expect(html).toContain('<svg');
+    expect(html).toContain(HASH_STR_INTRO.slice(0, 40));
+    expect(html).toContain('type="text"');
+  });
   // The views above are pure SVG; the panels add the hook wiring (ref-held
   // structure, usePlayer). A single SSR pass runs
   // those hooks (useEffect is skipped, so no interval leaks) — this catches a

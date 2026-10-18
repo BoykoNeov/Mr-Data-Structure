@@ -225,6 +225,17 @@ fn str_cases() -> Vec<StrCase> {
             keys: svec(&["café", "naïve", "日本", "🍎", "Москва"]),
             probes: svec(&["café", "日本", "🍎", "cafe"]),
         },
+        StrCase {
+            // The Explore seed of the text-key array and hash set tabs
+            // (`src/viz/VizPanel.tsx`), so every number their intros quote is a
+            // Rust-generated line. Six keys settle the set at 8 buckets with two
+            // collisions (car+ant, café+dog); `owl` comes first because the insert
+            // and delete lines run the probes in sequence — as the 7th distinct key
+            // it doubles the table, and `cart`'s delete then still sees the seed.
+            name: "explore",
+            keys: svec(&["car", "cart", "cat", "café", "dog", "ant"]),
+            probes: svec(&["owl", "cart", "dog", "ant", "cafe", "ca", "café"]),
+        },
     ]
 }
 
@@ -248,14 +259,46 @@ fn serialize_str(cases: &[StrCase]) -> String {
         let set_search: Vec<(bool, u64)> =
             c.probes.iter().map(|p| set.search_one_counted(p)).collect();
 
+        // Mutation, so the Explore animations' insert and delete are chained to Rust
+        // and not only their search: like the trie's lines, each sequence runs the
+        // whole probe list against ONE fresh structure (later ops see what earlier
+        // ones did) and pins per-op `(changed:ops)` plus the order left behind. The
+        // array's delete is comparisons + shifts; the set's insert counts its dedupe
+        // walk, never the rehash it may trigger (whose redistribution the
+        // `hashset_after_insert` order then pins).
+        let mut array_victim = ArrayStr::new(&offsets, &bytes, c.keys.len());
+        let array_delete: Vec<(bool, u64)> =
+            c.probes.iter().map(|p| array_victim.delete_one_counted(p)).collect();
+        let mut set_grown = HashSetStr::new(&offsets, &bytes, c.keys.len());
+        let set_insert: Vec<(bool, u64)> =
+            c.probes.iter().map(|p| set_grown.insert_one_counted(p)).collect();
+        let mut set_victim = HashSetStr::new(&offsets, &bytes, c.keys.len());
+        let set_delete: Vec<(bool, u64)> =
+            c.probes.iter().map(|p| set_victim.delete_one_counted(p)).collect();
+
         out.push('\n');
         out.push_str(&format!("case {}\n", c.name));
         out.push_str(&format!("keys {}\n", fmt_strs(&c.keys)));
         out.push_str(&format!("probes {}\n", fmt_strs(&c.probes)));
         out.push_str(&format!("array_order {}\n", fmt_strs(&array.keys_in_order())));
         out.push_str(&format!("array_search {}\n", fmt_search(&array_search)));
+        out.push_str(&format!("array_delete {}\n", fmt_search(&array_delete)));
+        out.push_str(&format!(
+            "array_after_delete {}\n",
+            fmt_strs(&array_victim.keys_in_order())
+        ));
         out.push_str(&format!("hashset_order {}\n", fmt_strs(&set.keys_in_order())));
         out.push_str(&format!("hashset_search {}\n", fmt_search(&set_search)));
+        out.push_str(&format!("hashset_insert {}\n", fmt_search(&set_insert)));
+        out.push_str(&format!(
+            "hashset_after_insert {}\n",
+            fmt_strs(&set_grown.keys_in_order())
+        ));
+        out.push_str(&format!("hashset_delete {}\n", fmt_search(&set_delete)));
+        out.push_str(&format!(
+            "hashset_after_delete {}\n",
+            fmt_strs(&set_victim.keys_in_order())
+        ));
 
         // The trie carries two dimensions the array and hash set do not. Its
         // **iteration order is lexicographic by byte** — an order it gets for free

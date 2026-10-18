@@ -11,6 +11,8 @@ import { MinHeapF64 } from '../structures/heap';
 import { TrieStr, type TrieShape } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
+import { DynArrayStr } from '../structures/dynArrayStr';
+import { HashSetStr } from '../structures/hashSetStr';
 import graphCorpusText from '../../conformance/corpus-graph.txt?raw';
 import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, RbtEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import { countCostEvents } from './events';
@@ -125,6 +127,58 @@ describe('hash-set fold mirrors the structure', () => {
     s.insert(6, (e) => events.push(e)); // already present
     expect(events.some((e) => e.kind === 'hs.duplicate')).toBe(true);
     expect(hashValues(foldHash(before, events))).toEqual(s.snapshotBuckets());
+  });
+});
+
+/**
+ * The text-key twins reuse the numeric reducers with a string key (`K = string`), so
+ * the same "fold equals the real post-op structure" check applies — over the Explore
+ * seed, every op the tab invites, and a multi-byte key.
+ */
+describe('text-key folds mirror the string twins', () => {
+  const seed = ['car', 'cart', 'cat', 'café', 'dog', 'ant'];
+  const strArr = (m: ArrayModel<string>) => m.cells.map((c) => (isHole(c) ? '·' : c.value));
+  const strHash = (m: HashModel<string>) => m.buckets.map((b) => b.map((c) => c.value));
+
+  it.each([
+    ['search hit', (a: DynArrayStr, t: (e: ArrayEvent<string>) => void) => void a.search('dog', t)],
+    ['search miss', (a: DynArrayStr, t: (e: ArrayEvent<string>) => void) => void a.search('cafe', t)],
+    ['append a duplicate', (a: DynArrayStr, t: (e: ArrayEvent<string>) => void) => a.insert('cat', t)],
+    ['delete mid', (a: DynArrayStr, t: (e: ArrayEvent<string>) => void) => void a.delete('cart', t)],
+    ['delete the multi-byte key', (a: DynArrayStr, t: (e: ArrayEvent<string>) => void) => void a.delete('café', t)],
+    ['delete absent', (a: DynArrayStr, t: (e: ArrayEvent<string>) => void) => void a.delete('owl', t)],
+  ])('array: %s', (_label, op) => {
+    const a = DynArrayStr.fromKeys(seed);
+    const before = arrayModel(a.keysInOrder());
+    const events: ArrayEvent<string>[] = [];
+    op(a, (e) => events.push(e));
+    expect(strArr(foldArray(before, events))).toEqual(a.keysInOrder());
+    // every intermediate frame keeps unique slot ids (each frame must be renderable)
+    for (let f = 0; f <= events.length; f++) {
+      const ids = foldArray(before, events.slice(0, f)).cells.map((c) => c.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+  });
+
+  it.each([
+    ['insert that doubles the table', (s: HashSetStr, t: (e: HashSetEvent<string>) => void) => void s.insert('owl', t)],
+    ['duplicate insert', (s: HashSetStr, t: (e: HashSetEvent<string>) => void) => void s.insert('café', t)],
+    ['delete from a shared bucket', (s: HashSetStr, t: (e: HashSetEvent<string>) => void) => void s.delete('café', t)],
+    ['delete absent', (s: HashSetStr, t: (e: HashSetEvent<string>) => void) => void s.delete('cafe', t)],
+    ['search', (s: HashSetStr, t: (e: HashSetEvent<string>) => void) => void s.search('ant', t)],
+  ])('hash set: %s', (_label, op) => {
+    const s = HashSetStr.fromKeys(seed);
+    const before = hashModel(s.snapshotBuckets());
+    const idsBefore = new Set(before.buckets.flat().map((c) => c.id));
+    const events: HashSetEvent<string>[] = [];
+    op(s, (e) => events.push(e));
+    const after = foldHash(before, events);
+    expect(strHash(after)).toEqual(s.snapshotBuckets());
+    if (events.some((e) => e.kind === 'hs.rehash')) {
+      // every pre-existing chip keeps its id through the relocation
+      const idsAfter = new Set(after.buckets.flat().map((c) => c.id));
+      for (const id of idsBefore) expect(idsAfter.has(id)).toBe(true);
+    }
   });
 });
 

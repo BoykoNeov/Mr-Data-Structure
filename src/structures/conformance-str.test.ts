@@ -26,8 +26,19 @@ interface Case {
   probes: string[];
   arrayOrder: string[];
   arraySearch: SearchResult[];
+  /** Per-probe delete on ONE fresh array, in order: `(removed, comparisons + shifts)`. */
+  arrayDelete: SearchResult[];
+  /** What that delete sequence leaves, in storage order. */
+  arrayAfterDelete: string[];
   hashsetOrder: string[];
   hashsetSearch: SearchResult[];
+  /** Per-probe insert on ONE fresh set, in order: `(inserted, hash + dedupe chain-steps)`. */
+  hashsetInsert: SearchResult[];
+  /** The bucket-walk order after that insert sequence — pins any rehash it triggered. */
+  hashsetAfterInsert: string[];
+  /** Per-probe delete on ONE fresh set, in order: `(removed, hash + chain-steps)`. */
+  hashsetDelete: SearchResult[];
+  hashsetAfterDelete: string[];
   /** Lexicographic-by-byte iteration — an order only the trie has. */
   trieOrder: string[];
   trieSearch: SearchResult[];
@@ -69,8 +80,14 @@ function parseCorpus(text: string): Case[] {
       case 'probes': cur!.probes = parseStrs(rest); break;
       case 'array_order': cur!.arrayOrder = parseStrs(rest); break;
       case 'array_search': cur!.arraySearch = parseSearch(rest); break;
+      case 'array_delete': cur!.arrayDelete = parseSearch(rest); break;
+      case 'array_after_delete': cur!.arrayAfterDelete = parseStrs(rest); break;
       case 'hashset_order': cur!.hashsetOrder = parseStrs(rest); break;
       case 'hashset_search': cur!.hashsetSearch = parseSearch(rest); break;
+      case 'hashset_insert': cur!.hashsetInsert = parseSearch(rest); break;
+      case 'hashset_after_insert': cur!.hashsetAfterInsert = parseStrs(rest); break;
+      case 'hashset_delete': cur!.hashsetDelete = parseSearch(rest); break;
+      case 'hashset_after_delete': cur!.hashsetAfterDelete = parseStrs(rest); break;
       case 'trie_order': cur!.trieOrder = parseStrs(rest); break;
       case 'trie_search': cur!.trieSearch = parseSearch(rest); break;
       case 'trie_delete': cur!.trieDelete = parseSearch(rest); break;
@@ -83,6 +100,12 @@ function parseCorpus(text: string): Case[] {
 }
 
 const corpus = parseCorpus(corpusText);
+
+/** An insert's `inserted` / a delete's `removed` in the corpus's `<0|1>:<ops>` shape. */
+const toPair = (r: { readonly ops: number } & ({ readonly inserted: boolean } | { readonly removed: boolean })): SearchResult => ({
+  found: 'inserted' in r ? r.inserted : r.removed,
+  ops: r.ops,
+});
 
 describe('cross-language conformance — TS string teaching impls vs the Rust corpus', () => {
   it('parsed a non-empty corpus', () => {
@@ -114,6 +137,26 @@ describe('cross-language conformance — TS string teaching impls vs the Rust co
       const s = HashSetStr.fromKeys(c.keys);
       expect(s.keysInOrder()).toEqual(c.hashsetOrder);
       expect(c.probes.map((p) => s.search(p))).toEqual(c.hashsetSearch);
+    });
+
+    it('array: the delete sequence (comparisons + shifts) and what it leaves match Rust', () => {
+      const a = DynArrayStr.fromKeys(c.keys);
+      expect(c.probes.map((p) => toPair(a.delete(p)))).toEqual(c.arrayDelete);
+      expect(a.keysInOrder()).toEqual(c.arrayAfterDelete);
+    });
+
+    it('hash set: the insert sequence (dedupe walk, rehash uncounted) and the order it leaves match Rust', () => {
+      // The order after pins the rehash's redistribution, which the per-insert
+      // counts deliberately leave out.
+      const s = HashSetStr.fromKeys(c.keys);
+      expect(c.probes.map((p) => toPair(s.insert(p)))).toEqual(c.hashsetInsert);
+      expect(s.keysInOrder()).toEqual(c.hashsetAfterInsert);
+    });
+
+    it('hash set: the delete sequence and what it leaves match Rust', () => {
+      const s = HashSetStr.fromKeys(c.keys);
+      expect(c.probes.map((p) => toPair(s.delete(p)))).toEqual(c.hashsetDelete);
+      expect(s.keysInOrder()).toEqual(c.hashsetAfterDelete);
     });
 
     it('trie: byte order and per-probe (membership, char-steps) match Rust', () => {

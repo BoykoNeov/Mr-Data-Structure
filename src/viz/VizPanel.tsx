@@ -12,6 +12,8 @@ import { MinHeapF64 } from '../structures/heap';
 import { TrieStr } from '../structures/trie';
 import { SkipListF64 } from '../structures/skipList';
 import { GraphAdj } from '../structures/graph';
+import { DynArrayStr } from '../structures/dynArrayStr';
+import { HashSetStr } from '../structures/hashSetStr';
 import { browserSession } from '../persist/session';
 import type { ArrayEvent, HashSetEvent, HashSetOaEvent, SortedArrayEvent, LinkedListEvent, DoublyListEvent, BstEvent, AvlEvent, RbtEvent, BstStep, BTreeEvent, HeapEvent, TrieEvent, SkipListEvent, GraphEvent, GraphAlgo } from './events';
 import {
@@ -58,7 +60,8 @@ import { Controls, type OpSpec } from './Controls';
  * state (validated in `model.test.ts`).
  */
 
-type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'hashoa' | 'bst' | 'avl' | 'rbt' | 'btree' | 'heap' | 'trie' | 'skiplist' | 'graph';
+type Kind = 'array' | 'sorted' | 'singly' | 'doubly' | 'hashset' | 'hashoa' | 'bst' | 'avl' | 'rbt' | 'btree' | 'heap' | 'trie' | 'skiplist' | 'graph'
+  | 'arraystr' | 'hashstr';
 const ARRAY_SEED = [42, 7, 88, 7, 23];
 const SORTED_SEED = [12, 25, 37, 44, 58, 70];
 // Inserted at the head, so the displayed head→tail order is [40, 30, 20, 10].
@@ -120,6 +123,29 @@ const HEAP_SEED = [50, 30, 70, 20, 40, 60, 10];
 // that fact previously lived only in docstrings; and `dog` gives the root a second
 // branch so the picture is a tree rather than a chain.
 const TRIE_SEED = ['car', 'cart', 'cat', 'café', 'dog'];
+/**
+ * The text-key array and hash set share one seed (docs/PLAN.md §5, §8): the trie's
+ * five keys plus `ant`, so the three text tabs compare key for key. It was chosen by
+ * computing the benchmark's string hash, not guessed, and is the corpus's `explore`
+ * case (`conformance/corpus-str.txt`), so every number the intros quote is also a
+ * Rust-generated line — and `trace.str.test.ts` / `VizPanel.test.ts` pin each one:
+ *  - six distinct keys settle the set at **8 buckets** (a 4th key doubles 4 → 8), so
+ *    one more distinct key doubles it to 16, as on the number tab;
+ *  - two buckets are shared: **car + ant** (equal byte lengths, so the chain-step
+ *    compares bytes) and **café + dog** (5 bytes vs 3, rejected on length alone);
+ *  - `cafe` (4 bytes) is a different byte sequence from `café` (5 — é is `C3 A9`) and
+ *    hashes to `cat`'s bucket — a miss that pays a chain-step — while `ca` hashes to an empty bucket and pays only
+ *    the hash; in the array the same `cafe` scans all six (café is 5 bytes, cafe 4);
+ *  - `owl` hashes to car + ant's bucket, so its insert walks both, and as the 7th key
+ *    it doubles the table: car and ant part, café and dog stay together (they agree
+ *    on the extra hash bit), which is why growth shortens chains on average only.
+ * Change a key and these facts move with it; that is the point of computing them.
+ */
+export const TEXT_SEED: readonly string[] = ['car', 'cart', 'cat', 'café', 'dog', 'ant'];
+export const ARRAY_STR_INTRO =
+  'Dynamic array of text keys — the number array’s algorithm on strings, with the trie tab’s keys plus ant: a scan from the front, one comparison per key examined (a whole-key test, not one per letter), and delete shifts the tail left. Rust’s == on two strings checks their byte lengths first, so a key of another length is rejected without reading a letter — cheaper on the clock, the same one comparison in the count. Try search("dog"): 5 comparisons. Then search("cafe"): it looks like café, but é is two bytes in UTF-8 (café is 5 bytes, cafe 4), so it misses after all 6. delete("cart") costs 2 comparisons + 4 shifts.';
+export const HASH_STR_INTRO =
+  'Hash set of text keys — the number hash set’s algorithm on strings, with the benchmark’s own string hash (FNV-1a over the UTF-8 bytes, then the same mixer) and the same 4-bucket start, 0.75 load limit and doubling. The six keys settle into 8 buckets, two of them shared: car with ant, café with dog. The hash is one op however long the key — it reads every byte, but is counted once. Try search("dog"): the hash + 2 chain-steps = 3. search("cafe") lands in a different bucket from café (é is two bytes, so cafe is a different byte sequence and gets an unrelated hash): 2. search("ca") finds an empty bucket: 1, just the hash. insert("owl") walks car and ant (3 ops) and, as the 7th key, doubles the table to 16 — not counted — where car and ant part but café and dog stay together.';
 // Each height here is a teaching decision, but an indirect one: a skip list's tower
 // heights are a pure function of the keys (docs/PLAN.md §8 — a hash, not a coin), so
 // this seed was chosen by computing them. It yields a four-lane staircase — `220` is a
@@ -265,6 +291,76 @@ function describeHash(e: HashSetEvent | undefined): string {
     case 'hs.chainRemove': return `remove from bucket [${e.bucket}] pos ${e.pos} (chain order preserved)`;
     case 'hs.rehash':
       return `rehash: ${e.oldCap} → ${e.newCap} buckets, redistribute ${e.moves.length} keys`;
+    case 'hs.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+const utf8 = new TextEncoder();
+/** A key's UTF-8 byte length — what Rust's string `==` checks first. Never JS
+ * `.length` (UTF-16 units): `"café".length` and `"cafe".length` are both 4, but the
+ * keys are 5 and 4 bytes, and that difference is the whole comparison. */
+export const byteLength = (s: string): number => utf8.encode(s).length;
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** Did this whole-key comparison end on Rust's byte-length check (no byte read)? */
+export const rejectedOnLength = (stored: string, target: string): boolean => byteLength(stored) !== byteLength(target);
+
+/**
+ * One whole-key comparison, worded the way Rust's `==` on string slices runs it
+ * (CLAUDE.md, the string probe gotcha): byte lengths first, bytes only if they agree.
+ * Either way it is **one** comparison in the count — the per-byte detail is free
+ * narration of what that one comparison does on the clock, never a cost of its own.
+ * When the keys have the same number of characters but not the same number of bytes
+ * (café vs cafe) it says so, because that is the case JS `.length` would hide.
+ */
+function compareText(stored: string, target: string, matched: boolean): string {
+  const bs = byteLength(stored);
+  const bt = byteLength(target);
+  if (matched) return `"${stored}" = "${target}" → same ${bs}-byte length, so the bytes are compared: match ✓ (one comparison)`;
+  if (bs !== bt) {
+    const chars = [...stored].length === [...target].length ? ` — both ${[...stored].length} characters, but not the same number of UTF-8 bytes` : '';
+    return `"${stored}" (${plural(bs, 'byte')}) vs "${target}" (${plural(bt, 'byte')}) → no match: the byte lengths differ, so Rust’s == answers before reading a byte${chars} — still one comparison`;
+  }
+  return `"${stored}" vs "${target}" → same ${bs}-byte length, so the bytes are compared until they differ: no match (one comparison)`;
+}
+
+/** The text-key array's step caption (docs/PLAN.md §5, §8). It reads the folded model
+ * for the compared cell's key, so the length-first wording uses the real stored text.
+ * Exported for `VizPanel.test.ts`. */
+export function describeArrayStr(e: ArrayEvent<string> | undefined, m: ArrayModel<string>): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'arr.compare': {
+      const slot = m.cells[e.index];
+      if (!slot || isHole(slot)) return `compare cell [${e.index}] vs "${e.target}"`;
+      return `cell [${e.index}]: ${compareText(slot.value, e.target, e.matched)}`;
+    }
+    case 'arr.append': return `append "${e.value}" at the tail (O(1), no comparisons — duplicates are kept)`;
+    case 'arr.removeTarget': return `found at [${e.index}] — now shift the tail left to close the gap`;
+    case 'arr.shift': return `shift cell [${e.from}] → [${e.to}] (one shift — in the ops, not a comparison)`;
+    case 'arr.pop': return 'drop the vacated tail slot';
+    case 'arr.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
+  }
+}
+
+/** The text-key hash set's step caption (docs/PLAN.md §5, §8). The hash is narrated as
+ * one op that reads every byte; a chain-step as one whole-key comparison, length-first;
+ * a rehash as one more hash bit per key, uncounted. Exported for `VizPanel.test.ts`. */
+export function describeHashStr(e: HashSetEvent<string> | undefined, m: HashModel<string>): string {
+  if (!e) return '';
+  switch (e.kind) {
+    case 'hs.hash':
+      return `hash("${e.key}") → bucket [${e.bucket}] — one op, though FNV-1a reads all ${plural(byteLength(e.key), 'byte')} of the key`;
+    case 'hs.probe': {
+      const chip = m.buckets[e.bucket]?.[e.pos];
+      const what = chip ? compareText(chip.value, e.target, e.matched) : `vs "${e.target}"`;
+      return `bucket [${e.bucket}] pos ${e.pos}: ${what} — one chain-step`;
+    }
+    case 'hs.insert': return `insert "${e.value}" at the end of bucket [${e.bucket}]’s chain`;
+    case 'hs.duplicate': return 'already present → the set keeps one copy (no insert)';
+    case 'hs.chainRemove': return `remove from bucket [${e.bucket}] pos ${e.pos} (chain order preserved)`;
+    case 'hs.rehash':
+      return `rehash: ${e.oldCap} → ${e.newCap} buckets, redistribute ${plural(e.moves.length, 'key')} — each key’s bucket now reads one more bit of its hash, so keys that agree on that bit stay together (not counted)`;
     case 'hs.result': return e.found ? 'result: found ✓' : 'result: not found ✗';
   }
 }
@@ -716,6 +812,115 @@ function HashPanel() {
       <p style={{ color: '#666', margin: '4px 0' }}>{summary || 'Separate-chaining hash set — hash to a bucket, walk the chain; load factor 0.75 triggers a rehash.'}</p>
       <HashSetView model={model} active={active} />
       <Controls player={player} onOp={onOp} caption={describeHash(active)} />
+    </>
+  );
+}
+
+/** How many of a stream's comparisons ended on Rust's byte-length check — free
+ * narration for the summary line, already inside the comparison count. */
+function lengthRejects(events: readonly (ArrayEvent<string> | HashSetEvent<string>)[], keyAt: (e: ArrayEvent<string> | HashSetEvent<string>) => string | undefined): number {
+  let n = 0;
+  for (const e of events) {
+    if ((e.kind === 'arr.compare' || e.kind === 'hs.probe') && !e.matched) {
+      const stored = keyAt(e);
+      if (stored !== undefined && rejectedOnLength(stored, e.target)) n += 1;
+    }
+  }
+  return n;
+}
+
+const lengthNote = (n: number) => (n === 0 ? '' : ` (${n} of them settled by the byte-length check alone)`);
+
+export function ArrayStrPanel() {
+  const ref = useRef<DynArrayStr | null>(null);
+  if (ref.current === null) ref.current = DynArrayStr.fromKeys(TEXT_SEED);
+  const [base, setBase] = useState<ArrayModel<string>>(() => arrayModel(TEXT_SEED));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<ArrayEvent<string>>();
+
+  const onOp = (op: Op, key: string) => {
+    const a = ref.current!;
+    const before = a.keysInOrder();
+    const snapshot = arrayModel(before); // before-state
+    const events: ArrayEvent<string>[] = [];
+    const push = (e: ArrayEvent<string>) => events.push(e);
+    // A compare only ever reads a cell the delete has not shifted yet, so the
+    // before-state names the compared key.
+    const rejects = () => lengthRejects(events, (e) => (e.kind === 'arr.compare' ? before[e.index] : undefined));
+    if (op === 'search') {
+      const r = a.search(key, push);
+      setSummary(`search("${key}") → ${r.found ? 'found' : 'not found'} · ${plural(r.ops, 'comparison')}${lengthNote(rejects())}`);
+    } else if (op === 'insert') {
+      a.insert(key, push);
+      setSummary(`insert("${key}") → appended (O(1), no comparisons; duplicates are kept)`);
+    } else {
+      const r = a.delete(key, push);
+      const shifts = events.filter((e) => e.kind === 'arr.shift').length;
+      setSummary(
+        r.removed
+          ? `delete("${key}") → removed · ${r.ops} ops = ${plural(r.ops - shifts, 'comparison')} + ${plural(shifts, 'shift')}`
+          : `delete("${key}") → absent · ${plural(r.ops, 'comparison')}${lengthNote(rejects())}`,
+      );
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldArray(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || ARRAY_STR_INTRO}</p>
+      <ArrayView model={model} active={active} />
+      <Controls<ArrayEvent<string>, Op> player={player} keyKind="string" onOp={onOp} caption={describeArrayStr(active, model)} />
+    </>
+  );
+}
+
+export function HashStrPanel() {
+  const ref = useRef<HashSetStr | null>(null);
+  if (ref.current === null) ref.current = HashSetStr.fromKeys(TEXT_SEED);
+  const [base, setBase] = useState<HashModel<string>>(() => hashModel(HashSetStr.fromKeys(TEXT_SEED).snapshotBuckets()));
+  const [summary, setSummary] = useState('');
+  const player = usePlayer<HashSetEvent<string>>();
+
+  const onOp = (op: Op, key: string) => {
+    const s = ref.current!;
+    const before = s.snapshotBuckets();
+    const snapshot = hashModel(before); // before-state
+    const events: HashSetEvent<string>[] = [];
+    const push = (e: HashSetEvent<string>) => events.push(e);
+    // Every probe precedes any structural change in its op, so the before-state
+    // names the probed key.
+    const rejects = () => lengthRejects(events, (e) => (e.kind === 'hs.probe' ? before[e.bucket]?.[e.pos] : undefined));
+    const cost = (ops: number) => `${ops} ops (the hash + ${plural(ops - 1, 'chain-step')})${lengthNote(rejects())}`;
+    if (op === 'search') {
+      const r = s.search(key, push);
+      setSummary(`search("${key}") → ${r.found ? 'found' : 'not found'} · ${cost(r.ops)}`);
+    } else if (op === 'insert') {
+      const r = s.insert(key, push);
+      const ins = events.find((e) => e.kind === 'hs.insert');
+      const rehash = events.find((e) => e.kind === 'hs.rehash');
+      const where = ins && ins.kind === 'hs.insert' ? `stored in bucket [${ins.bucket}]` : 'already present (set semantics)';
+      const grew = rehash && rehash.kind === 'hs.rehash' ? ` → then doubled to ${rehash.newCap} buckets (the redistribution is not counted)` : '';
+      setSummary(`insert("${key}") → ${where}${grew} · ${cost(r.ops)}`);
+    } else {
+      const r = s.delete(key, push);
+      setSummary(`delete("${key}") → ${r.removed ? 'removed' : 'absent'} · ${cost(r.ops)}`);
+    }
+    setBase(snapshot);
+    player.loadEvents(events);
+  };
+
+  const model = useMemo(() => foldHash(base, P.applied(player.state)), [base, player.state]);
+  const active = P.current(player.state);
+
+  return (
+    <>
+      <p style={{ color: '#666', margin: '4px 0' }}>{summary || HASH_STR_INTRO}</p>
+      <HashSetView model={model} active={active} />
+      <Controls<HashSetEvent<string>, Op> player={player} keyKind="string" onOp={onOp} caption={describeHashStr(active, model)} />
     </>
   );
 }
@@ -1267,6 +1472,8 @@ const TABS: readonly { readonly kind: Kind; readonly label: string }[] = [
   { kind: 'rbt', label: 'red-black tree' },
   { kind: 'btree', label: 'B-tree' },
   { kind: 'heap', label: 'min-heap' },
+  { kind: 'arraystr', label: 'dynamic array (text keys)' },
+  { kind: 'hashstr', label: 'hash set (text keys)' },
   { kind: 'trie', label: 'trie (text keys)' },
   { kind: 'skiplist', label: 'skip list' },
   { kind: 'graph', label: 'graph (BFS / DFS)' },
@@ -1288,6 +1495,8 @@ function panelFor(kind: Kind) {
     case 'trie': return <TriePanel />;
     case 'skiplist': return <SkipListPanel />;
     case 'graph': return <GraphPanel />;
+    case 'arraystr': return <ArrayStrPanel />;
+    case 'hashstr': return <HashStrPanel />;
   }
 }
 

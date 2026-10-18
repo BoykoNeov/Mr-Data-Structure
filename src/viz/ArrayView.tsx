@@ -1,5 +1,6 @@
-import type { ArrayEvent } from './events';
+import type { ArrayEvent, VizKey } from './events';
 import { isHole, type ArrayModel } from './model';
+import { keyLabel, cellWidthFor } from './keyLabel';
 
 /**
  * Array renderer (docs/PLAN.md §5, "arrays as cells with index + shift
@@ -7,13 +8,17 @@ import { isHole, type ArrayModel } from './model';
  * shift-compact delete slides the survivors via a CSS transform transition. The
  * active event drives the highlight: the cell being compared (amber, or green on
  * a match), or the delete target (red).
+ *
+ * Generic over the key type: the text-key array (docs/PLAN.md §8) draws through
+ * the same view. Cells widen to fit the longest label ({@link cellWidthFor}), so a
+ * short key — every numeric seed — keeps the original 46 px cell.
  */
 
 const CELL_W = 46;
 const CELL_H = 42;
 const GAP = 8;
 const PAD = 12;
-const STRIDE = CELL_W + GAP;
+const FONT = 14;
 
 interface Highlight {
   readonly index: number;
@@ -27,7 +32,7 @@ const TONE: Record<Highlight['tone'], { fill: string; stroke: string }> = {
 };
 
 /** Which cell (if any) the active event highlights. */
-function highlightOf(active: ArrayEvent | undefined, cellCount: number): Highlight | undefined {
+function highlightOf<K extends VizKey>(active: ArrayEvent<K> | undefined, cellCount: number): Highlight | undefined {
   if (!active) return undefined;
   switch (active.kind) {
     case 'arr.compare':
@@ -41,15 +46,17 @@ function highlightOf(active: ArrayEvent | undefined, cellCount: number): Highlig
   }
 }
 
-interface ArrayViewProps {
-  readonly model: ArrayModel;
-  readonly active: ArrayEvent | undefined;
+interface ArrayViewProps<K extends VizKey> {
+  readonly model: ArrayModel<K>;
+  readonly active: ArrayEvent<K> | undefined;
 }
 
-export function ArrayView({ model, active }: ArrayViewProps) {
+export function ArrayView<K extends VizKey = number>({ model, active }: ArrayViewProps<K>) {
   const { cells } = model;
   const hl = highlightOf(active, cells.length);
-  const width = PAD * 2 + Math.max(1, cells.length) * STRIDE - GAP;
+  const cellW = cellWidthFor(cells.flatMap((c) => (isHole(c) ? [] : [c.value])), FONT, CELL_W);
+  const stride = cellW + GAP;
+  const width = PAD * 2 + Math.max(1, cells.length) * stride - GAP;
   const height = PAD * 2 + CELL_H + 18; // room for index labels below
 
   return (
@@ -67,11 +74,11 @@ export function ArrayView({ model, active }: ArrayViewProps) {
         return (
           <g
             key={cell.id}
-            transform={`translate(${PAD + i * STRIDE}, ${PAD})`}
+            transform={`translate(${PAD + i * stride}, ${PAD})`}
             style={{ transition: 'transform 180ms ease' }}
           >
             <rect
-              width={CELL_W}
+              width={cellW}
               height={CELL_H}
               rx={5}
               fill={hole && !highlighted ? '#f4f4f4' : tone.fill}
@@ -81,19 +88,19 @@ export function ArrayView({ model, active }: ArrayViewProps) {
             />
             {!hole && (
               <text
-                x={CELL_W / 2}
+                x={cellW / 2}
                 y={CELL_H / 2}
                 textAnchor="middle"
                 dominantBaseline="central"
-                fontSize={14}
+                fontSize={FONT}
                 fontFamily="system-ui, sans-serif"
                 fill="#222"
               >
-                {cell.value}
+                {keyLabel(cell.value)}
               </text>
             )}
             <text
-              x={CELL_W / 2}
+              x={cellW / 2}
               y={CELL_H + 13}
               textAnchor="middle"
               fontSize={11}

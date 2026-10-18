@@ -8,6 +8,11 @@ import { BTreeF64 } from '../structures/btree';
 import { describeSkip, describeGraph, summarizeGraph, describeDoubly, DOUBLY_INTRO, GRAPH_SEED, describeOa, OA_SEED, describeRbt, RBT_SEED, RBT_INTRO, describeBTree, BTREE_SEED, BTREE_EXPLORE_T, BTREE_INTRO } from './VizPanel';
 import { graphModel, reduceGraph, doublyModel, foldDoublyList, oaModel, foldOa, rbtModel, foldRbt, btreeModel, foldBTree, type GraphModel } from './model';
 import type { SkipListEvent, GraphEvent, DoublyListEvent, HashSetOaEvent, RbtEvent, BTreeEvent } from './events';
+import { DynArrayStr } from '../structures/dynArrayStr';
+import { HashSetStr } from '../structures/hashSetStr';
+import { describeArrayStr, describeHashStr, byteLength, TEXT_SEED, ARRAY_STR_INTRO, HASH_STR_INTRO, isExploreKind } from './VizPanel';
+import { arrayModel, reduceArray, hashModel, reduceHash } from './model';
+import type { ArrayEvent, HashSetEvent } from './events';
 
 /**
  * The skip list's step caption reads the comparison direction from value-vs-target,
@@ -343,5 +348,119 @@ describe('B-tree captions: no early stop, no test without a candidate, repair on
       ...captions(b, (tr) => b.delete(70, tr)),
     ].map(({ text }) => text);
     for (const x of texts) expect(x).not.toMatch(/fewer comparisons|pre-?fill|CLRS/i);
+  });
+});
+
+/**
+ * The text-key array and hash set (docs/PLAN.md §5, §8). Their captions carry two
+ * claims a render smoke cannot check: a comparison is ONE whole-key test whose
+ * length-first shortcut is narrated from **UTF-8 byte** lengths (JS `.length` would
+ * call café and cafe equal-length — the trap), and the hash is one op however many
+ * bytes it reads. The intros' numbers are computed from the twins here; the same
+ * numbers are pinned to the Rust corpus's `explore` case in `trace.str.test.ts`.
+ */
+describe('text-key captions: whole-key comparisons, length-first in bytes, one-op hash', () => {
+  const arrCaptions = (op: (a: DynArrayStr, push: (e: ArrayEvent<string>) => void) => void) => {
+    const a = DynArrayStr.fromKeys(TEXT_SEED);
+    let m = arrayModel(a.keysInOrder());
+    const events: ArrayEvent<string>[] = [];
+    op(a, (e) => events.push(e));
+    return events.map((e) => {
+      m = reduceArray(m, e);
+      return { e, text: describeArrayStr(e, m) };
+    });
+  };
+  const hsCaptions = (op: (s: HashSetStr, push: (e: HashSetEvent<string>) => void) => void) => {
+    const s = HashSetStr.fromKeys(TEXT_SEED);
+    let m = hashModel(s.snapshotBuckets());
+    const events: HashSetEvent<string>[] = [];
+    op(s, (e) => events.push(e));
+    return events.map((e) => {
+      m = reduceHash(m, e);
+      return { e, text: describeHashStr(e, m) };
+    });
+  };
+
+  it('café vs cafe is rejected on UTF-8 byte length (5 vs 4), though both are 4 characters', () => {
+    expect('café'.length).toBe('cafe'.length); // the JS trap the caption must not fall into
+    expect([byteLength('café'), byteLength('cafe')]).toEqual([5, 4]);
+    const c = arrCaptions((a, p) => void a.search('cafe', p)).find(({ e }) => e.kind === 'arr.compare' && e.index === TEXT_SEED.indexOf('café'));
+    expect(c?.text).toContain('"café" (5 bytes) vs "cafe" (4 bytes)');
+    expect(c?.text).toContain('byte lengths differ');
+    expect(c?.text).toContain('both 4 characters');
+    expect(c?.text).toContain('still one comparison');
+  });
+
+  it('a same-length miss is narrated as comparing bytes, still one comparison', () => {
+    const c = arrCaptions((a, p) => void a.search('cafe', p)).find(({ e }) => e.kind === 'arr.compare' && e.index === TEXT_SEED.indexOf('cart'));
+    expect(c?.text).toContain('same 4-byte length, so the bytes are compared');
+    expect(c?.text).toContain('(one comparison)');
+  });
+
+  it('no caption counts a byte as a cost', () => {
+    const texts = [
+      ...arrCaptions((a, p) => void a.search('cafe', p)),
+      ...arrCaptions((a, p) => void a.delete('cart', p)),
+      ...hsCaptions((s, p) => void s.search('dog', p)),
+      ...hsCaptions((s, p) => void s.insert('owl', p)),
+    ].map(({ text }) => text);
+    for (const x of texts) expect(x).not.toMatch(/one (op|comparison|chain-step) per (byte|letter|character)/i);
+  });
+
+  it('the hash is one op that reads every byte; a rehash is not counted', () => {
+    const owl = hsCaptions((s, p) => void s.insert('owl', p));
+    expect(owl.find(({ e }) => e.kind === 'hs.hash')?.text).toContain('one op, though FNV-1a reads all 3 bytes');
+    expect(owl.find(({ e }) => e.kind === 'hs.rehash')?.text).toMatch(/8 → 16 buckets.*one more bit.*not counted/);
+    const cafe = hsCaptions((s, p) => void s.search('café', p));
+    expect(cafe[0].text).toContain('all 5 bytes'); // bytes, not the 4 characters
+  });
+
+  it('the array intro’s numbers are the twin’s', () => {
+    const a = DynArrayStr.fromKeys(TEXT_SEED);
+    expect(a.search('dog')).toEqual({ found: true, ops: 5 });
+    expect(a.search('cafe')).toEqual({ found: false, ops: 6 });
+    expect(TEXT_SEED).toHaveLength(6);
+    const events: ArrayEvent<string>[] = [];
+    expect(a.delete('cart', (e) => events.push(e))).toEqual({ removed: true, ops: 6 });
+    expect(events.filter((e) => e.kind === 'arr.shift')).toHaveLength(4); // so 2 comparisons + 4 shifts
+    expect(ARRAY_STR_INTRO).toContain('search("dog"): 5 comparisons');
+    expect(ARRAY_STR_INTRO).toContain('café is 5 bytes, cafe 4');
+    expect(ARRAY_STR_INTRO).toContain('after all 6');
+    expect(ARRAY_STR_INTRO).toContain('delete("cart") costs 2 comparisons + 4 shifts');
+  });
+
+  it('the hash-set intro’s numbers are the twin’s', () => {
+    const s = HashSetStr.fromKeys(TEXT_SEED);
+    const b = s.snapshotBuckets();
+    const where = (k: string) => b.findIndex((chain) => chain.includes(k));
+    expect(b).toHaveLength(8);
+    expect(b.filter((chain) => chain.length > 1).map((chain) => [...chain].sort())).toEqual([['ant', 'car'], ['café', 'dog']]);
+    expect(s.search('dog')).toEqual({ found: true, ops: 3 });
+    expect(s.search('cafe')).toEqual({ found: false, ops: 2 });
+    const cafeEvents: HashSetEvent<string>[] = [];
+    s.search('cafe', (e) => cafeEvents.push(e));
+    const first = cafeEvents[0];
+    expect(first.kind === 'hs.hash' && first.bucket).not.toBe(where('café'));
+    expect(s.search('ca')).toEqual({ found: false, ops: 1 });
+    const grow: HashSetEvent<string>[] = [];
+    expect(s.insert('owl', (e) => grow.push(e))).toEqual({ inserted: true, ops: 3 });
+    const probed = grow.flatMap((e) => (e.kind === 'hs.probe' ? [b[e.bucket][e.pos]] : []));
+    expect(probed).toEqual(['car', 'ant']);
+    const after = s.snapshotBuckets();
+    const at = (k: string) => after.findIndex((chain) => chain.includes(k));
+    expect(after).toHaveLength(16);
+    expect(at('car')).not.toBe(at('ant'));
+    expect(at('café')).toBe(at('dog'));
+    expect(HASH_STR_INTRO).toContain('8 buckets, two of them shared: car with ant, café with dog');
+    expect(HASH_STR_INTRO).toContain('2 chain-steps = 3');
+    expect(HASH_STR_INTRO).toContain('different bucket from café');
+    expect(HASH_STR_INTRO).toContain('empty bucket: 1');
+    expect(HASH_STR_INTRO).toContain('insert("owl") walks car and ant (3 ops)');
+    expect(HASH_STR_INTRO).toContain('car and ant part but café and dog stay together');
+  });
+
+  it('both tabs are registered and remembered by name', () => {
+    expect(isExploreKind('arraystr')).toBe(true);
+    expect(isExploreKind('hashstr')).toBe(true);
   });
 });

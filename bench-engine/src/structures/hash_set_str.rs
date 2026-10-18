@@ -309,6 +309,18 @@ impl HashSetStr {
         (removed, ops)
     }
 
+    /// Test/conformance helper: insert `key`, returning `(inserted, hashes +
+    /// chain-steps)` — the counted `insert_generic` the build and churn signals
+    /// sum, one key at a time, so the Explore animation's insert is chained to it
+    /// (a duplicate stops at its match and stores nothing; a rehash it triggers is
+    /// not counted). Mutates the set; not on the wasm surface.
+    pub fn insert_one_counted(&mut self, key: &str) -> (bool, u64) {
+        let mut ops = 0u64;
+        let before = self.len;
+        self.insert_generic::<true>(key, &mut ops);
+        (self.len != before, ops)
+    }
+
     /// Longest chain — a test hook proving the load-factor policy keeps chains
     /// short (so search is genuinely O(1), not a disguised linear scan).
     pub fn max_chain(&self) -> usize {
@@ -440,6 +452,21 @@ mod tests {
         assert_eq!(s.len(), 0);
         let teardown_ops = HashSetStr::teardown_counted(&offsets, &bytes, 50);
         assert!(teardown_ops >= 50.0 && teardown_ops < 50.0 * 8.0);
+    }
+
+    #[test]
+    fn insert_one_counted_counts_the_hash_plus_the_dedupe_walk() {
+        // The Explore seed (src/viz/VizPanel.tsx): six keys settle at 8 buckets with
+        // car and ant sharing bucket 5. A new key homed there walks both (1 + 2), and
+        // being the 7th distinct key it doubles the table — uncounted.
+        let mut s = set(&["car", "cart", "cat", "café", "dog", "ant"]);
+        assert_eq!(s.buckets.len(), 8);
+        assert_eq!(s.insert_one_counted("owl"), (true, 3));
+        assert_eq!(s.buckets.len(), 16);
+        // A duplicate stops at its match and stores nothing.
+        let (inserted, ops) = s.insert_one_counted("car");
+        assert!(!inserted && ops >= 2);
+        assert_eq!(s.len(), 7);
     }
 
     #[test]
