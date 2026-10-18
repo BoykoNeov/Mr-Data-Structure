@@ -529,8 +529,13 @@ that breaks a naive tombstone policy. Four rules, each pinned:
    2.75× between neighbouring sweep points on two key sets. **Rule: churn a block** of
    `clamp(⌊len/32⌋, 1, 16)` consecutive keys `max + 1, max + 2, …` and report the mean per
    pair; the block's swing was 1.47× and 1.55×, and its tombstones add at most ~3 % to the
-   load (`a_single_churn_key_samples_one_cluster`). This is the one place the two hash sets'
-   recipes deliberately differ.
+   load (`a_single_churn_key_samples_one_cluster`). The **chaining set churns the same
+   block**, for a milder form of the same problem: one key's cost is whatever chain its
+   bucket holds, and on the same ladder a one-key curve stepped by up to 2.33× between sweep
+   points where the block stayed within 1.40× and the 64-key mean within 1.13×
+   (`hash_set::tests::a_single_churn_key_samples_one_bucket`). It needs no priming — a pair
+   appends to a chain and removes that last entry, so the table is restored exactly — and
+   its churn now sits within 8 % of its FD sum, where one key needed a 50 % slack.
 
 **Watching it (Explore).** The open-addressing tab animates the counting convention
 literally: `hoa.hash` and `hoa.probe` are the only cost events, the empty slot that ends a
@@ -546,7 +551,7 @@ priming, the churn keys' tombstones never revert to empty: each bridges its run 
 next, and every later insert walks the merged run. At n = 4 000 over 64 tables: insert_fd
 3.54, delete_fd 2.52, sum 6.06, primed churn 7.69 — a ~27 % overshoot, class agreement
 O(1) (`open_addressing_churn_overshoots_finite_differences_by_its_own_tombstone`). Against
-the chaining set's churn on the same keys (3.94), the OA line sits higher for two causes of
+the chaining set's churn on the same 64 tables, each churning its own block (3.94), the OA line sits higher for two causes of
 about equal size, pinned in the same test: clustering (+1.87) and the tombstones (+1.88);
 the churn chart's copy says exactly that. The same test pins one more trap: a finite
 difference across a doubling (1 500 → 1 600) reads a **negative** marginal delete for
@@ -1228,6 +1233,7 @@ Ordered by how much they can mislead a reader today.
 | at the same α (same hash, same table size) a linearly-probed miss costs Knuth's ½(1 + 1/(1−α)²) and a hit 1 + ½(1 + 1/(1−α)) on this metric — 7.70 vs chaining's 1.72 at α ≈ 0.73 | `structures::methodology::open_addressing_probe_counts_follow_knuths_clustering_formulas` | none (op-counts) |
 | open addressing's search saws with α louder than chaining's (1.92× vs 1.27×) and neither trends in n (slopes 0.013 / 0.012) | `structures::methodology::open_addressing_search_saws_with_the_load_factor_but_has_no_trend_in_n` | none |
 | regime 12: churn overshoots the FD sum by its own tombstones (primed 7.69, unprimed 5.81, sum 6.06), and an FD across a doubling reads a negative marginal delete for OA (−10.77) but not chaining (+2.00) | `structures::methodology::open_addressing_churn_overshoots_finite_differences_by_its_own_tombstone` | none |
+| the chaining set's churn cycles the open-addressing sets' block: one key steps up to 2.33× between sweep points, the block ≤ 1.40×, the 64-key mean ≤ 1.13×; every pair restores the chains exactly; churn within 8 % of the FD sum | `structures::hash_set::tests::{a_single_churn_key_samples_one_bucket, churn_cycles_the_block_and_restores_the_table_exactly, churn_block_is_the_open_addressing_sets}`, `structures::methodology::hashset_churn_matches_finite_differences` | none |
 | the tombstone policy, rule by rule: without reuse churn drifts with the rep count and with n; with it a counted pair is identical after any number of timed pairs and the layout is restored; an unprimed first pair is cheaper (why priming exists); tombstones count toward the load so a miss always terminates; one churn key jumps several-fold between sweep points and the block does not | `structures::hash_set_oa::tests::{without_tombstone_reuse_churn_drifts_with_repetition_count, churn_cost_does_not_drift_with_repetition_count, an_unprimed_first_pair_is_cheaper_than_the_steady_state, tombstones_count_toward_the_load_factor_so_a_miss_always_terminates, a_single_churn_key_samples_one_cluster}` + `bench-engine/tests/proptest_hash_oa.rs` | none |
 | interleaved insert/delete/search agree with `std::collections::HashSet`; `live + tombs ≤ 0.75·cap` after every op | `bench-engine/tests/proptest_hash_oa.rs` | none |
 | TS open-addressing twin ≡ Rust: slot layout before/after deletes and re-inserts, purge, cluster, churn block and its primed layout | `conformance/corpus-hoa.txt` + `src/structures/conformance-hoa.test.ts` | none |

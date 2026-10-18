@@ -849,7 +849,7 @@ mod tests {
         assert_eq!(s.search_n(4), 2);
     }
 
-    /// Churn one key only, primed — the chaining set's recipe, kept here as the contrast.
+    /// Churn one key only, primed — the chaining set's old recipe, kept here as the contrast.
     fn single_key_churn(keys: &[f64], n: usize, key: f64) -> f64 {
         let mut s = HashSetOaF64::new(keys, n);
         let (inserted, _) = s.insert_one_counted(key);
@@ -860,7 +860,9 @@ mod tests {
     }
 
     /// **Why churn cycles a block (module doc, rule 4; docs/METHODOLOGY.md §2.8).** The
-    /// chaining set churns a single `max + 1` key. Under linear probing that key's cost is
+    /// chaining set once churned a single `max + 1` key (it now churns this same block, for
+    /// a milder form of the same reason — `hash_set::tests::a_single_churn_key_samples_one_bucket`).
+    /// Under linear probing that key's cost is
     /// the length of whichever run its home slot falls in — a heavy-tailed quantity — so a
     /// one-key churn curve jumps several-fold between neighbouring sweep points with no
     /// trend behind the jumps, and a fitted slope through it is luck. The real recipe (the

@@ -623,7 +623,10 @@ const api = {
    * lands is a measurement decision that can set the reported class (§2.3, §4.1):
    *
    * - **array** / **hash set** — `max + 1`. Position-uniform: the array appends and pops
-   *   with no shifts either way, the hash set hashes to a bucket wherever the key sits.
+   *   with no shifts either way, the hash set hashes to a bucket wherever the key sits. The
+   *   hash set's `set_churn_key` expands it into a *block* of `max + 1 …` keys, the
+   *   open-addressing sets' block (docs/METHODOLOGY.md §2.8 rule 4): one key samples one
+   *   bucket's chain.
    * - **sorted array** — `min − 1`, deliberately the **front**. A tail key would
    *   append/pop with zero shifts and report O(log n) mutation for a structure whose
    *   insert and delete are honestly O(n) — the key position, not the structure, would
@@ -659,9 +662,10 @@ const api = {
       // never through the tail handle, which would read O(1) and erase the disagreement.
       ['dll', DoublyLinkedListF64 as unknown as MutationStructCtor, aboveMax],
       // Open addressing: `max + 1` as for the chaining set — a hash structure has no key
-      // position to bias. But `set_churn_key` expands it into a primed *block* of
-      // `max + 1 …` keys (docs/METHODOLOGY.md §2.8): one key under linear probing samples
-      // one cluster, and that alone made the curve jump several-fold between sweep points.
+      // position to bias. Its `set_churn_key` expands it into the chaining set's block of
+      // `max + 1 …` keys, *primed* here (docs/METHODOLOGY.md §2.8): one key under linear
+      // probing samples one cluster, and that alone made the curve jump several-fold between
+      // sweep points.
       ['hashoa', hashOaAt(oaMaxLoad), aboveMax],
     ];
     const out: SweepSeries[] = [];

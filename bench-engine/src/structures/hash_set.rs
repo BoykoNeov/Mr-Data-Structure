@@ -14,6 +14,16 @@
 //! twin + conformance corpus stay bit-exact, risk R1); the table never shrinks.
 //! Both are O(1) amortized, so the churn / teardown mutation cost stays flat —
 //! the O(1) foil to the array's O(n) delete.
+//!
+//! **Churn cycles a small block of keys, not one** (docs/METHODOLOGY.md §2.8, rule 4 — the
+//! open-addressing set's recipe, adopted here for symmetry). A single churn key's cost is the
+//! length of the one chain its bucket happens to hold, so a one-key curve jumps between
+//! neighbouring sweep points with no trend behind the jumps (2.3× on the browser's mutation
+//! ladder; `tests::a_single_churn_key_samples_one_bucket`). `set_churn_key` therefore expands
+//! `max + 1` into the block `max + 1, max + 2, …` of `churn_block(len)` keys — the same
+//! `clamp(⌊len/32⌋, 1, 16)` both open-addressing sets use — and the counted signal is the
+//! mean per pair. No priming is needed: an insert appends to its chain and the delete removes
+//! that last entry, so every pair restores the table exactly.
 
 use super::mix_f64;
 use wasm_bindgen::prelude::*;
@@ -22,6 +32,17 @@ const INITIAL_BUCKETS: usize = 4;
 /// Grow when `len / buckets` would exceed this.
 const MAX_LOAD: f64 = 0.75;
 
+/// Most churn keys a block holds — the open-addressing sets' 16.
+const CHURN_BLOCK_MAX: usize = 16;
+/// At most one churn key per this many stored keys — the open-addressing sets' 32.
+const KEYS_PER_CHURN_KEY: usize = 32;
+
+/// How many churn keys a set of `len` stored keys churns: `clamp(len / 32, 1, 16)` — the
+/// open-addressing sets' block rule, restated so all three hash lines sample the same keys.
+pub fn churn_block(len: usize) -> usize {
+    (len / KEYS_PER_CHURN_KEY).clamp(1, CHURN_BLOCK_MAX)
+}
+
 /// A set of distinct `f64` keys (duplicates collapse on insert — set semantics;
 /// membership is what `search` answers).
 #[wasm_bindgen]
@@ -29,8 +50,11 @@ pub struct HashSetF64 {
     buckets: Vec<Vec<f64>>,
     len: usize,
     probes: Vec<f64>,
-    /// The spare key cycled in/out by `churn_n` (docs/PLAN.md §6.3) — set absent.
-    churn_key: f64,
+    /// The block of spare keys cycled in/out by `churn_n` (docs/PLAN.md §6.3), all absent
+    /// (module doc).
+    churn_keys: Vec<f64>,
+    /// Which key of the block the next timed churn pair uses.
+    churn_cursor: usize,
     /// Distinct keys captured at build time, in insertion order, so `teardown_all`
     /// can delete every key without an O(buckets) scan inside the timed region.
     teardown_keys: Vec<f64>,
@@ -48,7 +72,8 @@ impl HashSetF64 {
             buckets: vec![Vec::new(); INITIAL_BUCKETS],
             len: 0,
             probes: Vec::new(),
-            churn_key: 0.0,
+            churn_keys: Vec::new(),
+            churn_cursor: 0,
             teardown_keys: Vec::new(),
         };
         for &k in &keys[..n] {
@@ -100,20 +125,36 @@ impl HashSetF64 {
 
     // ── Mutation: churn at fixed size (docs/PLAN.md §6.3, primary method) ──
 
-    /// Set the spare key cycled by `churn_n` — must be absent from the set so each
-    /// insert is real and the matching delete restores size. Untimed.
+    /// Set the spare churn keys: the block `key, key + 1, …` of `churn_block(len)` keys —
+    /// the open-addressing sets' block (module doc). `key` must be absent (the sweep passes
+    /// `max + 1`) so each insert is real and the matching delete restores size; a block key
+    /// that turns out to be present is dropped, since its "delete" would remove a real key.
+    /// Untimed.
     pub fn set_churn_key(&mut self, key: f64) {
-        self.churn_key = key;
+        self.churn_keys.clear();
+        self.churn_cursor = 0;
+        let mut ops = 0u64;
+        for j in 0..churn_block(self.len) {
+            let k = key + j as f64;
+            if !self.contains::<false>(k, &mut ops) {
+                self.churn_keys.push(k);
+            }
+        }
     }
 
-    /// Timed hot path: `k` insert+delete *pairs* of the churn key, holding size
-    /// stable at ≈ n (docs/PLAN.md §6.3). Returns the delete-hit count to defeat
-    /// dead-code elimination. No op-counting overhead (`COUNT=false`).
+    /// Timed hot path: `k` insert+delete *pairs*, each of the next key in the churn block,
+    /// holding size stable at ≈ n (docs/PLAN.md §6.3). Returns the delete-hit count to
+    /// defeat dead-code elimination. No op-counting overhead (`COUNT=false`).
     pub fn churn_n(&mut self, k: u32) -> u32 {
-        let key = self.churn_key;
+        let block = self.churn_keys.len();
+        if block == 0 {
+            return 0;
+        }
         let mut ops = 0u64;
         let mut hits = 0u32;
         for _ in 0..k {
+            let key = self.churn_keys[self.churn_cursor];
+            self.churn_cursor = (self.churn_cursor + 1) % block;
             self.insert_generic::<false>(key, &mut ops);
             if self.remove_key::<false>(key, &mut ops) {
                 hits += 1;
@@ -122,14 +163,21 @@ impl HashSetF64 {
         hits
     }
 
-    /// Op-count signal (§6.4) for *one* churn pair: hashes + chain-steps of a
-    /// counted insert+delete. The pair nets zero size change.
+    /// Op-count signal (§6.4) for *one* churn pair: the **mean** hashes + chain-steps of one
+    /// counted insert+delete per key in the block (the open-addressing sets' averaging). Every
+    /// pair restores the table exactly, so this is exact whatever the cursor position.
     pub fn churn_counted(&mut self) -> f64 {
-        let key = self.churn_key;
+        let block = self.churn_keys.len();
+        if block == 0 {
+            return 0.0;
+        }
         let mut ops = 0u64;
-        self.insert_generic::<true>(key, &mut ops);
-        let _ = self.remove_key::<true>(key, &mut ops);
-        ops as f64
+        for j in 0..block {
+            let key = self.churn_keys[j];
+            self.insert_generic::<true>(key, &mut ops);
+            let _ = self.remove_key::<true>(key, &mut ops);
+        }
+        ops as f64 / block as f64
     }
 
     // ── Mutation: cumulative build / teardown (docs/PLAN.md §6.3, cross-check) ──
@@ -152,7 +200,8 @@ impl HashSetF64 {
             buckets: vec![Vec::new(); INITIAL_BUCKETS],
             len: 0,
             probes: Vec::new(),
-            churn_key: 0.0,
+            churn_keys: Vec::new(),
+            churn_cursor: 0,
             teardown_keys: Vec::new(),
         };
         let mut ops = 0u64;
@@ -332,6 +381,11 @@ impl HashSetF64 {
         (self.len != before, ops)
     }
 
+    /// The current churn block (a test hook; not on the wasm surface).
+    pub fn churn_block_keys(&self) -> Vec<f64> {
+        self.churn_keys.clone()
+    }
+
     /// Number of buckets — a max-op hook for observing a rehash from outside
     /// (`structures::maxop`); not on the wasm surface.
     pub fn bucket_count(&self) -> usize {
@@ -416,7 +470,8 @@ mod tests {
     #[test]
     fn churn_holds_size_and_restores_membership() {
         let mut s = set(&[1.0, 2.0, 3.0]);
-        s.set_churn_key(99.0); // absent
+        s.set_churn_key(99.0); // absent; three keys ⇒ a block of one
+        assert_eq!(s.churn_block_keys(), vec![99.0]);
         s.churn_n(10);
         assert_eq!(s.len(), 3);
         assert!(!s.search_one_counted(99.0).0); // churn key not left behind
@@ -438,6 +493,100 @@ mod tests {
         // Teardown op-count is O(n) too (each delete is O(1)).
         let teardown_ops = HashSetF64::teardown_counted(&keys, 50);
         assert!(teardown_ops >= 50.0 && teardown_ops < 50.0 * 8.0);
+    }
+
+    #[test]
+    fn churn_cycles_the_block_and_restores_the_table_exactly() {
+        let keys: Vec<f64> = (0..200).map(|i| i as f64).collect();
+        let mut s = set(&keys);
+        let before = s.keys_in_order();
+        s.set_churn_key(200.0);
+        // 200 keys ⇒ a block of six (`clamp(200 / 32, 1, 16)`), all from `max + 1` on.
+        assert_eq!(s.churn_block_keys(), vec![200.0, 201.0, 202.0, 203.0, 204.0, 205.0]);
+        assert_eq!(s.churn_n(13), 13);
+        assert_eq!(s.keys_in_order(), before, "every pair puts the chain back as it was");
+        let counted = s.churn_counted();
+        assert_eq!(s.keys_in_order(), before);
+        assert_eq!(s.churn_counted(), counted, "the mean does not depend on the cursor");
+    }
+
+    #[test]
+    fn a_present_churn_key_is_dropped_not_deleted() {
+        let mut s = set(&[1.0, 2.0, 3.0]);
+        s.set_churn_key(2.0); // a caller error — the block must not delete a real key
+        assert_eq!(s.len(), 3);
+        assert!(s.search_one_counted(2.0).0);
+        assert!(s.churn_block_keys().is_empty());
+        assert_eq!(s.churn_n(5), 0);
+        assert_eq!(s.churn_counted(), 0.0);
+    }
+
+    #[test]
+    fn churn_block_is_the_open_addressing_sets() {
+        for len in [0usize, 31, 32, 100, 511, 512, 10_000] {
+            assert_eq!(churn_block(len), super::super::hash_set_oa::churn_block(len), "len={len}");
+        }
+    }
+
+    /// A fixed-seed permutation of `0..n` (xorshift; no RNG dependency, no flake) — the
+    /// open-addressing tests' key set, so the two hash sets' churn pins read the same keys.
+    fn shuffled_keys(n: usize) -> Vec<f64> {
+        let mut v: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        for i in (1..n).rev() {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let j = (state % (i as u64 + 1)) as usize;
+            v.swap(i, j);
+        }
+        v
+    }
+
+    /// **Why churn cycles a block here too (module doc; docs/METHODOLOGY.md §2.8, rule 4).**
+    /// One churn key's cost is 1 + its chain's length, twice — whatever chain its bucket holds,
+    /// so a one-key curve steps between neighbouring sweep points with no trend behind it. The
+    /// problem is milder than under linear probing (a chain is not a cluster, so it rarely runs
+    /// past a few keys), but it is the same sampling problem, and the open-addressing sets'
+    /// block cures it the same way. Measured over the mutation ladder 250 … 4000 on three key
+    /// sets: one key 3, 3, 7, 3, 5 / 5, 3, 3, 7, 5 / 3, 3, 3, 3, 5 (swings 2.33×, 2.33×,
+    /// 1.67×); the block 3.38 … 4.25 (1.26×), 3.75 … 5.25 (1.40×), 3.29 … 4.50 (1.37×); the
+    /// 64-key mean within 1.10×, 1.13×, 1.08×.
+    #[test]
+    fn a_single_churn_key_samples_one_bucket() {
+        let swing = |v: &[f64]| {
+            v.iter().copied().fold(f64::MIN, f64::max) / v.iter().copied().fold(f64::MAX, f64::min)
+        };
+        let pair = |keys: &[f64], n: usize, key: f64| -> f64 {
+            let mut s = HashSetF64::new(keys, n);
+            let (_, ins) = s.insert_one_counted(key);
+            let (_, del) = s.delete_one_counted(key);
+            (ins + del) as f64
+        };
+        let ladder = [250usize, 500, 1000, 2000, 4000];
+        let key_sets: [Vec<f64>; 3] = [
+            shuffled_keys(4000),
+            shuffled_keys(4000).iter().map(|k| k * 7.0 + 3.0).collect(),
+            (0..4000).map(|i| i as f64).collect(),
+        ];
+        let mut worst_single: f64 = 0.0;
+        for keys in &key_sets {
+            let (mut single, mut block, mut mean) = (Vec::new(), Vec::new(), Vec::new());
+            for &n in &ladder {
+                let max = keys[..n].iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                single.push(pair(keys, n, max + 1.0));
+                let mut s = HashSetF64::new(keys, n);
+                s.set_churn_key(max + 1.0);
+                block.push(s.churn_counted());
+                let m: f64 = (0..64).map(|j| pair(keys, n, max + 1.0 + j as f64)).sum();
+                mean.push(m / 64.0);
+            }
+            worst_single = worst_single.max(swing(&single));
+            assert!(swing(&block) < 1.6, "the block recipe is steady: {block:?}");
+            assert!(swing(&block) < swing(&single), "and steadier than one key: {block:?} vs {single:?}");
+            assert!(swing(&mean) < 1.25, "the 64-key mean is smooth: {mean:?}");
+        }
+        assert!(worst_single > 2.0, "one key steps two-fold between sweep points");
     }
 
     #[test]

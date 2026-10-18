@@ -1484,6 +1484,17 @@ insert/search/delete group on a shared key type.
     kept), and the graph still never runs on load. The **stored-n axis is now remembered** with
     the view (a view saved before it reads as `'input'`); the **miss form stays unsaved**, like
     the load factor, so the mount-time run stays the calibrated one. **No new deps.**
+  - **Done (chaining churn block, §13 (c)):** the chaining hash set's churn cycles the
+    open-addressing sets' `clamp(⌊len/32⌋, 1, 16)`-key block from `max + 1` and reports the mean
+    per pair, instead of one key. One key's cost is its bucket's chain: on the mutation ladder it
+    stepped up to 2.33× between sweep points, the block stays within 1.40×, and churn now sits
+    within 8 % of the FD sum (the old test needed a 50 % slack). No priming — a chained pair
+    restores the table exactly. This **changes the mount-time run's hash set churn line** (the
+    first §13 extra that does), slightly and towards steadier; regime 12's chaining baseline is
+    unchanged at 3.94. Gate: `hashset churn stays flat` passed (slopes 0.05, −0.01) on two runs on
+    a busy machine, each with two or three search class-label failures that the pre-change build
+    reproduced on the same machine minutes later (METHODOLOGY §5's flaky kind; search runs before any
+    churn). **No new deps.**
   - **Open:** A gate pass
     for persistence (paste, run, reload, assert the restored text) is sketched in the slice's
     handoff note (commit `208c39c`) but deliberately not wired — it re-navigates, so it must
@@ -1532,9 +1543,9 @@ insert/search/delete group on a shared key type.
   **backward-shift-delete** variant as a third line~~ **Done** — the overshoot was all
   tombstone; the churn line barely moves (regime 13). ~~(b) a **load-factor
   control**~~ **Done** (opt-in 0.5 / 0.75 / 0.9; the page reports the α actually reached).
-  Remaining: (c) a churn *block* for the chaining set too, for symmetry (its
-  single key has the same one-bucket sampling problem, milder); an Explore tab for the
-  backward-shift set.
+  ~~(c) a churn *block* for the chaining set too, for symmetry~~ **Done** — its one
+  key stepped up to 2.33× between sweep points, the shared block stays within 1.40×
+  (METHODOLOGY §2.8 rule 4). Remaining: an Explore tab for the backward-shift set.
 - ~~Balanced tree: AVL chosen; offer red-black as an alternative later for a
   balancing-scheme comparison?~~ **Done** (Phase 6, METHODOLOGY §2.9) — measured,
   since animated. ~~Should Compare grow a "max cost of one operation" view?~~ **Done**

@@ -256,10 +256,11 @@ mod methodology {
         s.set_churn_key(n2 as f64 + 1.0);
         let churn = s.churn_counted();
 
-        // Both sides are small O(1) counts; allow generous slack for chain-length
-        // variation between the churn key's bucket and the swept average.
+        // Both sides are small O(1) counts. Churn is the mean over its 16-key block, not one
+        // bucket's chain, so it tracks the swept average closely: measured 3.75 against an FD
+        // sum of 3.46 (rel 0.08). One key needed a 0.5 slack here.
         let rel = (churn - (insert_fd + delete_fd)).abs() / churn;
-        assert!(rel < 0.5, "churn {churn} vs fd {} (rel {rel})", insert_fd + delete_fd);
+        assert!(rel < 0.2, "churn {churn} vs fd {} (rel {rel})", insert_fd + delete_fd);
     }
 
     // ── BST: the open question — does `churn ≈ insert_fd + delete_fd` hold for a tree?
@@ -1320,7 +1321,7 @@ mod methodology {
     /// (the churn the sweep reports) 7.69 — a ~27% overshoot of the sum, which the unprimed
     /// pair shows is the tombstones' doing. The sweep's own single table (block from
     /// `n + 1`) reads 5.38 here: one table is still a sample. Against the chaining set's churn
-    /// on the same 64 keys (3.94), the OA line sits higher for two roughly equal reasons:
+    /// on the same 64 tables, each churning its own block too (3.94), the OA line sits higher for two roughly equal reasons:
     /// clustering (+1.87, chained → unprimed) and the tombstones (+1.88). Straddle check: OA's
     /// 1500 → 1600 marginal delete is −10.77 where the chaining set's is +2.00.
     #[test]
