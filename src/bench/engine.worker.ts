@@ -398,8 +398,10 @@ function treeChurnRunnerFactory(
 /**
  * The open-addressing set at the run's rehash threshold (docs/PLAN.md §13, the load-factor
  * control; ./oaLoad), shaped as both constructor surfaces its runners take. At the default it
- * **is** the wasm class, so the default page runs exactly the code it ran before the control
- * existed. Otherwise it is a stand-in whose `new` and four statics forward to the `_at`
+ * **is** the wasm class, so the default page takes the same JS path as before the control
+ * existed, with op-counts pinned identical (`hash_set_oa::tests::the_constructors_without_a_load_are_the_075_table`);
+ * the one difference is inside Rust, where every insert now reads the threshold from a field
+ * rather than a constant. Otherwise it is a stand-in whose `new` and four statics forward to the `_at`
  * exports — all four, because the finite-difference runners build their own sets, and a load
  * reaching only the instance constructor would measure churn at one threshold and the
  * insert/delete split at another in the same run.

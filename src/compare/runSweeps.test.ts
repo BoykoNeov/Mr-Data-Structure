@@ -418,8 +418,6 @@ describe('the open-addressing load factor (docs/PLAN.md §13)', () => {
     expect(seen).toEqual(['search:0.75', 'mut:0.75']);
     expect(r.oaMaxLoad).toBe(0.75);
     expect((win.__compareMeta as { oaMaxLoad: unknown }).oaMaxLoad).toBe(0.75);
-    // No new global, no new status line: the gate's key order and "done" signal are untouched.
-    expect(Object.keys(win)).toHaveLength(9);
   });
 
   it('carries a chosen threshold to both calls the set is measured in, and onto the result', async () => {

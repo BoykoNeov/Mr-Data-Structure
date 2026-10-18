@@ -69,6 +69,14 @@ export interface OaLoadReach {
   readonly max: number;
   /** Input size `n` of the (first) point at {@link max}. */
   readonly atN: number;
+  /**
+   * How many of the {@link points} built a table of a different size from the like-for-like
+   * 0.75 one. Where the size is the same, the occupied slots are the same — linear probing's
+   * occupied pattern depends only on the key set and the capacity — so misses cost exactly
+   * what they cost at 0.75 (`hash_set_oa::tests::a_threshold_that_ends_at_the_same_size_draws_the_same_churn_line`).
+   */
+  readonly resized: number;
+  readonly points: number;
 }
 
 /**
@@ -79,19 +87,23 @@ export interface OaLoadReach {
  * `null` for an empty series.
  */
 export function oaLoadReach(points: readonly SweepPoint[], maxLoad: number): OaLoadReach | null {
-  let reach: OaLoadReach | null = null;
+  if (points.length === 0) return null;
+  let min = Infinity;
+  let max = -Infinity;
+  let atN = points[0].n;
+  let resized = 0;
   for (const p of points) {
     const stored = p.storedN ?? p.n;
-    const alpha = stored / oaCapacity(stored, maxLoad);
-    if (reach === null) reach = { min: alpha, max: alpha, atN: p.n };
-    else
-      reach = {
-        min: Math.min(reach.min, alpha),
-        max: alpha > reach.max ? alpha : reach.max,
-        atN: alpha > reach.max ? p.n : reach.atN,
-      };
+    const slots = oaCapacity(stored, maxLoad);
+    const alpha = stored / slots;
+    min = Math.min(min, alpha);
+    if (alpha > max) {
+      max = alpha;
+      atN = p.n;
+    }
+    if (slots !== oaCapacity(stored, DEFAULT_OA_MAX_LOAD)) resized += 1;
   }
-  return reach;
+  return { min, max, atN, resized, points: points.length };
 }
 
 /**

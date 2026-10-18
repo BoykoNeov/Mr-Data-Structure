@@ -42,10 +42,14 @@ describe('the open-addressing load-factor control (docs/PLAN.md §13)', () => {
   });
 
   it('reports the load factors a search series really sat at — from the stored count', () => {
-    // 100 stored keys: 128 slots at 0.9 (α 0.78), 256 at 0.75 (α 0.39).
-    expect(oaLoadReach([point(10), point(100)], 0.9)).toEqual({ min: 10 / 16, max: 100 / 128, atN: 100 });
+    // 100 stored keys: 128 slots at 0.9 (α 0.78), 256 at 0.75 (α 0.39); 10 keys: 16 either way.
+    expect(oaLoadReach([point(10), point(100)], 0.9)).toEqual({
+      min: 10 / 16, max: 100 / 128, atN: 100, resized: 1, points: 2,
+    });
     // A de-duplicated point is read at what the set held, not at its input size.
-    expect(oaLoadReach([point(1000, 630)], 0.75)).toEqual({ min: 630 / 1024, max: 630 / 1024, atN: 1000 });
+    expect(oaLoadReach([point(1000, 630)], 0.75)).toEqual({
+      min: 630 / 1024, max: 630 / 1024, atN: 1000, resized: 0, points: 1,
+    });
     expect(oaLoadReach([], 0.5)).toBeNull();
   });
 
@@ -53,9 +57,9 @@ describe('the open-addressing load-factor control (docs/PLAN.md §13)', () => {
     // The mirror of `hash_set_oa::tests::the_browser_ladders_sample_the_sawtooth_at_fixed_points`:
     // the reason the page prints the α reached, not just the threshold.
     const ladder = geometricSweep(10, 100_000).map((n) => point(n));
-    expect(oaLoadReach(ladder, 0.9)?.max).toBe(0.78125);
-    expect(oaLoadReach(ladder, 0.75)?.max).toBe(0.625);
-    expect(oaLoadReach(ladder, 0.5)?.max).toBe(0.48828125);
+    expect(oaLoadReach(ladder, 0.9)).toMatchObject({ max: 0.78125, resized: 5, points: 13 });
+    expect(oaLoadReach(ladder, 0.75)).toMatchObject({ max: 0.625, resized: 0 });
+    expect(oaLoadReach(ladder, 0.5)).toMatchObject({ max: 0.48828125, resized: 5 });
   });
 
   it('stamps both hash sets with their thresholds and leaves every other series alone', () => {

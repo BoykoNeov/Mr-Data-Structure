@@ -1166,6 +1166,50 @@ mod tests {
         }
     }
 
+    /// **Same final size ⇒ same add/remove line, by construction.** Which slots a linearly
+    /// probed table has occupied depends only on its key set and its capacity, never on the
+    /// order the keys arrived in or the rehashes on the way — and a churn pair of absent keys,
+    /// like a full teardown's total, costs only what that occupied pattern dictates. So wherever
+    /// a threshold ends at the 0.75 table's size, its churn and teardown op-counts *equal* the
+    /// default's; only the cumulative build moves, because it climbs through every smaller
+    /// table. On the browser's mutation ladder that is every point at 0.9, and every point but
+    /// 500 at 0.5, where the churn block's priming tips a 1024-slot table (500 + 15 > 512) into
+    /// doubling. The page's churn note says exactly this rather than "the tables differ".
+    #[test]
+    fn a_threshold_that_ends_at_the_same_size_draws_the_same_churn_line() {
+        let keys = shuffled_keys(4000);
+        let churn = |n: usize, l: f64| {
+            let mut s = HashSetOaF64::with_max_load(&keys, n, l);
+            s.set_churn_key(1e9);
+            (s.capacity(), s.churn_counted())
+        };
+        for n in [500usize, 1000, 2000, 4000] {
+            assert_eq!(churn(n, 0.9), churn(n, 0.75), "n={n}: 0.9 churn");
+            assert_eq!(
+                HashSetOaF64::teardown_counted_at(&keys, n, 0.9),
+                HashSetOaF64::teardown_counted(&keys, n),
+                "n={n}: 0.9 teardown"
+            );
+            assert_ne!(
+                HashSetOaF64::build_insert_counted_at(&keys, n, 0.9),
+                HashSetOaF64::build_insert_counted(&keys, n),
+                "n={n}: the build history differs"
+            );
+            assert_eq!(
+                HashSetOaF64::teardown_counted_at(&keys, n, 0.5),
+                HashSetOaF64::teardown_counted(&keys, n),
+                "n={n}: 0.5 teardown"
+            );
+        }
+        for n in [1000usize, 2000, 4000] {
+            assert_eq!(churn(n, 0.5), churn(n, 0.75), "n={n}: 0.5 churn");
+        }
+        let (cap_lo, _) = churn(500, 0.5);
+        let (cap_def, _) = churn(500, 0.75);
+        assert_eq!((cap_lo, cap_def), (2048, 1024), "priming doubles the 0.5 table at n = 500");
+        assert_ne!(churn(500, 0.5).1, churn(500, 0.75).1);
+    }
+
     /// A fixed-seed permutation of `0..n` (xorshift; no RNG dependency, no flake).
     pub(crate) fn shuffled_keys(n: usize) -> Vec<f64> {
         let mut v: Vec<f64> = (0..n).map(|i| i as f64).collect();

@@ -36,18 +36,32 @@ export function describeOaLoad(maxLoad: number): string {
   return `open-addressing hash set max load ${maxLoad} (chaining hash set: ${CHAINING_MAX_LOAD})`;
 }
 
-/** What the search points' load factors were, in words — the part a threshold's name hides. */
+/**
+ * How many search sizes the setting actually changed, and the load factors reached — the parts
+ * a threshold's name hides. Where a table ends at the 0.75 size its occupied slots are the
+ * 0.75 table's, so a miss costs exactly what it would there (`../bench/oaLoad`).
+ */
 function reachSentence(maxLoad: number, reach: OaLoadReach | null): string {
   if (!reach) return '';
+  const resized =
+    reach.resized === 0
+      ? `At all ${reach.points} of this run’s search sizes its table came out the same size as at ` +
+        `${DEFAULT_OA_MAX_LOAD}, so its misses cost exactly what they would there. `
+      : `Its table came out a different size from the ${DEFAULT_OA_MAX_LOAD} one at ${reach.resized} of this ` +
+        `run’s ${reach.points} search sizes; at the rest it is the same table, and a miss costs exactly what it would at ` +
+        `${DEFAULT_OA_MAX_LOAD}. `;
   const span =
-    `On this run its search points sat at load factors from ${reach.min.toFixed(2)} to ` +
+    `Its search points sat at load factors from ${reach.min.toFixed(2)} to ` +
     `${reach.max.toFixed(2)} (the fullest at n = ${reach.atN.toLocaleString('en-US')})`;
   // A doubling table only fills to its ceiling just before it doubles, and the sweep sizes are
   // fixed, so a run can miss the top of every sawtooth (0.9 reaches 0.78 on the default sizes).
-  return reach.max < maxLoad - 0.05
-    ? `${span} — none of them near the ${maxLoad} ceiling, because the sweep sizes catch the table at ` +
+  return (
+    resized +
+    (reach.max < maxLoad - 0.05
+      ? `${span} — none of them near the ${maxLoad} ceiling, because the sweep sizes catch the table at ` +
         'fixed points of its fill-and-double cycle, so this run shows less of the setting’s cost than its name suggests. '
-    : `${span}. `;
+      : `${span}. `)
+  );
 }
 
 /** The direction-specific sentence: what a roomier or a fuller table does to the probes. */
@@ -60,6 +74,18 @@ function directionSentence(maxLoad: number): string {
 }
 
 /**
+ * The add/remove chart's specifics, pinned by
+ * `hash_set_oa::tests::a_threshold_that_ends_at_the_same_size_draws_the_same_churn_line`: the
+ * final table, not the threshold, fixes the churn and teardown counts.
+ */
+const CHURN_SENTENCE =
+  'On the add/remove chart, wherever the final table comes out the 0.75 size, its occupied slots are the 0.75 ' +
+  'table’s, so the add/remove line and the delete half of the split are the 0.75 ones exactly on the op-count ' +
+  'signal. What moves is the insert half, which builds up through every smaller table, and any size where the ' +
+  'add/remove keys’ own markers — removed keys count toward the ceiling too — tip a nearly full table into ' +
+  'doubling before anything is timed. ';
+
+/**
  * The PNG caption line, or `null` at the default — the like-for-like run every other note on
  * the page describes. `reach` is the search series' {@link OaLoadReach}, when there is one.
  */
@@ -67,10 +93,11 @@ export function oaLoadSheetNote(maxLoad: number, reach: OaLoadReach | null): str
   if (isDefaultOaLoad(maxLoad)) return null;
   return (
     `The open-addressing hash set (light blue) ran at max load ${maxLoad}, not the chaining set’s ` +
-    `${CHAINING_MAX_LOAD}, so the two hash sets are not like for like here: their tables differ in size at many n ` +
-    'and the gap between their lines is load factor as well as collision strategy. ' +
+    `${CHAINING_MAX_LOAD}, so the two hash sets are not like for like here: wherever its table came out a different ` +
+    'size from the 0.75 one, the gap between their lines is load factor as well as collision strategy. ' +
     reachSentence(maxLoad, reach) +
     directionSentence(maxLoad) +
+    CHURN_SENTENCE +
     'Its fitted label is not a claim either: the line saws as the table fills and doubles.'
   );
 }
@@ -91,20 +118,16 @@ export function OaLoadNote({
   return (
     <Callout title={`Not like for like: the light-blue hash set ran at max load ${maxLoad}`} tone="caveat">
       This run built the open-addressing hash set to rehash at {maxLoad} full instead of {CHAINING_MAX_LOAD}. The
-      chaining hash set (blue) always rehashes at {CHAINING_MAX_LOAD}, so the two tables no longer have the same
-      size at every n, and the gap between the two blue lines is the load factor as well as the collision
-      strategy. {directionSentence(maxLoad)}
+      chaining hash set (blue) always rehashes at {CHAINING_MAX_LOAD}, so wherever the light-blue table comes out a
+      different size, the gap between the two blue lines is the load factor as well as the collision strategy.{' '}
+      {directionSentence(maxLoad)}
       {chart === 'search' ? (
         <>
           {reachSentence(maxLoad, reach)}Its fitted label is not a claim: the line saws up and down as the table
           fills and doubles, and more loudly the higher the ceiling.
         </>
       ) : (
-        <>
-          Removed keys leave markers that count toward the ceiling too, so the add/remove keys’ own markers can
-          tip a nearly full table into doubling before anything is timed — at some sizes the add/remove line is
-          measured on a roomier table than the search line at the same n.
-        </>
+        CHURN_SENTENCE
       )}{' '}
       Choose {DEFAULT_OA_MAX_LOAD} above and run again for the like-for-like comparison.
     </Callout>
