@@ -64,7 +64,9 @@ export function mixNotes(s: ProbeMixSummary, keyType: 'number' | 'string'): stri
   const tail =
     keyType === 'number'
       ? 'The misses sit just past the largest stored key, which is the skip list’s cheapest question, so ' +
-        'more misses pull its line down against the sorted array’s (METHODOLOGY §4.9).'
+        'more misses pull its line down against the sorted array’s (METHODOLOGY §4.9). One exception to ' +
+        '“never its slope”: the plain BST on data whose largest keys arrive first, where those misses take ' +
+        'a single step — on misses only its line can read flat for an O(n) chain (METHODOLOGY §4.15).'
       : 'Each miss is a stored key with its last character changed, so a trie walks the whole key for a ' +
         'miss as for a hit and its line barely moves with the mix (METHODOLOGY §2.5, §4.9).';
   return [lead + tail];
@@ -108,12 +110,14 @@ export function ProbeMixControl({
       <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
         Every structure is asked the <em>same</em> questions at each size — {PROBES_PER_POINT} of them, or fewer
         at the smallest sizes, where there are not enough stored keys to ask about; this sets how many are for
-        keys it holds. It applies to the next run. The mix moves each search line up or down and never
-        tilts it: a scan finds a stored key about halfway through on average but has to read everything to rule a
-        key out, the hash sets stay flat either way, numeric misses sit just past your largest key — the cheapest
-        thing to ask a skip list — and a trie pays about the same for a hit as for a text miss, which is one of
-        your keys with its last letter changed. The default 50/50 is the workload the built-in checks were tuned
-        on.
+        keys it holds. It applies to the next run. The mix moves each search line up or down and, with one
+        exception, never tilts it: a scan finds a stored key about halfway through on average but has to read
+        everything to rule a key out, the hash sets stay flat either way, numeric misses sit just past your largest
+        key — the cheapest thing to ask a skip list — and a trie pays about the same for a hit as for a text miss,
+        which is one of your keys with its last letter changed. The exception is the plain BST on data whose
+        largest keys arrive first (reverse-sorted above all): there a miss takes a single step, so{' '}
+        <em>misses only</em> can draw it flat — the note under the search chart says when. The default 50/50 is
+        the workload the built-in checks were tuned on.
       </div>
     </div>
   );

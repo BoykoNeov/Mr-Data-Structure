@@ -37,6 +37,13 @@ describe('BST search notes', () => {
     expect(html).not.toMatch(/This run asked only for keys that are missing/);
   });
 
+  it('a hits-only run asks no missing keys, so the allowance is not printed', () => {
+    const html = note({ sorted: true, presentFraction: 1 });
+    expect(html).toMatch(/the same search, different shapes/);
+    expect(html).not.toMatch(/right-hand edge/);
+    expect(html).not.toMatch(/missing keys/);
+  });
+
   it('on sorted data it says the BST search is a walk down a chain, O(n)', () => {
     const html = note({ sorted: true, presentFraction: 0.5 });
     expect(html).toMatch(/This dataset is sorted/);

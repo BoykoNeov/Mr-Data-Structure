@@ -82,7 +82,8 @@ export function BstSearchNote({
           tree’s true slope. The add/remove chart below tries both ends of the key range, so it is honest
           either way (docs/METHODOLOGY.md §4 hurdle 15).
         </>
-      ) : (
+      ) : presentFraction === 1 ? null : (
+        // Only while the run asked absent keys at all — a hits-only run has none.
         <>
           One allowance: the missing keys in the workload are all above the largest stored key, so for the
           BST they test only its right-hand edge. Found keys walk the real path, so with hits in the mix the

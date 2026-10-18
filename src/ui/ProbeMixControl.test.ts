@@ -29,9 +29,20 @@ describe('ProbeMixControl', () => {
     expect(num).toMatch(/0% hits \/ 100% misses/);
     expect(num).toMatch(/never its slope/);
     expect(num).toMatch(/skip list/);
+    // ...and names the one structure whose slope a mix *can* move (METHODOLOGY §4 hurdle 15).
+    expect(num).toMatch(/One exception to “never its slope”: the plain BST/);
     const [str] = mixNotes(summarizeMix({ presentFraction: 1 }, 1000), 'string');
     expect(str).toMatch(/trie/);
     expect(str).not.toMatch(/skip list/);
+    expect(str).not.toMatch(/BST/);
+  });
+
+  it('the help text qualifies "never tilts it" with the BST exception', () => {
+    const html = renderToStaticMarkup(
+      createElement(ProbeMixControl, { value: 0.5, onChange: () => {}, disabled: false }),
+    );
+    expect(html).toMatch(/with one\s+exception, never tilts it/);
+    expect(html).toMatch(/plain BST/);
   });
 
   it('renders radios, never a <select> — the gate drives the first <select> on the page', () => {
