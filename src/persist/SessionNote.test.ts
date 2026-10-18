@@ -24,6 +24,8 @@ describe('sessionNoteText', () => {
     expect(text).toContain('in this browser only');
     expect(text).not.toContain('Restored from this browser');
     expect(text).toContain('nothing is uploaded');
+    // The graph's edge list is stored too, so the note must say so — forget clears it as well.
+    expect(text).toContain('a pasted edge list included');
     expect(showForget).toBe(true);
   });
 
@@ -39,7 +41,7 @@ describe('sessionNoteText', () => {
       fmt,
     );
     expect(text).toContain('forgotten');
-    expect(text).toContain('Running again, or changing a chart or tab setting, starts saving again');
+    expect(text).toContain('Running again, measuring the graph, or changing a chart or tab setting starts saving again');
   });
 
   it('cannot steal the browser gate’s click on the run button', () => {

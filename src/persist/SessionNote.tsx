@@ -40,8 +40,8 @@ export function sessionNoteText(
   }
   if (p.cleared) {
     return {
-      text: 'Saved session forgotten — a reload now starts from the defaults. Running again, or changing a chart or tab ' +
-        'setting, starts saving again.',
+      text: 'Saved session forgotten — a reload now starts from the defaults. Running again, measuring the graph, or ' +
+        'changing a chart or tab setting starts saving again.',
       showForget: true,
     };
   }
@@ -56,8 +56,8 @@ export function sessionNoteText(
   }
   return {
     text:
-      'This page remembers the dataset you last ran (pasted data included) and your chart and tab choices — ' +
-      'in this browser only; nothing is uploaded or shared.',
+      'This page remembers the dataset you last ran (pasted data included), the graph you last measured (a pasted ' +
+      'edge list included) and your chart and tab choices — in this browser only; nothing is uploaded or shared.',
     showForget: true,
   };
 }
