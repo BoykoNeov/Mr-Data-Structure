@@ -1,12 +1,13 @@
 import type { SweepPoint } from '../bench/measure';
 import { REGISTRY } from '../registry';
 import type { SeriesView } from './SweepChart';
+import type { NAxis } from './storedAxis';
 
 /**
  * **Stored size next to input size** (docs/PLAN.md §13; docs/METHODOLOGY.md §4 hurdle 8).
  *
  * Every chart's x-axis is `n`, the number of **input** keys in the prefix a point was built
- * from — and that stays the axis. A structure that de-duplicates (the hash sets, the trie)
+ * from — and that stays the default axis (a stored-n axis is opt-in, `./storedAxis`). A structure that de-duplicates (the hash sets, the trie)
  * holds fewer keys than that on data with repeats: on the default uniform dataset, whose
  * integers are drawn *with replacement* from `[0, n]`, the hash set at the top of the search
  * sweep holds only about 63 % of its input. The curve is still honest for that structure —
@@ -66,8 +67,12 @@ export function legendValue(y: number | null, p: SweepPoint | undefined): string
  * largest input size where it differs. Structures appear once even when several of their
  * series (search, churn) are passed; the largest-n reading wins. Empty when nothing on the
  * chart drops a key — which is the common case, and then nothing is said.
+ *
+ * `axis` is the x-axis the chart is drawn on (./storedAxis): the closing sentence says which
+ * size the axis counts, so it must follow the toggle — "counts input keys" under a stored-n
+ * axis would be false. Omitted, it is the default input axis and the wording is unchanged.
  */
-export function storedSizeNotes(views: readonly SeriesView[]): string[] {
+export function storedSizeNotes(views: readonly SeriesView[], axis: NAxis = 'input'): string[] {
   const byStructure = new Map<string, DedupedPoint>();
   for (const v of views) {
     const d = topDedupedPoint(v);
@@ -79,7 +84,10 @@ export function storedSizeNotes(views: readonly SeriesView[]): string[] {
     const label = REGISTRY[id as keyof typeof REGISTRY]?.label ?? id;
     return (
       `The ${label} keeps one copy of each repeated key: at n = ${fmt(d.n)} input keys it holds ` +
-      `${fmt(d.storedN)} (${storedShare(d)}). The x-axis counts input keys, not stored ones.`
+      `${fmt(d.storedN)} (${storedShare(d)}). ` +
+      (axis === 'input'
+        ? 'The x-axis counts input keys, not stored ones.'
+        : 'The x-axis here counts stored keys, so its line is drawn, and fitted, at the sizes it held.')
     );
   });
 }

@@ -596,6 +596,37 @@ try {
     }
   }
 
+  // ── The stored-n x-axis toggle (src/ui/storedAxis.ts) — a view, not a measurement ──
+  //
+  // Switching the charts to stored n refits every line in the UI layer only, so the proofs
+  // this gate reads (fitted on input n) must come back byte-identical, and nothing must be
+  // re-measured. DOM and JSON only — no clock. Switched back before the second pass, whose
+  // asserts never read the UI fits but should start from the page's default view anyway.
+  {
+    const proofsBefore = await page.evaluate(() => JSON.stringify([window.__sweepProof, window.__mutationProof]));
+    await page.locator('input[name="n-axis"][value="stored"]').check();
+    const flipped = await page
+      .waitForFunction(() => document.querySelector('[data-chart="search"]')?.getAttribute('data-x-axis') === 'stored', null, { timeout: 15000 })
+      .then(() => true, () => false);
+    want('stored-n axis: the search chart is redrawn on stored n', flipped);
+    const storedText = await page.evaluate(() => document.body.innerText);
+    want(
+      'stored-n axis: the stored-size note says the axis counts stored keys',
+      storedText.includes('The x-axis here counts stored keys') && !storedText.includes('The x-axis counts input keys'),
+    );
+    want(
+      'stored-n axis: the finite-difference rows are tagged as staying on input n',
+      storedText.includes('[on input n — no stored count]'),
+    );
+    const proofsAfter = await page.evaluate(() => JSON.stringify([window.__sweepProof, window.__mutationProof]));
+    want('stored-n axis: the gate’s proofs (input-n fits) are unchanged by the toggle', proofsAfter === proofsBefore);
+    await page.locator('input[name="n-axis"][value="input"]').check();
+    const back = await page
+      .waitForFunction(() => document.querySelector('[data-chart="search"]')?.getAttribute('data-x-axis') === null, null, { timeout: 15000 })
+      .then(() => true, () => false);
+    want('stored-n axis: switching back restores the default input-n chart', back);
+  }
+
   // ── Second pass: the same page, driven onto **reverse-sorted** input ──
   //
   // The default run above is uniform, on which every tree looks balanced. Reverse-sorted

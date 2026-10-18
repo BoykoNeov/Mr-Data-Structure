@@ -2,9 +2,10 @@ import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { SweepPoint, SweepSeries } from '../bench/measure';
-import { CLASS_BASIS, type FitResult } from '../bench/fit';
+import { CLASS_BASIS, type ComplexityClass, type FitResult } from '../bench/fit';
 import { REGISTRY, theoreticalClass, type InputShape } from '../registry';
 import { legendValue, storedSizeNotes, topDedupedPoint } from './storedSize';
+import { axisNotes, axisOf, axisTag, storedSweepLayout, X_AXIS_LABEL, type XBasis } from './storedAxis';
 
 /**
  * One overlaid line on the sweep chart: a measured series plus its fitted
@@ -14,6 +15,12 @@ export interface SeriesView {
   readonly series: SweepSeries;
   readonly fit: FitResult;
   readonly color: string;
+  /**
+   * Present only while the **stored-n x-axis** is selected (./storedAxis, docs/PLAN.md §13):
+   * the x each point is drawn at, and the fit above is then the one taken on those x values.
+   * Absent on the default axis, so every default chart, fit and export is unchanged.
+   */
+  readonly x?: XBasis;
 }
 
 /** Which signal to plot: measured wall-clock, or the deterministic op-count (§7.1 toggle). */
@@ -67,7 +74,7 @@ function widthOf(host: HTMLElement): number {
 export function seriesLabel(v: SeriesView): string {
   const name = REGISTRY[v.series.structure]?.label ?? v.series.structure;
   const se = v.fit.slopeStderr > 0 ? ` ± ${v.fit.slopeStderr.toFixed(2)}` : '';
-  return `${name} ${v.series.op} — ${v.fit.best} (slope ${v.fit.logLogSlope.toFixed(2)}${se})`;
+  return `${name} ${v.series.op}${axisTag(v)} — ${v.fit.best} (slope ${v.fit.logLogSlope.toFixed(2)}${se})`;
 }
 
 /**
@@ -101,11 +108,18 @@ export function SweepChart({
     const host = hostRef.current;
     if (!host || views.length === 0) return;
 
+    // The stored-n axis (./storedAxis) lays each line out on its own x values; the default
+    // input-n path below it is untouched.
+    const stored =
+      axisOf(views) === 'stored'
+        ? storedSweepLayout(views, signal, showTheory ? (v) => theoreticalClass(v.series.structure, v.series.op, shape) : null)
+        : null;
+
     const sizes = views[0].series.points.map((p) => p.n);
     const pick = yValue(signal);
     const measured = views.map((v) => v.series.points.map(pick));
 
-    const theory = showTheory
+    const inputTheory = showTheory && !stored
       ? views.map((v, i) => {
           const cls = theoreticalClass(v.series.structure, v.series.op, shape);
           const f = CLASS_BASIS[cls];
@@ -113,8 +127,11 @@ export function SweepChart({
           return { cls, ys: sizes.map((n) => a * f(n)) };
         })
       : [];
+    const theory: readonly { readonly cls: ComplexityClass }[] = stored ? stored.theory : inputTheory;
 
-    const data: uPlot.AlignedData = [sizes, ...measured, ...theory.map((t) => t.ys)];
+    const data: uPlot.AlignedData = stored
+      ? [stored.xs.slice(), ...stored.measured.map((r) => r.slice()), ...stored.theory.map((t) => t.ys.slice())]
+      : [sizes, ...measured, ...inputTheory.map((t) => t.ys)];
 
     const drawSpread = (u: uPlot) => {
       if (!showSpread || signal !== 'nanos') return;
@@ -129,7 +146,7 @@ export function SweepChart({
           if (!(p.minNanos > 0 && p.maxNanos > 0) || p.maxNanos === p.minNanos) return;
           // Guard against a hidden series (legend click) and out-of-view points.
           if (!u.series[vi + 1].show) return;
-          const x = u.valToPos(sizes[pi], 'x', true);
+          const x = u.valToPos(stored ? stored.xOfPoint[vi][pi] : sizes[pi], 'x', true);
           const y0 = u.valToPos(p.minNanos, 'y', true);
           const y1 = u.valToPos(p.maxNanos, 'y', true);
           ctx.beginPath();
@@ -154,22 +171,29 @@ export function SweepChart({
       // date ("2:00am 1/1/70") — the sweep sizes are counts, not instants.
       scales: { x: { distr: 3, time: false }, y: { distr: 3 } },
       axes: [
-        { label: 'n (size)' },
+        { label: stored ? X_AXIS_LABEL.stored : 'n (size)' },
         { label: signal === 'nanos' ? 'ns / op' : 'ops / op' },
       ],
       series: [
-        { label: 'n' },
-        ...views.map((v) => ({
+        { label: stored ? 'stored n' : 'n' },
+        ...views.map((v, vi) => ({
           label: seriesLabel(v),
           stroke: v.color,
           width: 2,
           points: { show: true, size: 6 },
+          // On the stored axis a line has no value in another line's slots; join across them.
+          ...(stored ? { spanGaps: true } : {}),
           // A de-duplicating structure's hover read-out also says how many keys it held at
           // that n (./storedSize); every other series keeps uPlot's default formatting.
           ...(topDedupedPoint(v)
             ? {
                 value: (_u: uPlot, y: number | null, _s: number, idx: number | null) =>
-                  legendValue(y, idx === null ? undefined : v.series.points[idx]),
+                  legendValue(
+                    y,
+                    idx === null
+                      ? undefined
+                      : v.series.points[stored ? (stored.pointAt[vi][idx] ?? -1) : idx],
+                  ),
               }
             : {}),
         })),
@@ -179,6 +203,7 @@ export function SweepChart({
           width: 1,
           dash: [6, 4],
           points: { show: false },
+          ...(stored ? { spanGaps: true } : {}),
         })),
       ],
       hooks: { draw: [drawSpread] },
@@ -197,13 +222,20 @@ export function SweepChart({
   // only when a structure on it actually dropped repeated keys. Kept outside the
   // `data-chart` host so the PNG export's canvas lookup is unchanged; the PNG carries the
   // same sentences as caption lines instead (CompareSection's `sheetNotes`).
-  const notes = storedSizeNotes(views);
+  const axis = axisOf(views);
+  const notes = storedSizeNotes(views, axis);
+  const xNotes = axisNotes(views);
   return (
     <>
-      <div ref={hostRef} data-chart={name} />
+      <div ref={hostRef} data-chart={name} data-x-axis={axis === 'stored' ? 'stored' : undefined} />
       {notes.length > 0 && (
         <p data-stored-size-note style={{ fontSize: 12, color: '#666', margin: '4px 0 0' }}>
           <strong>Stored vs input size.</strong> {notes.join(' ')} Hover a point to see the count at each n.
+        </p>
+      )}
+      {xNotes.length > 0 && (
+        <p data-x-axis-note style={{ fontSize: 12, color: '#666', margin: '4px 0 0' }}>
+          <strong>Stored-size axis.</strong> {xNotes.join(' ')}
         </p>
       )}
     </>
