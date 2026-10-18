@@ -53,6 +53,9 @@ export function choiceLabel(presentFraction: number): string {
  * - for the trie, a derived string miss (a stored key with its last byte changed) and a hit
  *   both walk the whole key, so its count barely moves with the mix (§2.5) — pinned on the
  *   TS twin by `probeMix.test.ts`.
+ *
+ * Under the opt-in mid-range misses (`s.missForm`, ./MissFormControl) the numeric tail says
+ * so instead of the skip-list and BST allowances, which are properties of `max + 1 …` only.
  */
 export function mixNotes(s: ProbeMixSummary, keyType: 'number' | 'string'): string[] {
   if (s.presentFraction === DEFAULT_PRESENT_FRACTION) return [];
@@ -62,7 +65,12 @@ export function mixNotes(s: ProbeMixSummary, keyType: 'number' | 'string'): stri
     'checks are calibrated on. A mix moves a line up or down, never its slope: a scan stops at a hit ' +
     '(about n/2 steps) but must read all n for a miss, and a hash set stays flat either way. ';
   const tail =
-    keyType === 'number'
+    keyType === 'number' && s.missForm === 'midRange'
+      ? // The opt-in mid-range form (./MissFormControl): no structure gets a free miss, so the
+        // skip-list allowance and the BST exception below do not apply.
+        'The misses sit between stored keys, so every structure that compares keys walks down to the gap ' +
+        'where the key would be — no line is flattered by its misses, the plain BST’s included (METHODOLOGY §4.9, §4.15).'
+      : keyType === 'number'
       ? 'The misses sit just past the largest stored key, which is the skip list’s cheapest question, so ' +
         'more misses pull its line down against the sorted array’s (METHODOLOGY §4.9). One exception to ' +
         '“never its slope”: the plain BST on data whose largest keys arrive first, where those misses take ' +

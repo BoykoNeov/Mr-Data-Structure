@@ -971,6 +971,75 @@ try {
     }
   }
 
+  // ── Fifth pass: **mid-range misses** on reverse-sorted data (docs/PLAN.md §13 probe-mix
+  // item (a); docs/METHODOLOGY.md §4 hurdle 15) ──
+  //
+  // Last, after the graph, so the four passes above keep their order and their inputs. It
+  // drives the two radio groups (never a <select>), so the dataset picker's
+  // `locator('select').first()` is still the generator. A misses-only run with the default
+  // `max + 1 …` misses would chart the reverse-sorted BST flat (a one-node right spine); with
+  // the misses between stored keys each one walks the chain, so the BST's search must read
+  // O(n) again while the AVL's stays sub-linear. **These bands are uncalibrated**: they reuse
+  // the default reverse-sorted pass's thresholds, and no run has measured this workload yet.
+  // Clock-free, the same split is pinned by `bst::tests::mid_range_misses_walk_the_whole_left_chain`
+  // and `src/bench/probeMix.midRange.test.ts`.
+  await page.evaluate(() => {
+    window.__sweepProof = undefined;
+    window.__heapMutationProof = undefined;
+    window.__compareMeta = undefined;
+  });
+  await page.locator('select').first().selectOption('reverse-sorted');
+  await page.getByRole('radio', { name: /^misses only$/ }).check();
+  await page.getByRole('radio', { name: /^between stored keys$/ }).check();
+  await page.getByRole('button', { name: /run the sweeps/i }).first().click();
+  await page.waitForFunction(
+    () =>
+      window.__heapMutationProof !== undefined ||
+      /status:\s*error/.test(document.body.innerText),
+    { timeout: 150000 },
+  );
+  const midSearch = await page.evaluate(() => window.__sweepProof ?? null);
+  const midMeta = await page.evaluate(() => window.__compareMeta ?? null);
+  const midMix = midMeta && midMeta.probeMix;
+  want(
+    'mid-range pass measured reverse-sorted, misses only, misses between stored keys',
+    midMeta &&
+      midMeta.order.kind === 'reverse-sorted' &&
+      midMix &&
+      midMix.missForm === 'midRange' &&
+      midMix.present === 0 &&
+      midMix.absent === 128,
+  );
+  if (midSearch) {
+    const b = midSearch.find((p) => p.structure === 'bst');
+    const a = midSearch.find((p) => p.structure === 'avl');
+    want('mid-range pass measured both trees', b && a);
+    if (b) {
+      want(
+        `mid-range misses: reverse-sorted BST search reads O(n) (slope ${b.slope.toFixed(2)} > 0.6, uncalibrated)`,
+        b.slope > 0.6,
+      );
+    }
+    if (a) {
+      want(
+        `mid-range misses: reverse-sorted AVL search stays sub-linear (slope ${a.slope.toFixed(2)} < 0.4, uncalibrated)`,
+        a.slope < 0.4,
+      );
+    }
+    // Info only, like the B-tree hypothesis: the skip list's misses are no longer its cheap
+    // query here, so its line should sit nearer the sorted array's. A constant on the clock is
+    // not a claim this gate makes.
+    const sk = midSearch.find((p) => p.structure === 'skiplist');
+    const sa = midSearch.find((p) => p.structure === 'sarr');
+    if (sk && sa) {
+      console.log(
+        `--- mid-range misses (info only): search at top n, skip list / sorted array = ${(sk.lastNanos / sa.lastNanos).toFixed(2)}× ---`,
+      );
+    }
+  } else {
+    want('mid-range search proof published', false);
+  }
+
   ok = checks.length > 0 && checks.every((c) => c.pass);
 } catch (err) {
   logs.push(`[harness] ${err.message}`);
