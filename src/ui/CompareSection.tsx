@@ -4,13 +4,13 @@ import type { BenchEngine } from '../bench/BenchEngine';
 import {
   runAllSweeps,
   runStringSweeps,
-  toView,
   canonicalSearch,
   heapSearch,
   type CompareResult,
   type StringCompareResult,
 } from '../compare/runSweeps';
 import type { Dataset } from '../data';
+import type { SweepSeries } from '../bench/measure';
 import { REGISTRY } from '../registry';
 import { Callout, ChartGuide, ComplexityLadder } from './Explain';
 import { DatasetPicker, describeDataset } from './DatasetPicker';
@@ -29,6 +29,8 @@ import { MissFormControl, missFormField, missFormNotes } from './MissFormControl
 import { storedSizeNotes } from './storedSize';
 import { CHAINING_MAX_LOAD, DEFAULT_OA_MAX_LOAD, isDefaultOaLoad, oaLoadReach } from '../bench/oaLoad';
 import { OaLoadControl, OaLoadNote, describeOaLoad, oaLoadSheetNote } from './HashOaNotes';
+import { axisNotes, axisTag, viewOnAxis, X_AXIS_LABEL, type NAxis } from './storedAxis';
+import { NAxisControl } from './NAxisControl';
 import { useComparePersistence } from '../persist/useComparePersistence';
 import { SessionNote } from '../persist/SessionNote';
 
@@ -52,7 +54,7 @@ function FitRow({ v, what }: { readonly v: SeriesView; readonly what?: string })
   const se = v.fit.slopeStderr > 0 ? ` ± ${v.fit.slopeStderr.toFixed(2)}` : '';
   return (
     <li>
-      <strong style={{ color: v.color }}>{name}</strong> {what ?? v.series.op}:{' '}
+      <strong style={{ color: v.color }}>{name}</strong> {what ?? v.series.op}{axisTag(v)}:{' '}
       <strong>{v.fit.best}</strong> (slope {v.fit.logLogSlope.toFixed(2)}{se}, tail{' '}
       {v.fit.tailSlope.toFixed(2)}, R² {v.fit.r2.toFixed(3)}, {v.fit.trend}) —{' '}
       <span style={{ color: '#666' }}>{v.fit.note}</span>
@@ -87,6 +89,9 @@ export function CompareSection() {
   // Where the numeric misses sit for the next run (docs/PLAN.md §13). Not persisted: a reload,
   // and so the mount-time auto-run, always measures the calibrated `max + 1 …` form.
   const [missForm, setMissForm] = useState<MissForm>(DEFAULT_MISS_FORM);
+  // Which n the charts plot and fit against (./storedAxis). A view setting, not a measurement:
+  // the results and the gate's `window.__*Proof` mirrors stay on input n either way.
+  const [nAxis, setNAxis] = useState<NAxis>('input');
 
   const run = async (d: Dataset, mixOverride?: ProbeMix) => {
     const engine = engineRef.current;
@@ -140,25 +145,27 @@ export function CompareSection() {
   // Remember the chart view (writes only when it differs from what is stored).
   useEffect(() => persisted.saveView({ signal, showTheory, showSpread }), [signal, showTheory, showSpread]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fit on the selected signal (§2.2): op-count is the clean curve, wall-clock the real one.
+  // Re-fit on the selected signal (§2.2): op-count is the clean curve, wall-clock the real one —
+  // and on the selected x-axis, which on the default `'input'` is exactly `toView`.
+  const onAxis = (s: SweepSeries) => viewOnAxis(s, signal, nAxis);
   // Risk R6: the shared charts show only the canonical insert/search/delete structures.
   // The min-heap's op set is different, so its series are split out into their own section
   // below rather than being lined up against structures it cannot fairly be compared to.
   const search = useMemo(
-    () => canonicalSearch(result).map((v) => toView(v.series, signal)),
-    [result, signal],
+    () => canonicalSearch(result).map((v) => onAxis(v.series)),
+    [result, signal, nAxis],
   );
   const heapScan = useMemo(
-    () => heapSearch(result).map((v) => toView(v.series, signal)),
-    [result, signal],
+    () => heapSearch(result).map((v) => onAxis(v.series)),
+    [result, signal, nAxis],
   );
   const heapChurn = useMemo(
-    () => (result?.heap ?? []).filter((v) => v.series.op === 'churn').map((v) => toView(v.series, signal)),
-    [result, signal],
+    () => (result?.heap ?? []).filter((v) => v.series.op === 'churn').map((v) => onAxis(v.series)),
+    [result, signal, nAxis],
   );
   const heapSplit = useMemo(
-    () => (result?.heap ?? []).filter((v) => v.series.op !== 'churn').map((v) => toView(v.series, signal)),
-    [result, signal],
+    () => (result?.heap ?? []).filter((v) => v.series.op !== 'churn').map((v) => onAxis(v.series)),
+    [result, signal, nAxis],
   );
   /** The array's scan, reused (not re-measured) as the reference line for the heap's. */
   const arrayScan = useMemo(() => search.filter((v) => v.series.structure === 'array'), [search]);
@@ -166,35 +173,35 @@ export function CompareSection() {
     () =>
       [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? []), ...(result?.btree ?? [])]
         .filter((v) => v.series.op === 'churn')
-        .map((v) => toView(v.series, signal)),
-    [result, signal],
+        .map((v) => onAxis(v.series)),
+    [result, signal, nAxis],
   );
   const split = useMemo(
     () =>
       [...(result?.mutation ?? []), ...(result?.trees ?? []), ...(result?.skiplist ?? []), ...(result?.btree ?? [])]
         .filter((v) => v.series.op !== 'churn')
-        .map((v) => toView(v.series, signal)),
-    [result, signal],
+        .map((v) => onAxis(v.series)),
+    [result, signal, nAxis],
   );
 
   // The string run (docs/METHODOLOGY.md §2.5): its own two structures, its own section.
   const stringSearch = useMemo(
-    () => (stringResult?.search ?? []).map((v) => toView(v.series, signal)),
-    [stringResult, signal],
+    () => (stringResult?.search ?? []).map((v) => onAxis(v.series)),
+    [stringResult, signal, nAxis],
   );
   const stringChurn = useMemo(
     () =>
       (stringResult?.mutation ?? [])
         .filter((v) => v.series.op === 'churn')
-        .map((v) => toView(v.series, signal)),
-    [stringResult, signal],
+        .map((v) => onAxis(v.series)),
+    [stringResult, signal, nAxis],
   );
   const stringSplit = useMemo(
     () =>
       (stringResult?.mutation ?? [])
         .filter((v) => v.series.op !== 'churn')
-        .map((v) => toView(v.series, signal)),
-    [stringResult, signal],
+        .map((v) => onAxis(v.series)),
+    [stringResult, signal, nAxis],
   );
 
   const shape = result?.shape ?? 'random';
@@ -289,7 +296,8 @@ export function CompareSection() {
     // reader should conclude from the picture, and the boxes saying so stay on the page.
     if (ranMixSummary) notes.push(...mixNotes(ranMixSummary, stringResult ? 'string' : 'number'));
     notes.push(...missFormNotes(ranMixSummary));
-    notes.push(...storedSizeNotes(chartsOnScreen.flatMap((c) => c.views)));
+    notes.push(...storedSizeNotes(chartsOnScreen.flatMap((c) => c.views), nAxis));
+    notes.push(...axisNotes(chartsOnScreen.flatMap((c) => [...c.views, ...(c.extra ?? [])])));
     return notes;
   };
 
@@ -301,7 +309,7 @@ export function CompareSection() {
       const canvas = plotCanvasOf(root.querySelector<HTMLElement>(`[data-chart="${c.name}"]`));
       if (canvas) {
         shots.push({
-          title: c.title,
+          title: nAxis === 'stored' ? `${c.title} — x-axis: ${X_AXIS_LABEL.stored}` : c.title,
           canvas,
           legend: [
             ...c.views.map((v) => ({ text: seriesLabel(v), color: v.color })),
@@ -324,6 +332,12 @@ export function CompareSection() {
       `signal: ${signal === 'nanos' ? 'wall-clock ns/op (this machine)' : 'op-count (hardware-free)'}` +
         ` · engine: ${version || '—'} · ${new Date().toISOString()}`,
       ...(ranMixSummary ? [describeMix(ranMixSummary)] : []),
+      ...(nAxis === 'stored'
+        ? [
+            'x-axis: stored keys — each structure’s own len() at each point, not the input keys it was handed. ' +
+              'Every slope, local slope and dashed theory curve on this sheet is fitted on that axis.',
+          ]
+        : []),
       ...sheetNotes(),
     ];
     renderSheet(shots, caption).toBlob((blob) => {
@@ -354,6 +368,10 @@ export function CompareSection() {
       ...(result ? { maxLoad: { hashset: CHAINING_MAX_LOAD, hashoa: result.oaMaxLoad } } : {}),
       // Says which size the x-axis is, now that a point can carry both (./storedSize).
       nAxis: 'n = input keys in the prefix; points[].storedN = keys the structure held (its len())',
+      // Only when the stored axis is chosen, so a default export is unchanged (./storedAxis).
+      ...(nAxis === 'stored'
+        ? { xAxis: 'storedN', xAxisNote: 'series[].fit is fitted on series[].xs; series[].inputNFit on n' }
+        : {}),
     };
     // A CSV has no meta block, so a non-default miss form rides on its rows (./export).
     const csvRun: Record<string, string> = ranMixSummary?.missForm === 'midRange' ? { search_misses: 'mid-range' } : {};
@@ -418,6 +436,7 @@ export function CompareSection() {
           <label style={{ marginLeft: 12 }}>
             <input type="checkbox" checked={showSpread} onChange={(e) => setShowSpread(e.target.checked)} /> rep spread (error bars)
           </label>{' '}
+          <NAxisControl value={nAxis} onChange={setNAxis} />{' '}
           <button onClick={() => exportAll('csv')} style={{ marginLeft: 12, fontSize: 12 }}>export CSV</button>{' '}
           <button onClick={() => exportAll('json')} style={{ fontSize: 12 }}>export JSON</button>{' '}
           <button onClick={exportPng} style={{ fontSize: 12 }} title="every chart below, stacked into one image with its legend and this run's provenance">

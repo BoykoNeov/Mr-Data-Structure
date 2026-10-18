@@ -605,6 +605,58 @@ try {
     }
   }
 
+  // ── The stored-n x-axis toggle (src/ui/storedAxis.ts) — a view, not a measurement ──
+  //
+  // Switching the charts to stored n refits every line in the UI layer only, so the proofs
+  // this gate reads (fitted on input n) must come back byte-identical, and nothing must be
+  // re-measured. DOM and JSON only — no clock. Switched back before the second pass, whose
+  // asserts never read the UI fits but should start from the page's default view anyway.
+  //
+  // The `data-x-axis` attribute comes from the JSX, so on its own it would pass even if the
+  // stored drawing (an effect: union x, spanGaps, remapped error bars) threw. The checks
+  // therefore wait for uPlot's *own* legend to name the x series, which exists only once
+  // `new uPlot(...)` succeeded, and listen for page errors across the toggle. If every check
+  // after this block fails at once, suspect this effect: a throw there unmounts the page.
+  {
+    const toggleErrors = [];
+    const onError = (e) => toggleErrors.push(String(e));
+    page.on('pageerror', onError);
+    const xLegend = (label) =>
+      page
+        .waitForFunction(
+          (w) => document.querySelector('[data-chart="search"] .u-legend .u-series:first-child .u-label')?.textContent === w,
+          label,
+          { timeout: 15000 },
+        )
+        .then(() => true, () => false);
+    const proofsBefore = await page.evaluate(() => JSON.stringify([window.__sweepProof, window.__mutationProof]));
+    await page.locator('input[name="n-axis"][value="stored"]').check();
+    const flipped = await page
+      .waitForFunction(() => document.querySelector('[data-chart="search"]')?.getAttribute('data-x-axis') === 'stored', null, { timeout: 15000 })
+      .then(() => true, () => false);
+    want('stored-n axis: the search chart is redrawn on stored n', flipped);
+    want('stored-n axis: uPlot drew the search chart with a "stored n" x series', await xLegend('stored n'));
+    const storedText = await page.evaluate(() => document.body.innerText);
+    want(
+      'stored-n axis: the stored-size note says the axis counts stored keys',
+      storedText.includes('The x-axis here counts stored keys') && !storedText.includes('The x-axis counts input keys'),
+    );
+    want(
+      'stored-n axis: the finite-difference rows are tagged as staying on input n',
+      storedText.includes('[on input n — no stored count]'),
+    );
+    const proofsAfter = await page.evaluate(() => JSON.stringify([window.__sweepProof, window.__mutationProof]));
+    want('stored-n axis: the gate’s proofs (input-n fits) are unchanged by the toggle', proofsAfter === proofsBefore);
+    await page.locator('input[name="n-axis"][value="input"]').check();
+    const back = await page
+      .waitForFunction(() => document.querySelector('[data-chart="search"]')?.getAttribute('data-x-axis') === null, null, { timeout: 15000 })
+      .then(() => true, () => false);
+    want('stored-n axis: switching back restores the default input-n chart', back);
+    want('stored-n axis: uPlot redrew the search chart with the "n" x series', await xLegend('n'));
+    page.off('pageerror', onError);
+    want(`stored-n axis: no page error while toggling (${toggleErrors.join(' | ') || 'none'})`, toggleErrors.length === 0);
+  }
+
   // ── Second pass: the same page, driven onto **reverse-sorted** input ──
   //
   // The default run above is uniform, on which every tree looks balanced. Reverse-sorted

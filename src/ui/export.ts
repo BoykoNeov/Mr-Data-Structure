@@ -1,4 +1,5 @@
 import type { SeriesView } from './SweepChart';
+import { STORED_CSV_COLUMNS, storedCsvCells, storedJsonFields } from './storedAxis';
 
 /**
  * Result export (docs/PLAN.md §7.1): the measured sweep as CSV / JSON, so a
@@ -25,18 +26,23 @@ export const CSV_HEADER =
   'structure,op,n,nanos_per_op,min_nanos,max_nanos,stddev_nanos,op_count,batch,reps,stored_n,max_load';
 
 /**
+ * While the stored-n x-axis is selected (./storedAxis) every row gains two trailing cells,
+ * `x_axis,x`: which size that row was plotted and fitted at (`stored_n`, or `n` for a series
+ * with no stored count) and its value. On the default axis the file is unchanged.
+ *
  * `runColumns` are run-level provenance columns — the same value on every row — appended
- * after {@link CSV_HEADER}'s, and only when given, so a run that has none exports exactly the
+ * after all of those, and only when given, so a run that has none exports exactly the
  * bytes it always did. Today the one user is the opt-in mid-range miss form
  * (`search_misses`, docs/PLAN.md §13): a CSV row carries no meta block, so the form has to
  * ride on the rows or it does not leave the page.
  */
 export function toCsv(views: readonly SeriesView[], runColumns: Readonly<Record<string, string>> = {}): string {
+  const stored = views.some((v) => v.x);
   const extraNames = Object.keys(runColumns);
   const extra = extraNames.map((k) => runColumns[k]);
-  const rows = [[CSV_HEADER, ...extraNames].join(',')];
+  const rows = [[stored ? CSV_HEADER + STORED_CSV_COLUMNS : CSV_HEADER, ...extraNames].join(',')];
   for (const v of views) {
-    for (const p of v.series.points) {
+    for (const [i, p] of v.series.points.entries()) {
       rows.push(
         [
           v.series.structure,
@@ -51,6 +57,7 @@ export function toCsv(views: readonly SeriesView[], runColumns: Readonly<Record<
           p.reps,
           p.storedN ?? '',
           v.series.maxLoad ?? '',
+          ...(stored ? storedCsvCells(v, i) : []),
           ...extra,
         ].join(','),
       );
@@ -82,6 +89,8 @@ export function toJson(views: readonly SeriesView[], meta: Record<string, unknow
           localSlopes: v.fit.localSlopes,
         },
         points: v.series.points,
+        // Stored-n axis only: the x values, and the input-n fit beside the stored-n `fit`.
+        ...storedJsonFields(v),
       })),
     },
     null,

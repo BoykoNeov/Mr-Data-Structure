@@ -202,7 +202,7 @@ function localSlopes(lx: readonly number[], ly: readonly number[]): { slopes: nu
  * trigger it) and material (more than {@link TREND_MIN_DRIFT} across the whole
  * sweep). Needs ≥ 3 intervals (4 points) to say anything but `steady`.
  */
-function classifyTrend(slopes: readonly number[], ns: readonly number[]): SlopeTrend {
+export function classifyTrend(slopes: readonly number[], ns: readonly number[]): SlopeTrend {
   if (slopes.length < 3) return 'steady';
   const lx = ns.map((n) => Math.log(n));
   const { slope, stderr } = olsSlope(lx, slopes);
@@ -219,7 +219,11 @@ function fmtSlope(slope: number, stderr: number): string {
   return stderr > 0 ? `${slope.toFixed(2)} ± ${stderr.toFixed(2)}` : slope.toFixed(2);
 }
 
-function buildNote(
+/**
+ * The fit's honest UI note (§7.2). Exported so a refit on another x-axis
+ * (`src/ui/storedAxis.ts`) words its result exactly as {@link fitComplexity} would.
+ */
+export function buildNote(
   best: ComplexityClass,
   slope: number,
   stderr: number,
