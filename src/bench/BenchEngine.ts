@@ -1,6 +1,8 @@
 import type { MeasureOptions, SweepSeries } from './measure';
 import type { GraphInput, GraphTraversalMeasure } from './graphBench';
 import type { ProbeMix } from './probeMix';
+import type { RawMaxOpProfile } from './maxOp';
+import type { StructureId } from './measure';
 
 /**
  * The benchmark engine boundary.
@@ -202,6 +204,21 @@ export interface BenchEngine {
     graphs: GraphInput[],
     opts?: MeasureOptions,
   ): Promise<GraphTraversalMeasure[]>;
+
+  /**
+   * Profile the **most expensive single operation** of each structure in `structures` at each
+   * size in `sizes` (docs/PLAN.md §13, docs/METHODOLOGY.md §4 hurdle 13) — one
+   * {@link RawMaxOpProfile} per structure per size, structure-major. **Clock-free**: no batch,
+   * no timer; each figure is the largest per-call count of the twin's own counted path over a
+   * fixed workload (build from the prefix in dataset order, then delete it ends-first —
+   * `bench-engine/src/structures/maxop.rs`). Run on request, after the timed sweeps, so it
+   * cannot disturb them. The engine may transfer (consume) `keys`.
+   */
+  runMaxOpProfile(
+    keys: Float64Array,
+    sizes: number[],
+    structures: readonly StructureId[],
+  ): Promise<RawMaxOpProfile[]>;
 
   /** Release the worker / underlying resources. */
   dispose(): void;

@@ -515,6 +515,46 @@ impl AvlF64 {
         (removed, ops)
     }
 
+    /// Insert one key, returning `(comparisons, rotations)` — the two halves of
+    /// [`Self::insert_one_counted`]'s op-count, kept apart for the worst-single-operation
+    /// view (`structures::maxop`, docs/PLAN.md §13). The comparisons are the insert's own
+    /// descent, walked by the insert's own rule (`key < node` ⇒ left, else right, to an
+    /// empty child) **before** the insert runs; the rest of the op-count is rotations. A
+    /// pre-insert *search* would not do: it stops at the first equal key, where an insert
+    /// of a duplicate walks on to a leaf. Mutates.
+    pub fn insert_one_detail(&mut self, key: f64) -> (u64, u64) {
+        let mut comparisons = 0u64;
+        let mut cur = self.root.as_ref();
+        while let Some(n) = cur {
+            comparisons += 1;
+            cur = if key < n.value { n.left.as_ref() } else { n.right.as_ref() };
+        }
+        let ops = self.insert_one_counted(key);
+        (comparisons, ops - comparisons)
+    }
+
+    /// Delete the first occurrence of `target`, returning `(removed, comparisons,
+    /// rotations)` — [`Self::delete_one_counted`]'s op-count split as in
+    /// [`Self::insert_one_detail`]. The comparisons are the delete's find phase, walked by
+    /// the delete's own rule (`<` ⇒ left, `>` ⇒ right, else the match ends the walk). The
+    /// successor walk of a two-child delete is free, so the remainder is rotations. Mutates.
+    pub fn delete_one_detail(&mut self, target: f64) -> (bool, u64, u64) {
+        let mut comparisons = 0u64;
+        let mut cur = self.root.as_ref();
+        while let Some(n) = cur {
+            comparisons += 1;
+            cur = if target < n.value {
+                n.left.as_ref()
+            } else if target > n.value {
+                n.right.as_ref()
+            } else {
+                None
+            };
+        }
+        let (removed, ops) = self.delete_one_counted(target);
+        (removed, comparisons, ops - comparisons)
+    }
+
     /// Keys in ascending (in-order) order — the sorted multiset. Recursive; AVL height is
     /// bounded (≈ 29 for a million keys), so the call stack is safe.
     pub fn keys_in_order(&self) -> Vec<f64> {

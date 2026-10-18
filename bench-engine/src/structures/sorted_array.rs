@@ -308,6 +308,13 @@ impl SortedArrayF64 {
         (removed, ops)
     }
 
+    /// Slots the backing block holds before it must grow — a max-op hook for observing a
+    /// reallocation from outside (`structures::maxop`, docs/PLAN.md §13); not on the wasm
+    /// surface.
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
+    }
+
     /// Stored keys in ascending (= iteration) order. A conformance hook (docs/PLAN.md §12);
     /// not on the wasm surface.
     pub fn keys_in_order(&self) -> Vec<f64> {

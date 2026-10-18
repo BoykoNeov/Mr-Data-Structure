@@ -66,6 +66,7 @@ pub mod hash_set_oa;
 pub mod hash_set_str;
 pub mod heap;
 pub mod linked_list;
+pub mod maxop;
 pub mod skip_list;
 pub mod sorted_array;
 pub mod trie;

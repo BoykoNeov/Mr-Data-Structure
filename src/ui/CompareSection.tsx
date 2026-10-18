@@ -22,6 +22,7 @@ import { download, downloadBlob, toCsv, toJson } from './export';
 import { plotCanvasOf, renderSheet, type ChartShot } from './png';
 import { DllChurnCaveat, DllSearchNote, dllSheetNote } from './DoublyListNotes';
 import { GraphCompareSection } from './GraphCompareSection';
+import { MaxOpSection } from './MaxOpSection';
 import { describeMix, type ProbeMix } from '../bench/probeMix';
 import { ProbeMixControl, mixNotes, shareWord } from './ProbeMixControl';
 import { storedSizeNotes } from './storedSize';
@@ -766,6 +767,15 @@ export function CompareSection() {
           )}
         </>
       )}
+
+      {/* The worst single operation (docs/PLAN.md §13): clock-free, on request, on the numeric
+          run's dataset and mutation ladder — never part of the mount-time run. */}
+      <MaxOpSection
+        engineOf={() => engineRef.current}
+        busy={busy}
+        dataset={result ? dataset : null}
+        sizes={result?.mutationSizes ?? null}
+      />
 
       {/* The graph has its own data, op set and x-axis, so its own section — measured on
           request, sharing this engine (docs/METHODOLOGY.md §2.7). */}

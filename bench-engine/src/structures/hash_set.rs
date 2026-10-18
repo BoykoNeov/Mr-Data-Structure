@@ -321,6 +321,23 @@ impl HashSetF64 {
         self.buckets.iter().map(|b| b.len()).max().unwrap_or(0)
     }
 
+    /// Test/max-op helper: insert `key`, returning `(newly stored, hashes + chain-steps)`.
+    /// The rehash a growing insert triggers is not in that count (see `insert_generic`);
+    /// [`Self::bucket_count`] lets the caller see it (`structures::maxop`, docs/PLAN.md
+    /// §13). Mutates the set.
+    pub fn insert_one_counted(&mut self, key: f64) -> (bool, u64) {
+        let mut ops = 0u64;
+        let before = self.len;
+        self.insert_generic::<true>(key, &mut ops);
+        (self.len != before, ops)
+    }
+
+    /// Number of buckets — a max-op hook for observing a rehash from outside
+    /// (`structures::maxop`); not on the wasm surface.
+    pub fn bucket_count(&self) -> usize {
+        self.buckets.len()
+    }
+
     /// Keys in bucket-walk order (buckets by index, each chain front-to-back) —
     /// the hash set's iteration order. A conformance hook (docs/PLAN.md §12);
     /// not on the wasm surface.

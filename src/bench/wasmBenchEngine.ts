@@ -4,6 +4,8 @@ import type { BenchWorkerApi } from './engine.worker';
 import type { MeasureOptions, SweepSeries } from './measure';
 import type { GraphInput, GraphTraversalMeasure } from './graphBench';
 import type { ProbeMix } from './probeMix';
+import type { RawMaxOpProfile } from './maxOp';
+import type { StructureId } from './measure';
 
 /**
  * Default {@link BenchEngine} implementation: a Web Worker that hosts the
@@ -155,6 +157,15 @@ class WasmBenchEngine implements BenchEngine {
       Comlink.transfer(graphs, graphs.map((g) => g.edges.buffer)),
       opts,
     );
+  }
+
+  runMaxOpProfile(
+    keys: Float64Array,
+    sizes: number[],
+    structures: readonly StructureId[],
+  ): Promise<RawMaxOpProfile[]> {
+    // Transfer the key buffer (docs/PLAN.md risk R7) — detaches `keys` here.
+    return this.api.runMaxOpProfile(Comlink.transfer(keys, [keys.buffer]), sizes, structures);
   }
 
   dispose(): void {
