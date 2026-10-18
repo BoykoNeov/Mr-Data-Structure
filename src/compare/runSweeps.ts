@@ -399,7 +399,8 @@ export async function runStringSweeps(
   const data = stringOrThrow(dataset);
   const searchSizes = sizesFor(data, SWEEP_MIN, STRING_SWEEP_MAX);
   const mutationSizes = sizesFor(data, Math.min(MUT_MIN, data.size), STRING_MUT_MAX);
-  const probeMix = summarizeMix(mix, searchSizes[searchSizes.length - 1]);
+  // Text probes have no miss form (./probeMix), so the summary never names one.
+  const probeMix = summarizeMix({ presentFraction: mix.presentFraction }, searchSizes[searchSizes.length - 1]);
 
   onStatus('running string-key search sweep…');
   const sb = stringBuffers(data);

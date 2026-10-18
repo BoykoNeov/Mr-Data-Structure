@@ -971,10 +971,10 @@ try {
     }
   }
 
-  // ── Fifth pass: **mid-range misses** on reverse-sorted data (docs/PLAN.md §13 probe-mix
+  // ── After the graph pass: **mid-range misses** on reverse-sorted data (docs/PLAN.md §13 probe-mix
   // item (a); docs/METHODOLOGY.md §4 hurdle 15) ──
   //
-  // Last, after the graph, so the four passes above keep their order and their inputs. It
+  // Last, after the graph, so the key and graph passes above keep their order and inputs. It
   // drives the two radio groups (never a <select>), so the dataset picker's
   // `locator('select').first()` is still the generator. A misses-only run with the default
   // `max + 1 …` misses would chart the reverse-sorted BST flat (a one-node right spine); with

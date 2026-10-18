@@ -7,7 +7,7 @@ import {
   generateZipfian,
   type Dataset,
 } from '../data';
-import { AvlF64, BstF64, DynArrayF64, SkipListF64 } from '../structures';
+import { AvlF64, BstF64, BTreeF64, DynArrayF64, HashSetF64, HashSetOaF64, SkipListF64 } from '../structures';
 import { buildDataset, DEFAULT_PICKER } from '../ui/DatasetPicker';
 import {
   buildNumericProbes,
@@ -235,6 +235,32 @@ describe('what mid-range misses change (op-counts, no clock)', () => {
     // A mid-range miss descends to the gap a hit would descend to: about a hit's cost.
     expect(midr / hits).toBeGreaterThan(0.8);
     expect(midr / hits).toBeLessThan(1.25);
+  });
+
+  it('hash sets: a half-integer miss is an ordinary key to a hash — flat in n, near the above-max cost', () => {
+    // Fairness for the structures that hash rather than compare: the mid-range form must not
+    // hand either set a cheaper or a dearer miss than `max + 1 …` does (both hash the f64 bits).
+    const keys = numericKeys(generateUniform(20_000, 0, 20_000, true, 8)); // dense: misses are k + ½
+    for (const make of [(k: number[]) => HashSetF64.fromKeys(k), (k: number[]) => HashSetOaF64.fromKeys(k)]) {
+      const at = (n: number, mix: ProbeMix) => {
+        const s = make(Array.from(keys.subarray(0, n)));
+        return meanOps((k) => s.search(k), buildNumericProbes(keys, n, mix));
+      };
+      expect(at(20_000, MID) / at(1_000, MID)).toBeLessThan(1.5);
+      for (const n of [1_000, 20_000]) {
+        const ratio = at(n, MID) / at(n, ABOVE);
+        expect(ratio).toBeGreaterThan(0.5);
+        expect(ratio).toBeLessThan(2);
+      }
+    }
+  });
+
+  it('B-tree: a mid-range miss costs within one comparison of a hit, as BTreeSearchNote says', () => {
+    const keys = numericKeys(generateUniform(10_000, 0, 1e9, true, 8));
+    const t = BTreeF64.fromKeys(Array.from(keys));
+    const midr = meanOps((k) => t.search(k), buildNumericProbes(keys, 10_000, MID));
+    const hits = meanOps((k) => t.search(k), buildNumericProbes(keys, 10_000, { presentFraction: 1 }));
+    expect(Math.abs(midr - hits)).toBeLessThanOrEqual(1);
   });
 
   it('unsorted array: a miss still reads all n — the form moves nothing for a scan', () => {

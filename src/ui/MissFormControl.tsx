@@ -76,9 +76,10 @@ export function MissFormControl({
       <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
         <strong>Number keys only.</strong> By default every missing key is just past your largest one. That is
         the cheapest question for a skip list, and for a plain BST it checks only the tree’s right-hand edge.{' '}
-        <em>Between stored keys</em> puts each missing key in a gap between two of your keys (halfway, so
-        whole-number keys get a .5 key), spread evenly across the whole range: every structure that compares
-        keys must walk down to that gap to rule the key out. Each structure still gets the same questions. It
+        <em>Between stored keys</em> puts each missing key in a gap between two of your keys (halfway across
+        it — so on whole-number keys with no number free between them, such as 0, 1, 2, …, a key ending in
+        .5), spread evenly across the whole range: every structure that compares keys must walk down to that
+        gap to rule the key out. Each structure still gets the same questions. It
         applies to the next run, and the built-in checks were tuned on the default only.{' '}
         {textRun ? (
           <>The run on screen used text keys, so this setting did not apply to it: text misses are always</>
