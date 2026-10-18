@@ -326,6 +326,34 @@ export const REGISTRY: Registry = {
     shapeSensitive: false,
   },
   /**
+   * The **backward-shift hash set** (docs/PLAN.md §8 "Hashing", §13; docs/METHODOLOGY.md
+   * §2.8, regime NEW) — the open-addressing set with its tombstones taken out: a delete moves
+   * the rest of the run back (Knuth's Algorithm R) instead of leaving a marker. It shares the
+   * tombstone set's hash, table sizes, probe step and rehash order, so a table built with no
+   * deletes is the tombstone set's table slot for slot, and on the search chart the two lines
+   * coincide on op-counts by construction. The pair is a comparison of **delete policies**;
+   * the churn chart is where it reads.
+   *
+   * **Its own hue, indigo** — the hashing family's blue darkened rather than another light
+   * tint, so it separates from the light-blue tombstone line it will often sit on.
+   *
+   * Same metric name as the tombstone set's, on the same convention; its delete's shift scan
+   * is charged a probe **and a hash** per slot passed, because no hash is stored
+   * (`hash_set_bs.rs` module doc). Classes are the other hash sets': O(1) average, O(n) worst.
+   */
+  hashbs: {
+    id: 'hashbs',
+    label: 'hash set (backward shift)',
+    family: 'hashing',
+    keyType: 'number',
+    color: '#5254a3',
+    costMetric: 'hashes + slot probes',
+    mechanism: 'linear probing like the open-addressing set, but a delete shifts the rest of the run back into the gap instead of leaving a tombstone',
+    average: { search: O1, insert: O1, delete: O1, churn: O1 },
+    worst: { search: ON, insert: ON, delete: ON, churn: ON },
+    shapeSensitive: false,
+  },
+  /**
    * The **string-key twins** (docs/PLAN.md §4.2, §8; docs/METHODOLOGY.md §2.5). Same
    * algorithms as `array` / `hashset`, same classes *in n* — and a second cost axis the
    * numeric structures do not have: the **key length L**. Every class below is in n only.
@@ -500,6 +528,7 @@ export const STRUCTURES: readonly StructureInfo[] = [
   REGISTRY.rbt,
   REGISTRY.btree,
   REGISTRY.hashoa,
+  REGISTRY.hashbs,
 ];
 
 /**

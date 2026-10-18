@@ -117,6 +117,14 @@ export interface CompareResult {
    */
   readonly btree: readonly SeriesView[];
   /**
+   * churn + finite-difference insert/delete for the **backward-shift hash set**
+   * (docs/METHODOLOGY.md §2.8, regime NEW). Its own field, the B-tree's precedent, because it
+   * is measured by its own engine call *after* every other mutation sweep — so adding it
+   * changed neither {@link mutation}'s eighteen series nor any existing series' conditions.
+   * It lands on the same shared charts, beside the tombstone set it is read against.
+   */
+  readonly hashbs: readonly SeriesView[];
+  /**
    * churn + finite-difference insert/extract-min for the **min-heap**. Kept apart from
    * {@link trees} because the op set differs: `churn` here is insert + extract-min, so
    * these curves compare only against each other (docs/PLAN.md §4.1, §8, risk R6).
@@ -207,6 +215,7 @@ interface ProofWindow {
   __skipMutationProof?: SweepProof[];
   __rbtMutationProof?: SweepProof[];
   __btreeMutationProof?: SweepProof[];
+  __hbsMutationProof?: SweepProof[];
   __heapMutationProof?: SweepProof[];
   /** The string run's mirrors; `__stringMutationProof` is set last (see {@link runStringSweeps}). */
   __stringSweepProof?: SweepProof[];
@@ -331,6 +340,13 @@ export async function runAllSweeps(
 
   onStatus('running min-heap mutation sweep…');
   const heap = (await engine.runHeapMutationSweep(keyBuffer(data), mutationSizes, HEAP_OPTS)).map((s) => toView(s));
+
+  // After the heap, so every existing series keeps the conditions its gate bands were
+  // calibrated on; published *before* `__heapMutationProof`, which stays the gate's
+  // "all sweeps done" signal.
+  onStatus('running backward-shift hash set mutation sweep…');
+  const hashbs = (await engine.runHashBsMutationSweep(keyBuffer(data), mutationSizes, MUT_OPTS)).map((s) => toView(s));
+  if (win) win.__hbsMutationProof = toProof(hashbs);
   if (win) {
     win.__compareMeta = {
       order: data.order,
@@ -350,6 +366,7 @@ export async function runAllSweeps(
     trees: [...bst, ...avl, ...rbt],
     skiplist,
     btree,
+    hashbs,
     heap,
     shape,
     searchSizes,

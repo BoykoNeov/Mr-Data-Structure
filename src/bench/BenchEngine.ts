@@ -115,6 +115,20 @@ export interface BenchEngine {
   ): Promise<SweepSeries[]>;
 
   /**
+   * Measure the size-mutating ops for the **backward-shift hash set** across a size sweep
+   * (docs/PLAN.md §6.3, §13; docs/METHODOLOGY.md §2.8, regime NEW) — three
+   * {@link SweepSeries} (`churn`, `insert`, `delete`) tagged `'hashbs'`, on the flat
+   * structures' single-key runner with the open-addressing set's churn block. A separate call
+   * only so it can run after every existing mutation sweep. As with the other sweeps, the
+   * engine may transfer (consume) `keys`.
+   */
+  runHashBsMutationSweep(
+    keys: Float64Array,
+    sizes: number[],
+    opts?: MeasureOptions,
+  ): Promise<SweepSeries[]>;
+
+  /**
    * Measure the size-mutating ops for the **min-heap** bench twin across a size sweep
    * (docs/PLAN.md §6.3, §8 trees/heaps) — three {@link SweepSeries} (`churn`, `insert`,
    * `delete`) tagged `'heap'`. Separate from the tree sweeps because the heap's **op set

@@ -50,6 +50,11 @@
  * chaining `hashset`'s hash, start size, threshold and doubling so that only the
  * collision strategy differs between the two curves (docs/PLAN.md §8, §13;
  * docs/METHODOLOGY.md §2.8).
+ *
+ * `hashbs` is the third hash set — linear probing with **backward-shift** delete, no
+ * tombstones — held to `hashoa`'s table and probe sequence as well, so a delete-free build
+ * is `hashoa`'s table slot for slot and only what a delete leaves behind differs
+ * (docs/PLAN.md §13; docs/METHODOLOGY.md §2.8, regime NEW).
  */
 export type StructureId =
   | 'array'
@@ -61,6 +66,7 @@ export type StructureId =
   | 'heap'
   | 'skiplist'
   | 'hashoa'
+  | 'hashbs'
   | 'arraystr'
   | 'hashsetstr'
   | 'triestr'
